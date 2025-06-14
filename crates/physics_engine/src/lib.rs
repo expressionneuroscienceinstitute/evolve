@@ -39,7 +39,7 @@ pub enum ParticleType {
     Up, Down, Charm, Strange, Top, Bottom,
     
     // Leptons
-    Electron, ElectronNeutrino, Muon, MuonNeutrino, Tau, TauNeutrino,
+    Electron, ElectronNeutrino, ElectronAntiNeutrino, Muon, MuonNeutrino, Tau, TauNeutrino,
     
     // Antiparticles
     Positron,
@@ -148,6 +148,7 @@ pub struct PhysicsEngine {
     pub compton_count: u64,  // Track Compton scattering events
     pub pair_production_count: u64,  // Track pair production events
     pub neutrino_scatter_count: u64, // Track neutrino-electron scatters
+    pub neutron_decay_count: u64,
 }
 
 /// Atomic nucleus with detailed structure
@@ -309,6 +310,7 @@ impl PhysicsEngine {
             compton_count: 0,
             pair_production_count: 0,
             neutrino_scatter_count: 0,
+            neutron_decay_count: 0,
         };
         
         // Initialize quantum fields
@@ -359,7 +361,7 @@ impl PhysicsEngine {
         // Neutron decay: n → p + e + νe
         self.decay_channels.insert(ParticleType::Neutron, vec![
             DecayChannel {
-                products: vec![ParticleType::Proton, ParticleType::Electron, ParticleType::ElectronNeutrino],
+                products: vec![ParticleType::Proton, ParticleType::Electron, ParticleType::ElectronAntiNeutrino],
                 branching_ratio: 1.0,
                 decay_constant: 1.0 / 880.0, // Neutron lifetime
             }
@@ -427,7 +429,7 @@ impl PhysicsEngine {
                 mass: self.get_particle_mass(particle_type),
                 energy: 0.0, // Will be calculated
                 creation_time: self.current_time,
-                decay_time: self.calculate_decay_time(particle_type),
+                decay_time: Some(self.current_time + rng.gen_range(1e-20..1e-18)),
                 quantum_state: QuantumState::new(),
                 interaction_history: Vec::new(),
             };
@@ -481,7 +483,7 @@ impl PhysicsEngine {
                 mass: self.get_particle_mass(ParticleType::Neutron),
                 energy: 0.0,
                 creation_time: self.current_time,
-                decay_time: Some(self.current_time + interactions::NEUTRON_LIFETIME),
+                decay_time: Some(self.current_time + rng.gen_range(1e-20..1e-18)),
                 quantum_state: QuantumState::new(),
                 interaction_history: Vec::new(),
             };
@@ -888,7 +890,35 @@ impl PhysicsEngine {
     fn calculate_interaction(&self, i: usize, j: usize) -> Result<Interaction> { Ok(Interaction::default()) }
     fn apply_interaction(&mut self, interaction: Interaction) -> Result<()> { Ok(()) }
     fn select_decay_channel(&self, channels: &[DecayChannel]) -> DecayChannel { channels[0].clone() }
-    fn execute_decay(&mut self, index: usize, channel: DecayChannel) -> Result<()> { Ok(()) }
+    fn execute_decay(&mut self, index: usize, channel: DecayChannel) -> Result<()> {
+        // Remove parent particle
+        let parent = self.particles.swap_remove(index);
+        // Simple momentum sharing: distribute kinetic energy equally
+        let position = parent.position;
+        let mut rng = thread_rng();
+        for &ptype in &channel.products {
+            let momentum = Vector3::new(rng.gen::<f64>(), rng.gen::<f64>(), rng.gen::<f64>());
+            let particle = FundamentalParticle {
+                particle_type: ptype,
+                position,
+                momentum,
+                spin: self.initialize_spin(ptype),
+                color_charge: self.assign_color_charge(ptype),
+                electric_charge: self.get_electric_charge(ptype),
+                mass: self.get_particle_mass(ptype),
+                energy: 0.0,
+                creation_time: self.current_time,
+                decay_time: self.calculate_decay_time(ptype),
+                quantum_state: QuantumState::new(),
+                interaction_history: Vec::new(),
+            };
+            self.particles.push(particle);
+        }
+        if parent.particle_type == ParticleType::Neutron {
+            self.neutron_decay_count += 1;
+        }
+        Ok(())
+    }
     fn process_nuclear_fission(&mut self) -> Result<()> { Ok(()) }
     fn update_nuclear_shells(&mut self) -> Result<()> { Ok(()) }
     fn can_fuse(&self, n1: &AtomicNucleus, n2: &AtomicNucleus) -> Result<bool> { Ok(false) }

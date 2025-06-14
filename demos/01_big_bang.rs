@@ -42,7 +42,7 @@ fn main() -> Result<()> {
     }
     
     // CSV header for data output
-    println!("tick,time_s,temperature_K,total_particles,photons,electrons,positrons,quarks,leptons,gluons,w_bosons,z_bosons,compton_total,pair_prod_total,nu_scatter_total");
+    println!("tick,time_s,temperature_K,total_particles,photons,electrons,positrons,quarks,leptons,gluons,w_bosons,z_bosons,compton_total,pair_prod_total,nu_scatter_total,n_beta_decays");
     
     // Run simulation for 1000 steps (1e-20 seconds total)
     for tick in 0..1000 {
@@ -92,10 +92,10 @@ fn main() -> Result<()> {
             let pair_prod_total = engine.pair_production_count;
             
             // Output CSV row
-            println!("{},{:.2e},{:.2e},{},{},{},{},{},{},{},{},{},{},{},{}",
+            println!("{},{:.2e},{:.2e},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 tick, time, temp, total, photons, electrons, positrons, 
                 quarks, leptons, gluons, w_bosons, z_bosons,
-                compton_total, pair_prod_total, engine.neutrino_scatter_count);
+                compton_total, pair_prod_total, engine.neutrino_scatter_count, engine.neutron_decay_count);
         }
     }
     
@@ -109,6 +109,7 @@ fn main() -> Result<()> {
     println!("  Compton scattering events: {}", engine.compton_count);
     println!("  Pair production events: {}", engine.pair_production_count);
     println!("  Neutrino scatter events: {}", engine.neutrino_scatter_count);
+    println!("  Neutron beta decays: {}", engine.neutron_decay_count);
     
     // Show final particle composition
     let mut final_counts: HashMap<ParticleType, usize> = HashMap::new();

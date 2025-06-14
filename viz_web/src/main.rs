@@ -379,7 +379,11 @@ impl EvolutionMonitor {
                 console_log!("Received WebSocket message: {}", data_str);
                 // TODO: Parse and update simulation state
             } else {
-                console_log!("Received non-text WebSocket message");
+                let message_type = match e.data().dyn_into::<ArrayBuffer>() {
+                    Ok(buffer) => format!("binary (size: {} bytes)", buffer.byte_length()),
+                    Err(_) => "unknown type".to_string(),
+                };
+                console_log!("Received non-text WebSocket message: {}", message_type);
             }
         }) as Box<dyn FnMut(MessageEvent)>);
         

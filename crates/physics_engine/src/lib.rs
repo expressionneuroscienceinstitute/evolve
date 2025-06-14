@@ -358,12 +358,12 @@ impl PhysicsEngine {
             }
         ]);
         
-        // Neutron decay: n → p + e + νe
+        // Neutron decay: n → p + e + νe using proper Fermi golden rule
         self.decay_channels.insert(ParticleType::Neutron, vec![
             DecayChannel {
                 products: vec![ParticleType::Proton, ParticleType::Electron, ParticleType::ElectronAntiNeutrino],
                 branching_ratio: 1.0,
-                decay_constant: 1.0 / 880.0, // Neutron lifetime
+                decay_constant: interactions::neutron_beta_width(), // Use calculated width
             }
         ]);
         
@@ -638,7 +638,14 @@ impl PhysicsEngine {
                         (j, i)
                     };
                     let e_nu = self.particles[nu_idx].energy / (1.602176634e-10); // convert J to GeV
-                    let cross_section = interactions::neutrino_electron_cross_section(e_nu);
+                    let flavour = match self.particles[nu_idx].particle_type {
+                        ParticleType::ElectronNeutrino | ParticleType::ElectronAntiNeutrino => 0,
+                        ParticleType::MuonNeutrino => 1,
+                        ParticleType::TauNeutrino => 2,
+                        _ => 0,
+                    };
+                    let is_antineutrino = matches!(self.particles[nu_idx].particle_type, ParticleType::ElectronAntiNeutrino);
+                    let cross_section = interactions::neutrino_e_scattering_complete(flavour, e_nu, is_antineutrino);
 
                     // Use same probability formula
                     let volume = 4.0 * std::f64::consts::PI * distance.powi(3) / 3.0;
@@ -893,30 +900,71 @@ impl PhysicsEngine {
     fn execute_decay(&mut self, index: usize, channel: DecayChannel) -> Result<()> {
         // Remove parent particle
         let parent = self.particles.swap_remove(index);
-        // Simple momentum sharing: distribute kinetic energy equally
-        let position = parent.position;
-        let mut rng = thread_rng();
-        for &ptype in &channel.products {
-            let momentum = Vector3::new(rng.gen::<f64>(), rng.gen::<f64>(), rng.gen::<f64>());
-            let particle = FundamentalParticle {
-                particle_type: ptype,
-                position,
-                momentum,
-                spin: self.initialize_spin(ptype),
-                color_charge: self.assign_color_charge(ptype),
-                electric_charge: self.get_electric_charge(ptype),
-                mass: self.get_particle_mass(ptype),
-                energy: 0.0,
-                creation_time: self.current_time,
-                decay_time: self.calculate_decay_time(ptype),
-                quantum_state: QuantumState::new(),
-                interaction_history: Vec::new(),
-            };
-            self.particles.push(particle);
-        }
+        
         if parent.particle_type == ParticleType::Neutron {
+            // Use proper beta decay kinematics
+            let mut rng = thread_rng();
+            let neutron_mass_gev = parent.mass * SPEED_OF_LIGHT.powi(2) / (1.602176634e-10); // J to GeV
+            let proton_mass_gev = PROTON_MASS * SPEED_OF_LIGHT.powi(2) / (1.602176634e-10);
+            let electron_mass_gev = ELECTRON_MASS * SPEED_OF_LIGHT.powi(2) / (1.602176634e-10);
+            
+            let (p_proton, p_electron, p_neutrino) = interactions::sample_beta_decay_kinematics(
+                neutron_mass_gev, proton_mass_gev, electron_mass_gev, &mut rng
+            );
+            
+            // Convert back to SI units (GeV to kg⋅m/s)
+            let gev_to_kg_ms = 5.344286e-19; // GeV/c to kg⋅m/s
+            
+            // Create decay products with proper kinematics
+            let products_data = [
+                (ParticleType::Proton, p_proton * gev_to_kg_ms, PROTON_MASS),
+                (ParticleType::Electron, p_electron * gev_to_kg_ms, ELECTRON_MASS),
+                (ParticleType::ElectronAntiNeutrino, p_neutrino * gev_to_kg_ms, 1e-36), // tiny neutrino mass
+            ];
+            
+            for (ptype, momentum, mass) in products_data {
+                let particle = FundamentalParticle {
+                    particle_type: ptype,
+                    position: parent.position,
+                    momentum,
+                    spin: self.initialize_spin(ptype),
+                    color_charge: self.assign_color_charge(ptype),
+                    electric_charge: self.get_electric_charge(ptype),
+                    mass,
+                    energy: 0.0, // Will be calculated
+                    creation_time: self.current_time,
+                    decay_time: self.calculate_decay_time(ptype),
+                    quantum_state: QuantumState::new(),
+                    interaction_history: Vec::new(),
+                };
+                self.particles.push(particle);
+            }
+            
             self.neutron_decay_count += 1;
+        } else {
+            // Simple momentum sharing for other decays
+            let position = parent.position;
+            let mut rng = thread_rng();
+            for &ptype in &channel.products {
+                let momentum = Vector3::new(rng.gen::<f64>(), rng.gen::<f64>(), rng.gen::<f64>());
+                let particle = FundamentalParticle {
+                    particle_type: ptype,
+                    position,
+                    momentum,
+                    spin: self.initialize_spin(ptype),
+                    color_charge: self.assign_color_charge(ptype),
+                    electric_charge: self.get_electric_charge(ptype),
+                    mass: self.get_particle_mass(ptype),
+                    energy: 0.0,
+                    creation_time: self.current_time,
+                    decay_time: self.calculate_decay_time(ptype),
+                    quantum_state: QuantumState::new(),
+                    interaction_history: Vec::new(),
+                };
+                self.particles.push(particle);
+            }
         }
+        
         Ok(())
     }
     fn process_nuclear_fission(&mut self) -> Result<()> { Ok(()) }

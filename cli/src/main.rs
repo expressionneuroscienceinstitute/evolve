@@ -682,8 +682,8 @@ async fn start_websocket_server(port: u16, tx: broadcast::Sender<String>) {
     
     let routes = websocket_route.with(cors);
     
-    println!("WebSocket server listening on ws://0.0.0.0:{}/ws", port);
-    // Bind on all interfaces so the dashboard can connect from any host
+    println!("WebSocket server listening on ws://localhost:{}/ws", port);
+    // Note: The server is bound to all interfaces (0.0.0.0), but 'localhost' is recommended for local connections.
     warp::serve(routes)
         .run(([0, 0, 0, 0], port))
         .await;

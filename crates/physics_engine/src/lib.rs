@@ -798,7 +798,7 @@ impl PhysicsEngine {
     }
     
     /// Get particle mass from type
-    fn get_particle_mass(&self, particle_type: ParticleType) -> f64 {
+    pub fn get_particle_mass(&self, particle_type: ParticleType) -> f64 {
         match particle_type {
             ParticleType::Electron => ELECTRON_MASS,
             ParticleType::Muon => MUON_MASS,
@@ -880,7 +880,7 @@ impl PhysicsEngine {
         }
     }
     
-    fn update_particle_energies(&mut self) -> Result<()> {
+    pub fn update_particle_energies(&mut self) -> Result<()> {
         for particle in &mut self.particles {
             let p_squared = particle.momentum.norm_squared();
             let m = particle.mass;

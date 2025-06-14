@@ -529,7 +529,9 @@ name = "demos"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "nalgebra",
  "physics_engine",
+ "rand",
 ]
 
 [[package]]

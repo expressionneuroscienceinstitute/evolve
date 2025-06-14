@@ -10,7 +10,7 @@ use physics_engine::interactions;
 use nalgebra::Vector3;
 use anyhow::Result;
 use std::collections::HashMap;
-use rand::thread_rng;
+use rand::{thread_rng, Rng};
 
 fn main() -> Result<()> {
     println!("=== Universe Evolution Simulator: Weak Interactions Demo ===");

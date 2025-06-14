@@ -7,6 +7,12 @@ edition = "2021"
 name = "big_bang_demo"
 path = "01_big_bang.rs"
 
+[[bin]]
+name = "weak_interactions_demo"
+path = "02_weak_interactions.rs"
+
 [dependencies]
 physics_engine = { path = "../crates/physics_engine" }
 anyhow = { workspace = true }
+nalgebra = { workspace = true }
+rand = { workspace = true }

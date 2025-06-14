@@ -5,3 +5,10 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
+bevy_ecs = { workspace = true }
+nalgebra = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+physics_engine = { path = "../physics_engine" }

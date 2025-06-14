@@ -599,7 +599,7 @@ pub struct WorldState {
     pub opportunities: Vec<Opportunity>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ResourceType {
     Energy, Matter, Information, Social, Technological,
 }

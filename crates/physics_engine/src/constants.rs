@@ -154,6 +154,20 @@ impl PhysicsConstants {
     }
 }
 
+// Stand-alone constant aliases for ergonomics in other modules
+// (These are kept in sync with the CODATA values above.)
+pub const SPEED_OF_LIGHT: f64 = 299_792_458.0;          // m/s
+pub const PLANCK_CONSTANT: f64 = 6.626_070_15e-34;      // J⋅s
+pub const REDUCED_PLANCK_CONSTANT: f64 = 1.054_571_817e-34; // J⋅s
+pub const GRAVITATIONAL_CONSTANT: f64 = 6.674_30e-11;   // m³⋅kg⁻¹⋅s⁻²
+pub const BOLTZMANN: f64 = 1.380_649e-23;               // J/K
+pub const ELEMENTARY_CHARGE: f64 = 1.602_176_634e-19;   // C
+pub const FINE_STRUCTURE_CONSTANT: f64 = 7.297_352_5693e-3;
+
+pub const ELECTRON_MASS: f64 = 9.109_383_7015e-31;      // kg
+pub const PROTON_MASS: f64 = 1.672_621_923_69e-27;      // kg
+pub const NEUTRON_MASS: f64 = 1.674_927_498_04e-27;     // kg
+
 #[cfg(test)]
 mod tests {
     use super::*;

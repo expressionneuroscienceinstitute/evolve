@@ -867,6 +867,7 @@ pub enum InteractionType {
 /// Element table for compatibility with existing code
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTable {
+    #[serde(with = "serde_arrays")]
     pub abundances: [u32; 118],
 }
 

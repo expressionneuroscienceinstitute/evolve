@@ -2,13 +2,16 @@
 members = [
     "crates/universe_sim",
     "cli",
-    "viz_web",
     "crates/physics_engine",
     "crates/agent_evolution",
     "crates/networking",
     "crates/diagnostics"
 ]
 resolver = "2"
+
+# Optional web dashboard crate built only when the `dashboard` feature is enabled
+[workspace.optional]
+dashboard = ["viz_web"]
 
 [workspace.dependencies]
 # Core simulation

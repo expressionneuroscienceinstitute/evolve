@@ -10,7 +10,7 @@ import { WebSocket } from 'ws'; // npm i ws  (dev-only)
 import fetch from 'node-fetch'; // node18 has global fetch but import for <18
 
 const HTTP_URL = process.env.DASH_URL || 'http://localhost:9000/';
-const WS_URL = process.env.SIM_WS || 'ws://localhost:8080';
+const WS_URL = process.env.SIM_WS || 'ws://localhost:8080/ws';
 
 (async () => {
   try {

@@ -7,6 +7,10 @@ use anyhow::Result;
 use universe_sim::{UniverseSimulation, config::SimulationConfig};
 use tokio::time::{sleep, Duration};
 use std::path::PathBuf;
+use tracing::{info, warn};
+use warp::Filter;
+use tokio::sync::broadcast;
+use serde_json;
 
 #[derive(Parser)]
 #[command(
@@ -356,9 +360,13 @@ async fn cmd_start(
     }
     
     // Start web dashboard if requested
+    let (tx, _rx) = broadcast::channel(100);
     if let Some(port) = serve_dash {
         println!("Starting web dashboard on port {}", port);
-        // TODO: Start web dashboard
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            start_websocket_server(port, tx_clone).await;
+        });
     }
     
     println!("Simulation started successfully!");
@@ -389,6 +397,24 @@ async fn cmd_start(
                      stats.universe_age_gyr,
                      stats.cosmic_era,
                      ups);
+            
+            // Broadcast simulation state to WebSocket clients
+            if serve_dash.is_some() {
+                let simulation_state = serde_json::json!({
+                    "type": "simulation_update",
+                    "tick": stats.current_tick,
+                    "age_gyr": stats.universe_age_gyr,
+                    "cosmic_era": format!("{:?}", stats.cosmic_era),
+                    "particle_count": stats.particle_count,
+                    "ups": ups,
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                });
+                
+                let _ = tx.send(simulation_state.to_string());
+            }
         }
         
         // Small delay to prevent CPU overload in demo mode
@@ -636,4 +662,68 @@ async fn cmd_oracle(action: OracleAction) -> Result<()> {
     }
     
     Ok(())
+}
+
+async fn start_websocket_server(port: u16, tx: broadcast::Sender<String>) {
+    use futures_util::{SinkExt, StreamExt};
+    
+    let websocket_route = warp::path("ws")
+        .and(warp::ws())
+        .and(warp::any().map(move || tx.clone()))
+        .map(|ws: warp::ws::Ws, tx: broadcast::Sender<String>| {
+            ws.on_upgrade(move |websocket| handle_websocket(websocket, tx))
+        });
+    
+    let cors = warp::cors()
+        .allow_any_origin()
+        .allow_headers(vec!["content-type"])
+        .allow_methods(vec!["GET", "POST", "OPTIONS"]);
+    
+    let routes = websocket_route.with(cors);
+    
+    println!("WebSocket server listening on ws://localhost:{}/ws", port);
+    warp::serve(routes)
+        .run(([127, 0, 0, 1], port))
+        .await;
+}
+
+async fn handle_websocket(websocket: warp::ws::WebSocket, tx: broadcast::Sender<String>) {
+    use futures_util::{SinkExt, StreamExt};
+    use warp::ws::Message;
+    
+    let (mut ws_tx, mut ws_rx) = websocket.split();
+    let mut rx = tx.subscribe();
+    
+    // Send initial connection message
+    if let Err(_) = ws_tx.send(Message::text(r#"{"type":"connected","status":"ok"}"#)).await {
+        return;
+    }
+    
+    // Handle incoming messages and broadcast simulation updates
+    let tx_task = tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if ws_tx.send(Message::text(msg)).await.is_err() {
+                break;
+            }
+        }
+    });
+    
+    let rx_task = tokio::spawn(async move {
+        while let Some(result) = ws_rx.next().await {
+            match result {
+                Ok(msg) => {
+                    if msg.is_close() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    
+    // Wait for either task to complete
+    tokio::select! {
+        _ = tx_task => {},
+        _ = rx_task => {},
+    }
 }

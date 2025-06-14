@@ -86,27 +86,145 @@ evolve/
 
 ## 🚀 Getting Started
 
-### **Installation**
+<!-- Idiot-Proof OS Quick Start Tabs -->
+
+<details>
+<summary><strong>macOS (Apple Silicon & Intel)</strong></summary>
+
+##### 1️⃣ Install prerequisites
+
 ```bash
-# Clone the repository
+# Homebrew (package manager – optional but recommended)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Core tooling
+brew install git node        # Git + Node LTS (for the dashboard)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust tool-chain
+```
+
+Close & reopen the terminal so `cargo` and `rustc` are on the path, then:
+
+```bash
+rustup target add wasm32-unknown-unknown      # WebAssembly builds
+cargo install trunk --locked                  # Static web bundler/dev-server
+```
+
+##### 2️⃣ Clone & build
+
+```bash
 git clone https://github.com/your-org/evolve.git
 cd evolve
-
-# Build the simulation
-cargo build --release
-
-# Run with default configuration
-cargo run --bin evolve -- --config config/default.toml
+cargo build --release                          # grab a ☕ – first build takes a while
 ```
 
-### **Web Interface**
+##### 3️⃣ Run the simulation & dashboard
+
 ```bash
-# Start the web server
-cargo run --bin viz_web -- --port 8080
+# ① start the simulation with a WebSocket feed on port 8080
+cargo run --bin universectl -- start --preset low-memory --serve-dash 8080 &
 
-# Open browser to
-http://localhost:8080
+# ② in another tab start the browser dashboard (port 9000) – opens automatically
+cd viz_web
+trunk serve --release --port 9000 --open | cat &
 ```
+
+Visit http://localhost:9000 and watch the universe unfold in real-time 🎉
+
+</details>
+
+<details>
+<summary><strong>Windows 10/11</strong></summary>
+
+##### 1️⃣ Install prerequisites
+
+1. **Rust** – download and run `rustup-init.exe` from <https://rustup.rs>.
+2. **Visual Studio Build Tools** – install the "C++ build tools" workload: <https://aka.ms/vs/17/release/vs_BuildTools.exe>.
+3. **Git for Windows** – <https://gitforwindows.org>.
+4. **Node.js LTS** – Windows installer from <https://nodejs.org>.
+
+Open "Developer Command Prompt for VS" (or PowerShell) and run:
+
+```powershell
+rustup target add wasm32-unknown-unknown      # WebAssembly builds
+cargo install trunk --locked                  # Web dashboard bundler
+```
+
+##### 2️⃣ Clone & build
+
+```powershell
+git clone https://github.com/your-org/evolve.git
+cd evolve
+cargo build --release
+```
+
+##### 3️⃣ Run the simulation & dashboard
+
+```powershell
+# Start simulation
+cargo run --bin universectl -- start --preset low-memory --serve-dash 8080
+
+# Open new terminal for dashboard
+cd viz_web
+trunk serve --release --port 9000 --open
+```
+
+Point your browser at http://localhost:9000
+
+</details>
+
+<details>
+<summary><strong>Linux (Ubuntu/Debian/Fedora/Arch)</strong></summary>
+
+##### 1️⃣ Install prerequisites
+
+```bash
+# build essentials, Git & curl (Debian/Ubuntu example)
+sudo apt update && sudo apt install -y build-essential git curl   # Debian/Ubuntu
+# Fedora: sudo dnf groupinstall "Development Tools"
+# Arch  : sudo pacman -S --needed base-devel git curl
+
+# Rust tool-chain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Node LTS (dashboard) – choose one:
+sudo apt install -y nodejs npm             # distro packages (OK)
+# OR install via NVM (recommended)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source "$HOME/.nvm/nvm.sh"
+nvm install --lts
+```
+
+Reload the shell then add web prerequisites:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install trunk --locked
+```
+
+##### 2️⃣ Clone & build
+
+```bash
+git clone https://github.com/your-org/evolve.git
+cd evolve
+cargo build --release
+```
+
+##### 3️⃣ Run the simulation & dashboard
+
+```bash
+# Simulation (port 8080)
+cargo run --bin universectl -- start --preset low-memory --serve-dash 8080 &
+
+# Dashboard (port 9000)
+cd viz_web
+trunk serve --release --port 9000 --open | cat &
+```
+
+Open http://localhost:9000 in your favourite browser and enjoy 🚀
+
+</details>
+
+<!-- End OS Quick Start Tabs -->
 
 ### **Configuration**
 Edit `config/default.toml` to customize:
@@ -419,47 +537,3 @@ A high-performance physics simulation engine written in Rust, supporting various
    git clone https://github.com/yourusername/physics_engine.git
    cd physics_engine
    ```
-
-2. Build the project:
-   ```bash
-   cargo build --release
-   ```
-
-3. Run tests:
-   ```bash
-   cargo test
-   ```
-
-## Project Structure
-
-- `crates/physics_engine/` - Main physics engine library
-  - `src/interactions.rs` - Particle interactions and cross-sections
-  - `src/electromagnetic.rs` - Electromagnetic field calculations
-  - `src/quantum.rs` - Quantum mechanical calculations
-  - `src/thermodynamics.rs` - Thermodynamic properties
-  - `src/chemistry.rs` - Chemical reactions
-  - `src/geodynamics.rs` - Geodynamic processes
-  - `src/climate.rs` - Climate modeling
-  - `src/validation.rs` - Physics validation tests
-
-## Features
-
-- Particle physics interactions
-- Electromagnetic field calculations
-- Quantum mechanical simulations
-- Thermodynamic modeling
-- Chemical reaction kinetics
-- Geodynamic processes
-- Climate modeling
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.

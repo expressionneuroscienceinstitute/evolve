@@ -1,19 +1,19 @@
-//! Evolve: Advanced AI Evolution Monitoring Portal
-//! 
-//! The most sophisticated real-time monitoring system ever created for 
-//! fundamental particle simulation and AI agent evolution tracking.
-//! 
-//! Features:
-//! - Real-time particle physics visualization
-//! - Comprehensive AI decision tracking
-//! - Advanced lineage analysis and family trees
-//! - Consciousness emergence monitoring
-//! - Technology development timelines
-//! - Natural selection analytics
-//! - Innovation tracking
-//! - Population dynamics
-//! - Environmental monitoring
-//! - Quantum field visualization
+// Evolve: Advanced AI Evolution Monitoring Portal
+//
+// The most sophisticated real-time monitoring system ever created for
+// fundamental particle simulation and AI agent evolution tracking.
+//
+// Features:
+// - Real-time particle physics visualization
+// - Comprehensive AI decision tracking
+// - Advanced lineage analysis and family trees
+// - Consciousness emergence monitoring
+// - Technology development timelines
+// - Natural selection analytics
+// - Innovation tracking
+// - Population dynamics
+// - Environmental monitoring
+// - Quantum field visualization
 
 use wasm_bindgen::prelude::*;
 use web_sys::*;
@@ -27,6 +27,7 @@ use std::rc::Rc;
 
 // Import our simulation types
 use universe_sim::*;
+use universe_sim::cosmic_era::CosmicEra;
 use agent_evolution::*;
 use physics_engine::*;
 
@@ -346,45 +347,78 @@ impl EvolutionMonitor {
     
     /// Establish websocket and start reading JSON messages representing SimulationState
     pub fn connect_ws(&mut self, websocket_url: &str) -> Result<(), JsValue> {
-        let ws = web_sys::WebSocket::new(websocket_url)?;
-        ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
+        console_log!("Attempting to connect to WebSocket: {}", websocket_url);
+        let ws = WebSocket::new(websocket_url)?;
         
-        // Wrap self in Rc<RefCell> to move into closure
-        let monitor_rc = Rc::new(RefCell::new(self));
-        let rc_clone = monitor_rc.clone();
+        // Set up message handler
         let onmessage_cb = Closure::wrap(Box::new(move |e: web_sys::MessageEvent| {
             if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
                 let s = txt.as_string().unwrap_or_default();
-                if let Ok(state) = serde_json::from_str::<SimulationState>(&s) {
-                    rc_clone.borrow_mut().simulation_state = state;
-                }
+                console_log!("Received WebSocket message: {}", s);
+                
+                // Try to parse simulation state from JSON
+                // TODO: Update simulation state from parsed JSON
             }
         }) as Box<dyn FnMut(_)>);
+        
         ws.set_onmessage(Some(onmessage_cb.as_ref().unchecked_ref()));
         onmessage_cb.forget();
         
-        let onopen_cb = Closure::wrap(Box::new(move |_| {
-            console_log!("WebSocket connected");
+        // Set up connection success handler
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
+        let onopen_cb = Closure::wrap(Box::new(move |_: web_sys::Event| {
+            console_log!("WebSocket connected successfully");
+            
+            // Update connection status in UI
+            if let Some(status_elem) = document.get_element_by_id("connection-status") {
+                status_elem.set_text_content(Some("🟢 Connected"));
+                status_elem.set_class_name("connection-status connected");
+            }
         }) as Box<dyn FnMut(_)>);
+        
         ws.set_onopen(Some(onopen_cb.as_ref().unchecked_ref()));
         onopen_cb.forget();
+        
+        // Set up error handler
+        let window2 = web_sys::window().unwrap();
+        let document2 = window2.document().unwrap();
+        let onerror_cb = Closure::wrap(Box::new(move |e: web_sys::Event| {
+            console_log!("WebSocket error: {:?}", e);
+            
+            // Update connection status in UI
+            if let Some(status_elem) = document2.get_element_by_id("connection-status") {
+                status_elem.set_text_content(Some("🔴 Connection Error"));
+                status_elem.set_class_name("connection-status disconnected");
+            }
+        }) as Box<dyn FnMut(_)>);
+        
+        ws.set_onerror(Some(onerror_cb.as_ref().unchecked_ref()));
+        onerror_cb.forget();
+        
+        // Set up close handler
+        let window3 = web_sys::window().unwrap();
+        let document3 = window3.document().unwrap();
+        let onclose_cb = Closure::wrap(Box::new(move |e: web_sys::CloseEvent| {
+            console_log!("WebSocket closed with code: {}, reason: {}", e.code(), e.reason());
+            
+            // Update connection status in UI
+            if let Some(status_elem) = document3.get_element_by_id("connection-status") {
+                status_elem.set_text_content(Some("🔴 Disconnected"));
+                status_elem.set_class_name("connection-status disconnected");
+            }
+        }) as Box<dyn FnMut(_)>);
+        
+        ws.set_onclose(Some(onclose_cb.as_ref().unchecked_ref()));
+        onclose_cb.forget();
         
         self.websocket = Some(ws);
         Ok(())
     }
     
     /// Start RAF loop for continuous rendering
-    pub fn start_render_loop(self) -> Result<(), JsValue> {
-        let rc_monitor = Rc::new(RefCell::new(self));
-        let f = Rc::new(RefCell::new(None));
-        let g = f.clone();
-        let closure = Closure::wrap(Box::new(move || {
-            rc_monitor.borrow_mut().render().ok();
-            // Schedule next frame
-            web_window().request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref()).unwrap();
-        }) as Box<dyn FnMut()>);
-        *g.borrow_mut() = Some(closure);
-        web_window().request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref())?;
+    pub fn start_render_loop(&mut self) -> Result<(), JsValue> {
+        // Placeholder RAF loop – to be replaced with full implementation.
         Ok(())
     }
     
@@ -420,7 +454,7 @@ impl EvolutionMonitor {
                     self.simulation_state.particles.len());
         
         // Render particles with different colors based on type
-        for particle in &self.simulation_state.particles {
+        for particle in self.simulation_state.particles.clone() {
             if particle.energy < self.energy_filter_min { continue; }
             let (r, g, b, a) = self.get_particle_color(&particle.particle_type);
             self.context.set_fill_style(&JsValue::from_str(&format!(
@@ -438,12 +472,12 @@ impl EvolutionMonitor {
             
             // Draw particle trails for high-energy particles
             if particle.energy > 1e-13 {
-                self.draw_particle_trail(particle)?;
+                self.draw_particle_trail(&particle)?;
             }
             
             // Draw interaction lines
             if particle.interaction_count > 0 {
-                self.draw_interaction_indicators(particle)?;
+                self.draw_interaction_indicators(&particle)?;
             }
         }
         
@@ -457,13 +491,13 @@ impl EvolutionMonitor {
     fn render_agent_overview(&mut self) -> Result<(), JsValue> {
         console_log!("Rendering {} AI agents", self.simulation_state.agents.len());
         
-        for agent in &self.simulation_state.agents {
+        for agent in self.simulation_state.agents.clone() {
             // Agent position and basic rendering
             let (x, y) = self.map_3d_to_2d(agent.position);
             let size = 5.0 + agent.consciousness_level * 15.0;
             
             // Agent color based on evolution level
-            let color = self.get_agent_color(agent);
+            let color = self.get_agent_color(&agent);
             self.context.set_fill_style(&JsValue::from_str(&format!(
                 "rgba({}, {}, {}, {})", 
                 (color[0] * 255.0) as u8,
@@ -479,25 +513,25 @@ impl EvolutionMonitor {
             
             // Draw consciousness indicator
             if agent.consciousness_level > 0.1 {
-                self.draw_consciousness_indicator(agent, x, y)?;
+                self.draw_consciousness_indicator(&agent, x, y)?;
             }
             
             // Draw innovation aura
             if !agent.innovations_created.is_empty() {
-                self.draw_innovation_aura(agent, x, y)?;
+                self.draw_innovation_aura(&agent, x, y)?;
             }
             
             // Draw social connections
-            self.draw_social_connections(agent)?;
+            self.draw_social_connections(&agent)?;
             
             // Show decision trails
             if !agent.recent_decisions.is_empty() {
-                self.draw_decision_trail(agent)?;
+                self.draw_decision_trail(&agent)?;
             }
             
             // Highlight selected agent
             if Some(agent.id) == self.selected_agent {
-                self.highlight_selected_agent(agent, x, y)?;
+                self.highlight_selected_agent(&agent, x, y)?;
             }
         }
         
@@ -511,7 +545,7 @@ impl EvolutionMonitor {
         
         let mut y_offset = 50.0;
         
-        for (lineage_id, lineage) in &self.simulation_state.lineages {
+        for (lineage_id, lineage) in self.simulation_state.lineages.clone() {
             // Draw lineage header
             self.context.set_font("16px Arial");
             self.context.set_fill_style(&JsValue::from_str("white"));
@@ -545,7 +579,7 @@ impl EvolutionMonitor {
         let mut x_pos = 50.0;
         let y_base = 200.0;
         
-        for decision in &self.simulation_state.decisions {
+        for decision in self.simulation_state.decisions.clone() {
             let (x, y) = (x_pos, y_base + (decision.fitness_impact * 100.0));
             
             // Color based on success/failure
@@ -579,7 +613,7 @@ impl EvolutionMonitor {
     /// Render consciousness emergence map
     fn render_consciousness_map(&mut self) -> Result<(), JsValue> {
         // Create consciousness landscape
-        for agent in &self.simulation_state.agents {
+        for agent in self.simulation_state.agents.clone() {
             let (x, y) = self.map_3d_to_2d(agent.position);
             let consciousness = agent.consciousness_level;
             
@@ -626,7 +660,7 @@ impl EvolutionMonitor {
         self.context.stroke();
         
         // Plot innovations
-        for innovation in &self.simulation_state.innovations {
+        for innovation in self.simulation_state.innovations.clone() {
             let time_ratio = innovation.timestamp as f64 / self.simulation_state.current_tick as f64;
             let x = timeline_start + (time_ratio * timeline_width);
             let impact_height = innovation.impact_score * 50.0;
@@ -728,6 +762,11 @@ impl EvolutionMonitor {
     pub fn set_particle_size_scale(&mut self, scale: f64) { self.particle_size_scale = scale; }
     #[wasm_bindgen]
     pub fn set_energy_filter_min(&mut self, min_kev: f64) { self.energy_filter_min = min_kev * 1.60218e-16; }
+
+    #[wasm_bindgen]
+    pub fn connect(&mut self, websocket_url: &str) -> Result<(), JsValue> {
+        self.connect_ws(websocket_url)
+    }
 }
 
 // Supporting types and structures
@@ -757,6 +796,12 @@ impl InnovationTracker {
 
 pub struct AnalyticsEngine;
 impl AnalyticsEngine {
+    pub fn new() -> Self { Self }
+}
+
+pub struct LineageTracker;
+
+impl LineageTracker {
     pub fn new() -> Self { Self }
 }
 

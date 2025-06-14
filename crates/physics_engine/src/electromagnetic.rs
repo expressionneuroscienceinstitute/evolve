@@ -113,7 +113,7 @@ impl EMSolver {
     }
 
     /// Apply electromagnetic forces to charged particles
-    fn apply_forces(&self, states: &mut [PhysicsState], constants: &PhysicsConstants) -> Result<()> {
+    fn apply_forces(&self, states: &mut [PhysicsState], _constants: &PhysicsConstants) -> Result<()> {
         for state in states.iter_mut() {
             if state.charge.abs() < 1e-30 {
                 continue; // Skip neutral particles

@@ -1,1 +1,5 @@
 target/*
+demos/output/*
+node_modules/*
+viz_web/dist/*
+*/dist/*

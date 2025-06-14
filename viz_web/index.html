@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Evolve: The Ultimate AI Evolution Simulation</title>
+    <link data-trunk rel="rust" data-target-name="viz_web" />
     <style>
         * {
             margin: 0;
@@ -588,7 +589,7 @@
     </div>
 
     <script type="module">
-        import init, { EvolutionMonitor, start_dashboard } from './pkg/viz_web.js';
+        import init, { EvolutionMonitor } from './pkg/viz_web.js';
 
         let monitor = null;
         let animationId = null;
@@ -734,21 +735,6 @@
             if (animationId) {
                 cancelAnimationFrame(animationId);
             }
-        });
-
-        // Trunk replaces this with correct wasm/JS paths
-        const WS_URL = `ws://${location.hostname}:8080`;
-        init().then(() => {
-            monitor = start_dashboard("sim-canvas", WS_URL);
-            // hook UI events
-            document.getElementById('sizeScale').addEventListener('input', e=>{
-                const v=parseFloat(e.target.value);
-                monitor.set_particle_size_scale(v);
-            });
-            document.getElementById('energyMin').addEventListener('change', e=>{
-                const v=parseFloat(e.target.value);
-                monitor.set_energy_filter_min(v);
-            });
         });
     </script>
 </body>

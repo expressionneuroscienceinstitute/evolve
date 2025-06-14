@@ -264,6 +264,9 @@ impl World {
         let mut new_stars = Vec::new();
         let mut rng = thread_rng();
         
+        // Collect candidate positions first to avoid borrowing issues
+        let mut candidates = Vec::new();
+        
         // Look for dense gas regions suitable for star formation
         for (y, row) in self.grid.cells.iter().enumerate() {
             for (x, cell) in row.iter().enumerate() {
@@ -273,11 +276,16 @@ impl World {
                 {
                     // Probabilistic star formation
                     if rng.gen::<f64>() < 0.001 {  // 0.1% chance per tick
-                        let star_id = self.create_star(x, y)?;
-                        new_stars.push(star_id);
+                        candidates.push((x, y));
                     }
                 }
             }
+        }
+        
+        // Now create stars at the candidate positions
+        for (x, y) in candidates {
+            let star_id = self.create_star(x, y)?;
+            new_stars.push(star_id);
         }
         
         Ok(new_stars)
@@ -303,8 +311,8 @@ impl World {
         };
         
         // Star properties based on mass
-        let radius = (mass / 1.989e30).powf(0.8) * 6.96e8;  // Solar radii scaling
-        let luminosity = (mass / 1.989e30).powf(3.5) * 3.828e26;  // L-M relation
+        let radius = (mass / 1.989e30_f64).powf(0.8) * 6.96e8;  // Solar radii scaling
+        let luminosity = (mass / 1.989e30_f64).powf(3.5) * 3.828e26;  // L-M relation
         let temperature = (luminosity / (4.0 * std::f64::consts::PI * radius.powi(2) * 5.67e-8)).powf(0.25);
         
         let position = Vector3::new(
@@ -421,7 +429,7 @@ impl World {
             rng.gen_range(10.0..1000.0) * 5.972e24
         };
         
-        let planet_radius = (planet_mass / 5.972e24).powf(0.33) * 6.371e6;  // Earth radii scaling
+        let planet_radius = (planet_mass / 5.972e24_f64).powf(0.33) * 6.371e6;  // Earth radii scaling
         
         // Determine planet class based on orbital radius and mass
         let planet_class = self.classify_planet(orbital_radius, planet_mass, star.luminosity)?;

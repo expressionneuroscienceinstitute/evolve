@@ -272,15 +272,17 @@ impl QLearningAgent {
     
     /// Update Q-values based on experience
     fn update_q_value(&mut self, state: &str, action: &str, reward: f64, next_state: &str) {
+        // Get max Q-value for next state first
+        let max_next_q = self.q_table.get(next_state)
+            .map(|actions| actions.values().fold(0.0_f64, |a, &b| a.max(b)))
+            .unwrap_or(0.0);
+        
+        // Now update the current Q-value
         let current_q = self.q_table
             .entry(state.to_string())
             .or_insert_with(HashMap::new)
             .entry(action.to_string())
             .or_insert(0.0);
-        
-        let max_next_q = self.q_table.get(next_state)
-            .map(|actions| actions.values().fold(0.0, |a, &b| a.max(b)))
-            .unwrap_or(0.0);
         
         let new_q = *current_q + self.learning_rate * 
             (reward + self.discount_factor * max_next_q - *current_q);
@@ -327,7 +329,8 @@ impl Agent for QLearningAgent {
     }
     
     fn act(&mut self) -> Result<Action> {
-        let action_str = self.select_action(&self.current_state);
+        let current_state = self.current_state.clone();
+        let action_str = self.select_action(&current_state);
         self.last_action = Some(action_str.clone());
         
         // Convert string action to Action enum
@@ -372,7 +375,8 @@ impl Agent for QLearningAgent {
         // Update Q-values if we have a previous action
         if let Some(ref last_action) = self.last_action.clone() {
             let prev_state = self.current_state.clone(); // Simplified
-            self.update_q_value(&prev_state, last_action, reward, &self.current_state);
+            let current_state = self.current_state.clone();
+            self.update_q_value(&prev_state, last_action, reward, &current_state);
         }
         
         // Update agent metrics
@@ -396,7 +400,7 @@ impl Agent for QLearningAgent {
 }
 
 /// Agent management system
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct AgentManager {
     pub agents: HashMap<Uuid, Box<dyn Agent + Send + Sync>>,
     pub lineage_tree: HashMap<String, Vec<Uuid>>, // code_hash -> agent_ids

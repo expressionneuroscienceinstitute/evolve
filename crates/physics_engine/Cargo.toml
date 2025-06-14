@@ -15,8 +15,10 @@ thiserror = { workspace = true }
 rayon = { workspace = true }
 ordered-float = { workspace = true }
 approx = { workspace = true }
+bevy_ecs = { workspace = true, optional = true }
 
 [features]
-default = ["gpu-acceleration"]
+default = ["gpu-acceleration", "bevy"]
 gpu-acceleration = []
 simd = []
+bevy = ["dep:bevy_ecs"]

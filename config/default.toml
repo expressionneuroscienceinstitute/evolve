@@ -4,7 +4,7 @@
 # Time simulation parameters
 tick_span_years = 1_000_000.0          # 1 million years per tick
 target_ups = 1000.0                    # Updates per second target
-max_ticks = null                       # No limit (infinite simulation)
+# max_ticks = 0                         # No limit (infinite simulation) - 0 means infinite
 
 # Initial conditions
 initial_particle_count = 1000          # Starting particles after Big Bang
@@ -42,4 +42,4 @@ enable_oracle_link = true              # Enable agent-operator communication
 # Validation and safety
 strict_physics_validation = true       # Enforce conservation laws strictly
 enable_safety_guards = true            # Enable resource protection
-simulation_seed = null                 # Random seed (null = random)
+# simulation_seed = 42                  # Random seed (commented out = random)

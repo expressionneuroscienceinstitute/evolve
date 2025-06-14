@@ -8,7 +8,6 @@ use bevy_ecs::prelude::*;
 use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 pub mod world;
@@ -21,7 +20,6 @@ pub mod config;
 pub use physics_engine;
 
 /// Core universe simulation structure
-#[derive(Debug)]
 pub struct UniverseSimulation {
     pub world: World,                          // ECS world
     pub physics_engine: PhysicsEngine,         // Physics simulation
@@ -94,13 +92,7 @@ pub struct AgentLineage {
 impl UniverseSimulation {
     /// Create a new universe simulation
     pub fn new(config: config::SimulationConfig) -> Result<Self> {
-        let mut world = World::new();
-        
-        // Register ECS components
-        world.register::<PhysicsState>();
-        world.register::<CelestialBody>();
-        world.register::<PlanetaryEnvironment>();
-        world.register::<AgentLineage>();
+        let world = World::new();
         
         let physics_engine = PhysicsEngine::new(1e-6)?; // 1 microsecond timestep
         
@@ -169,7 +161,7 @@ impl UniverseSimulation {
                 entropy: 1e-23,
             };
             
-            self.world.spawn((physics_state,));
+            self.world.spawn(physics_state);
         }
         
         Ok(())
@@ -227,7 +219,7 @@ impl UniverseSimulation {
         let mut physics_states: Vec<PhysicsState> = self.world
             .query::<&PhysicsState>()
             .iter(&self.world)
-            .map(|(_, state)| state.clone())
+            .map(|state| state.clone())
             .collect();
         
         // Run physics step
@@ -235,8 +227,8 @@ impl UniverseSimulation {
         
         // Update entities with new physics states
         let mut query = self.world.query::<&mut PhysicsState>();
-        for (entity, mut state) in query.iter_mut(&mut self.world) {
-            if let Some(new_state) = physics_states.get(entity.index() as usize) {
+        for (i, mut state) in query.iter_mut(&mut self.world).enumerate() {
+            if let Some(new_state) = physics_states.get(i) {
                 *state = new_state.clone();
             }
         }
@@ -297,7 +289,7 @@ impl UniverseSimulation {
         // Sentience → Industrialization → Digitalization → Trans-Tech → Immortality
         
         let mut query = self.world.query::<&AgentLineage>();
-        for (_, lineage) in query.iter(&self.world) {
+        for lineage in query.iter(&self.world) {
             if lineage.immortality_achieved {
                 tracing::info!("Victory! Lineage {} achieved immortality!", lineage.id);
                 // Continue simulation (no end state)
@@ -318,7 +310,7 @@ impl UniverseSimulation {
     }
 
     /// Get simulation statistics
-    pub fn get_stats(&self) -> SimulationStats {
+    pub fn get_stats(&mut self) -> SimulationStats {
         let physics_count = self.world.query::<&PhysicsState>().iter(&self.world).count();
         let celestial_count = self.world.query::<&CelestialBody>().iter(&self.world).count();
         let planet_count = self.world.query::<&PlanetaryEnvironment>().iter(&self.world).count();

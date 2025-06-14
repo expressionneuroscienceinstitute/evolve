@@ -13,6 +13,10 @@ resolver = "2"
 [workspace.optional]
 dashboard = ["viz_web"]
 
+[[bin]]
+name = "big_bang_demo"
+path = "demos/01_big_bang.rs"
+
 [workspace.dependencies]
 # Core simulation
 bevy_ecs = "0.12"

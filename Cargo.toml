@@ -1,0 +1,69 @@
+[workspace]
+members = [
+    "crates/universe_sim",
+    "cli",
+    "viz_web",
+    "trainer",
+    "universewd"
+]
+resolver = "2"
+
+[workspace.dependencies]
+# Core simulation dependencies
+bevy_ecs = "0.12"
+rkyv = { version = "0.7", features = ["validation"] }
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+rayon = "1.8"
+nalgebra = "0.32"
+rand = "0.8"
+rand_chacha = "0.3"
+thiserror = "1.0"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.10"
+clap = { version = "4.0", features = ["derive"] }
+config = "0.14"
+sled = "0.34"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Additional dependencies
+serde_yaml = "0.9"
+rand_distr = "0.4"
+
+# Physics and chemistry
+ndarray = "0.15"
+ndarray-linalg = "0.16"
+approx = "0.5"
+num-traits = "0.2"
+num-complex = "0.4"
+
+# Networking and RPC
+tonic = "0.10"
+prost = "0.12"
+quic-rpc = "0.9"
+quinn = "0.10"
+rustls = "0.21"
+
+# Visualization (optional)
+macroquad = "0.4"
+wasm-bindgen = "0.2"
+web-sys = "0.3"
+
+# System integration
+nix = "0.27"
+libc = "0.2"
+mio = "0.8"
+
+# Monitoring
+prometheus = "0.13"
+sysinfo = "0.30"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 1

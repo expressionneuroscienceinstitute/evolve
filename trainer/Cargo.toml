@@ -1,0 +1,11 @@
+[package]
+name = "trainer"
+version = "0.1.0"
+edition = "2021"
+description = "Distributed agent trainer for Evolve: The Game of Life"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+universe_sim = { path = "../crates/universe_sim" }
+tokio = { workspace = true }
+rayon = { workspace = true }

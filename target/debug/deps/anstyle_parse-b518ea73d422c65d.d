@@ -1,0 +1,11 @@
+/workspace/target/debug/deps/libanstyle_parse-b518ea73d422c65d.rmeta: /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/params.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/mod.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/definitions.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/table.rs
+
+/workspace/target/debug/deps/libanstyle_parse-b518ea73d422c65d.rlib: /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/params.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/mod.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/definitions.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/table.rs
+
+/workspace/target/debug/deps/anstyle_parse-b518ea73d422c65d.d: /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/params.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/mod.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/definitions.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/table.rs
+
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/lib.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/params.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/mod.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/definitions.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.7/src/state/table.rs:

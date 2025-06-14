@@ -1,0 +1,20 @@
+[package]
+name = "universewd"
+version = "0.1.0"
+edition = "2021"
+description = "Watchdog daemon for universe simulation"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "universewd"
+path = "src/main.rs"
+
+[dependencies]
+universe_sim = { path = "../crates/universe_sim" }
+tokio = { workspace = true }
+sysinfo = { workspace = true, optional = true }
+prometheus = { workspace = true, optional = true }
+
+[features]
+default = ["metrics"]
+metrics = ["sysinfo", "prometheus"]

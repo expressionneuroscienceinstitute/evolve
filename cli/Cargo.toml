@@ -1,0 +1,25 @@
+[package]
+name = "universe_cli"
+version = "0.1.0"
+edition = "2021"
+description = "Command-line interface for Evolve: The Game of Life"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "universectl"
+path = "src/main.rs"
+
+[dependencies]
+universe_sim = { path = "../crates/universe_sim" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+config = { workspace = true }
+
+[features]
+default = []
+god-mode = []

@@ -1,0 +1,12 @@
+/workspace/target/debug/deps/libbevy_tasks-0ae7a87a6ce9672a.rmeta: /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/slice.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/task.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/single_threaded_task_pool.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/usages.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/iter/mod.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/iter/adapters.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/../README.md
+
+/workspace/target/debug/deps/bevy_tasks-0ae7a87a6ce9672a.d: /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/lib.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/slice.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/task.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/single_threaded_task_pool.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/usages.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/iter/mod.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/iter/adapters.rs /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/../README.md
+
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/lib.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/slice.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/task.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/single_threaded_task_pool.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/usages.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/iter/mod.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/iter/adapters.rs:
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/bevy_tasks-0.12.1/src/../README.md:

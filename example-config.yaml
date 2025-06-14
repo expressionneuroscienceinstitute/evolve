@@ -1,0 +1,114 @@
+simulation:
+  years_per_tick: 1000000.0
+  target_ups: 1000.0
+  max_ticks: 18446744073709551615
+  seed: null
+  low_memory_mode: false
+  validation_level: Standard
+physics:
+  relativistic: true
+  gravity_accuracy: Standard
+  thermodynamics:
+    equation_of_state: PengRobinson
+    temperature_tolerance: 1e-6
+    pressure_tolerance: 1e-6
+  chemistry:
+    quantum_tunneling: true
+    reaction_database: GRI-Mech-3.0
+    kinetics_solver: Cvode
+    catalysis: true
+  nuclear:
+    decay_database: ENSDF-2024
+    fission: true
+    fusion: true
+    cross_sections: ENDF-VIII.0
+world:
+  grid_size:
+  - 4096
+  - 4096
+  initial_density: 1e-29
+  star_formation_rate: 0.001
+  planet_formation:
+    disk_mass_range:
+    - 0.01
+    - 0.1
+    formation_efficiency: 0.1
+    water_delivery_prob: 0.3
+    heavy_element_factor: 1.0
+  geology:
+    plate_tectonics: true
+    volcanic_activity: 1.0
+    erosion_rate: 1.0
+    max_layers: 64
+  climate:
+    greenhouse_effect: true
+    ice_albedo_feedback: true
+    ocean_mixing_timescale: 1000.0
+    atmosphere_mixing_timescale: 1.0
+evolution:
+  initial_population: 100
+  mutation_rate: 0.01
+  selection_pressure: 0.1
+  code_mutation:
+    max_patch_size: 65536
+    compile_timeout_ms: 200
+    max_binary_size: 5242880
+    allow_unsafe: false
+    hotswap_rate_limit: 100
+  fitness:
+    resource_efficiency_weight: 0.4
+    resilience_weight: 0.3
+    cooperation_weight: 0.2
+    entropy_cost_weight: 0.1
+  speciation:
+    similarity_threshold: 0.8
+    min_lineage_age: 1000
+    max_species: 1000
+resources:
+  cpu_percent: 70.0
+  memory_gb: 4.0
+  disk_gb: 10.0
+  max_file_descriptors: 2048
+  max_processes: 0
+network:
+  quic_port: 7000
+  rpc_port: 50051
+  dashboard_port: 8080
+  max_bandwidth_mbps: 200
+  cluster_mode: Standalone
+god_mode:
+  enabled: false
+  max_body_mass_fraction: 0.001
+  max_miracles_per_tick_k: 1
+  max_time_warp_factor: 1000.0
+  require_double_confirm: true
+  audit_webhook_url: null
+oracle:
+  enabled: false
+  max_message_size: 4096
+  rate_limit: 10
+  translation:
+    model_path: null
+    confidence_threshold: 0.7
+    vocabulary_learning: true
+  policies:
+    no_religious_influence: true
+    max_messages_per_day: 100
+    require_multisig: true
+    auto_pause_violations: true
+persistence:
+  checkpoint_dir: checkpoints
+  checkpoint_interval: 10000
+  max_checkpoint_size_mb: 50
+  compression_level: 6
+  archive:
+    enabled: true
+    interval_days: 7
+    retention_days: 90
+    compression: Xz
+monitoring:
+  prometheus: true
+  scrape_interval: 15
+  grafana: false
+  log_level: Info
+  profiling: false

@@ -1,22 +1,19 @@
-//! Fundamental particle data tables and helpers (stub)
+//! Standard-Model particle catalogue (PDG 2024)
 
+use std::collections::HashMap;
+use once_cell::sync::Lazy;
+use nalgebra::Vector3;
 use anyhow::Result;
+
+use crate::constants::*;
+use crate::FundamentalParticle;
+use crate::ParticleType;
 
 /// Initialise particle constants (placeholder)
 pub fn init_particles() -> Result<()> {
     // TODO: Populate with PDG constants and Standard Model parameters
     Ok(())
 }
-
-//! Standard-Model particle catalogue (PDG 2024)
-
-use std::collections::HashMap;
-use once_cell::sync::Lazy;
-use nalgebra::Vector3;
-
-use crate::constants::*;
-use crate::FundamentalParticle;
-use crate::ParticleType;
 
 /// Intrinsic properties needed by the simulator
 #[derive(Debug, Clone, Copy)]
@@ -37,31 +34,31 @@ pub static PARTICLE_DATA: Lazy<HashMap<ParticleType, ParticleProperties>> = Lazy
     macro_rules! ins { ($t:ident, $mass:expr, $q:expr, $spin:expr, $width:expr, $color:expr) => { m.insert($t, ParticleProperties { mass_kg: $mass, charge_c: $q, spin: $spin, width: $width, has_color: $color }); } }
 
     // Quarks (constituent masses; PDG ranges → representative values)
-    ins!(Up,    2.16e6_f64 * 1.78266192e-36,  +2.0/3.0 * ELEMENTARY_CHARGE, 0.5, None, true);
-    ins!(Down,  4.67e6_f64 * 1.78266192e-36,  -1.0/3.0 * ELEMENTARY_CHARGE, 0.5, None, true);
-    ins!(Charm, 1.27e9_f64 * 1.78266192e-36,  +2.0/3.0 * ELEMENTARY_CHARGE, 0.5, Some(1.3e-12_f64.recip()), true);
-    ins!(Strange, 93.0e6_f64 * 1.78266192e-36, -1.0/3.0 * ELEMENTARY_CHARGE, 0.5, None, true);
-    ins!(Top,   172.69e9_f64 * 1.78266192e-36, +2.0/3.0 * ELEMENTARY_CHARGE, 0.5, Some(5.0e-25_f64.recip()), true);
-    ins!(Bottom, 4.18e9_f64 * 1.78266192e-36,  -1.0/3.0 * ELEMENTARY_CHARGE, 0.5, Some(1.6e-12_f64.recip()), true);
+    ins!(Up,    2.16e6_f64 * 1.78266192e-36,  (2.0/3.0) * ELEMENTARY_CHARGE, 0.5, None, true);
+    ins!(Down,  4.67e6_f64 * 1.78266192e-36,  (-1.0/3.0) * ELEMENTARY_CHARGE, 0.5, None, true);
+    ins!(Charm, 1.27e9_f64 * 1.78266192e-36,  (2.0/3.0) * ELEMENTARY_CHARGE, 0.5, Some(1.3e-12_f64.recip()), true);
+    ins!(Strange, 93.0e6_f64 * 1.78266192e-36, (-1.0/3.0) * ELEMENTARY_CHARGE, 0.5, None, true);
+    ins!(Top,   172.69e9_f64 * 1.78266192e-36, (2.0/3.0) * ELEMENTARY_CHARGE, 0.5, Some(5.0e-25_f64.recip()), true);
+    ins!(Bottom, 4.18e9_f64 * 1.78266192e-36,  (-1.0/3.0) * ELEMENTARY_CHARGE, 0.5, Some(1.6e-12_f64.recip()), true);
 
     // Leptons
     ins!(Electron, ELECTRON_MASS, -ELEMENTARY_CHARGE, 0.5, None, false);
     ins!(ElectronNeutrino, 0.0, 0.0, 0.5, None, false);
-    ins!(Muon, 105.6583745e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some((2.1969811e-6).recip()), false);
+    ins!(Muon, 105.6583745e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some(2.1969811e-6_f64.recip()), false);
     ins!(MuonNeutrino, 0.0, 0.0, 0.5, None, false);
-    ins!(Tau, 1.77686e9 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some((2.903e-13).recip()), false);
+    ins!(Tau, 1.77686e9 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some(2.903e-13_f64.recip()), false);
     ins!(TauNeutrino, 0.0, 0.0, 0.5, None, false);
 
     // Gauge bosons & scalar
     ins!(Photon, 0.0, 0.0, 1.0, None, false);
     ins!(Gluon, 0.0, 0.0, 1.0, None, true);
-    ins!(WBoson, 80.379e9 * 1.78266192e-36, ELEMENTARY_CHARGE, 1.0, Some((3.2e-25).recip()), false);
-    ins!(ZBoson, 91.1876e9 * 1.78266192e-36, 0.0, 1.0, Some((2.6e-25).recip()), false);
-    ins!(Higgs, 125.25e9 * 1.78266192e-36, 0.0, 0.0, Some((1.6e-22).recip()), false);
+    ins!(WBoson, 80.379e9 * 1.78266192e-36, ELEMENTARY_CHARGE, 1.0, Some(3.2e-25_f64.recip()), false);
+    ins!(ZBoson, 91.1876e9 * 1.78266192e-36, 0.0, 1.0, Some(2.6e-25_f64.recip()), false);
+    ins!(Higgs, 125.25e9 * 1.78266192e-36, 0.0, 0.0, Some(1.6e-22_f64.recip()), false);
 
     // Composite baryons (approx masses)
     ins!(Proton, PROTON_MASS, ELEMENTARY_CHARGE, 0.5, None, false);
-    ins!(Neutron, NEUTRON_MASS, 0.0, 0.5, Some((880.2).recip()), false);
+    ins!(Neutron, NEUTRON_MASS, 0.0, 0.5, Some(880.2_f64.recip()), false);
 
     m
 });

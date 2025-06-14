@@ -561,3 +561,28 @@ fn rotate_vector_by_angle(v: Vector3<f64>, cos_theta: f64, sin_theta: f64, phi: 
     
     v * cos_theta + (u * cos_phi + w * sin_phi) * sin_theta
 }
+
+/// Klein–Nishina total cross section for Compton scattering (m²)
+/// energy_gev – photon energy in GeV
+pub fn klein_nishina_cross_section(energy_gev: f64) -> f64 {
+    let r_e = 2.8179403227e-15; // classical electron radius (m)
+    let sigma_thomson = 8.0 * std::f64::consts::PI / 3.0 * r_e.powi(2);
+    // Use low-energy Thomson limit for demo (<~1 MeV) plus logarithmic correction
+    let e_me = energy_gev / 0.000511;
+    let eps = e_me;
+    let term1 = (1.0 + eps) / eps.powi(2) * ( (2.0*(1.0+eps))/(1.0+2.0*eps) - (1.0/eps)*eps.ln() );
+    let term2 = (1.0/(2.0*eps)) * ( (1.0+3.0*eps)/(1.0+2.0*eps).powi(2) );
+    sigma_thomson * (term1 + term2)
+}
+
+/// Bethe–Heitler pair production total cross section (m²)
+/// energy_gev – photon energy, z – nuclear charge
+pub fn bethe_heitler_pair_production(energy_gev: f64, z: u32) -> f64 {
+    if energy_gev < 0.001022 { return 0.0; }
+    let alpha = 1.0/137.035999;
+    let r_e = 2.8179403227e-15;
+    let z_f = z as f64;
+    let factor = (28.0/9.0)*(alpha*r_e*r_e)*z_f.powi(2);
+    let l = (2.0*energy_gev/0.000511).ln();
+    factor * (l - 1.0)
+}

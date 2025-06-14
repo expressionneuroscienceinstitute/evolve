@@ -11,6 +11,10 @@ path = "01_big_bang.rs"
 name = "weak_interactions_demo"
 path = "02_weak_interactions.rs"
 
+[[bin]]
+name = "dashboard_quickstart"
+path = "03_dashboard_quickstart.rs"
+
 [dependencies]
 physics_engine = { path = "../crates/physics_engine" }
 anyhow = { workspace = true }

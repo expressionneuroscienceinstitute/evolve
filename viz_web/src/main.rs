@@ -22,6 +22,8 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 use serde_json;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 // Import our simulation types
 use universe_sim::*;
@@ -337,33 +339,47 @@ impl EvolutionMonitor {
         })
     }
     
-    /// Connect to the simulation backend via WebSocket
-    #[wasm_bindgen]
-    pub fn connect(&mut self, websocket_url: &str) -> Result<(), JsValue> {
-        console_log!("Connecting to simulation backend at {}", websocket_url);
-        
-        let ws = WebSocket::new(websocket_url)?;
+    /// Establish websocket and start reading JSON messages representing SimulationState
+    pub fn connect_ws(&mut self, websocket_url: &str) -> Result<(), JsValue> {
+        let ws = web_sys::WebSocket::new(websocket_url)?;
         ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
         
-        // Set up event handlers
-        let ws_clone = ws.clone();
-        let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-            if let Ok(text) = e.data().dyn_into::<js_sys::JsString>() {
-                let message = text.as_string().unwrap();
-                // Handle simulation state updates
-                console_log!("Received: {}", message);
+        // Wrap self in Rc<RefCell> to move into closure
+        let monitor_rc = Rc::new(RefCell::new(self));
+        let rc_clone = monitor_rc.clone();
+        let onmessage_cb = Closure::wrap(Box::new(move |e: web_sys::MessageEvent| {
+            if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
+                let s = txt.as_string().unwrap_or_default();
+                if let Ok(state) = serde_json::from_str::<SimulationState>(&s) {
+                    rc_clone.borrow_mut().simulation_state = state;
+                }
             }
         }) as Box<dyn FnMut(_)>);
-        ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
-        onmessage_callback.forget();
+        ws.set_onmessage(Some(onmessage_cb.as_ref().unchecked_ref()));
+        onmessage_cb.forget();
         
-        let onopen_callback = Closure::wrap(Box::new(move |_| {
-            console_log!("Connected to simulation backend");
+        let onopen_cb = Closure::wrap(Box::new(move |_| {
+            console_log!("WebSocket connected");
         }) as Box<dyn FnMut(_)>);
-        ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
-        onopen_callback.forget();
+        ws.set_onopen(Some(onopen_cb.as_ref().unchecked_ref()));
+        onopen_cb.forget();
         
         self.websocket = Some(ws);
+        Ok(())
+    }
+    
+    /// Start RAF loop for continuous rendering
+    pub fn start_render_loop(self) -> Result<(), JsValue> {
+        let rc_monitor = Rc::new(RefCell::new(self));
+        let f = Rc::new(RefCell::new(None));
+        let g = f.clone();
+        let closure = Closure::wrap(Box::new(move || {
+            rc_monitor.borrow_mut().render().ok();
+            // Schedule next frame
+            web_window().request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref()).unwrap();
+        }) as Box<dyn FnMut()>);
+        *g.borrow_mut() = Some(closure);
+        web_window().request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref())?;
         Ok(())
     }
     
@@ -800,4 +816,16 @@ impl Default for PopulationStatistics {
 // Utility functions
 fn window() -> Option<Window> {
     web_sys::window()
+}
+
+// Add helper to get window
+fn web_window() -> web_sys::Window { web_sys::window().expect("no global window") }
+
+/// Convenience exported function to start the dashboard from JS
+#[wasm_bindgen]
+pub fn start_dashboard(canvas_id: &str, websocket_url: &str) -> Result<(), JsValue> {
+    let mut monitor = EvolutionMonitor::new(canvas_id)?;
+    monitor.connect_ws(websocket_url)?;
+    monitor.start_render_loop()?;
+    Ok(())
 }

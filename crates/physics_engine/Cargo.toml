@@ -1,0 +1,21 @@
+[package]
+name = "physics_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nalgebra = { workspace = true }
+ndarray = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+rayon = { workspace = true }
+ordered-float = { workspace = true }
+approx = { workspace = true }
+
+[features]
+default = ["gpu-acceleration"]
+gpu-acceleration = []
+simd = []

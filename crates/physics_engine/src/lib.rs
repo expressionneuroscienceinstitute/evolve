@@ -8,6 +8,7 @@ use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
+use bevy_ecs::prelude::Component;
 
 pub mod constants;
 pub mod classical;
@@ -829,7 +830,7 @@ pub const MUON_MASS: f64 = 1.883e-28; // kg
 pub const TAU_MASS: f64 = 3.167e-27; // kg
 
 /// Core physics state for classical particles (legacy interface)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Component)]
 pub struct PhysicsState {
     pub position: Vector3<f64>,
     pub velocity: Vector3<f64>,
@@ -873,9 +874,21 @@ pub struct ElementTable {
 
 impl ElementTable {
     pub fn new() -> Self {
-        Self { abundances: [0; 118] }
+        Self { abundances: [0u32; 118] }
     }
     
+    /// Set parts-per-million abundance for element `z` (1-based proton number)
+    pub fn set_abundance(&mut self, z: usize, ppm: u32) {
+        if z == 0 || z > 118 { return; }
+        self.abundances[z-1] = ppm;
+    }
+    
+    /// Get abundance for element `z` (ppm)
+    pub fn get_abundance(&self, z: usize) -> u32 {
+        if z == 0 || z > 118 { return 0; }
+        self.abundances[z-1]
+    }
+
     pub fn from_particles(particles: &[FundamentalParticle]) -> Self {
         let mut table = Self::new();
         

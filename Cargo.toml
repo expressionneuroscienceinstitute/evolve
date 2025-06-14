@@ -5,6 +5,7 @@ members = [
     "crates/agent_evolution",
     "crates/networking",
     "crates/diagnostics",
+    "crates/scientific_constants",
     "cli",
     "viz_web"
 ]

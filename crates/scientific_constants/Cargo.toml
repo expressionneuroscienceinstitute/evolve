@@ -1,0 +1,8 @@
+[package]
+name = "scientific_constants"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+once_cell = "1.18"

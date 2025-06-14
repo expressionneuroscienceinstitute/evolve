@@ -583,7 +583,7 @@
     </div>
 
     <script type="module">
-        import init, { EvolutionMonitor } from './pkg/viz_web.js';
+        import init, { EvolutionMonitor, start_dashboard } from './pkg/viz_web.js';
 
         let monitor = null;
         let animationId = null;
@@ -730,6 +730,10 @@
                 cancelAnimationFrame(animationId);
             }
         });
+
+        // Trunk replaces this with correct wasm/JS paths
+        const WS_URL = `ws://${location.hostname}:8080`;
+        init().then(() => start_dashboard("sim-canvas", WS_URL));
     </script>
 </body>
 </html>

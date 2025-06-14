@@ -1,0 +1,17 @@
+[package]
+name = "physics_engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# Workspace dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+rand = { workspace = true }
+nalgebra = { workspace = true }
+
+[features]
+# enable serde serialization of nalgebra types
+serde_nalgebra = []

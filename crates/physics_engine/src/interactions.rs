@@ -268,26 +268,60 @@ pub fn interaction_probability(
 
 // ========================= Weak Interactions =============================
 
-/// Fermi coupling constant (GeV^{-2})
+/// Dirac gamma-matrices in chiral representation (only needed for documentation / further work).
+pub mod gamma {
+    use nalgebra::Matrix4;
+    pub fn gamma0() -> Matrix4<f64> { Matrix4::new( 0.0, 0.0, 1.0, 0.0,
+                                                   0.0, 0.0, 0.0, 1.0,
+                                                   1.0, 0.0, 0.0, 0.0,
+                                                   0.0, 1.0, 0.0, 0.0 ) }
+    pub fn gamma_vec(i: usize) -> Matrix4<f64> {
+        // σ^i blocks
+        let (a,b,c) = match i {0=> (0.0,0.0,1.0),1=>(0.0,0.0,1.0),2=>(0.0,0.0,1.0), _=>(0.0,0.0,0.0)};
+        Matrix4::zeros() // placeholder
+    }
+}
+
 pub const G_F_GEV2: f64 = 1.1663787e-5;
-
-/// Weak mixing angle sin^2 θ_W (MS-bar at M_Z)
 pub const SIN2_THETA_W: f64 = 0.23122;
-
-/// CKM element |V_ud| (dominant for beta decay)
 pub const V_UD: f64 = 0.97420;
-
-/// Axial coupling g_A (neutron beta decay)
 pub const G_A: f64 = 1.2723;
 
-/// Neutron lifetime from V-A theory (s).  We compute once and store.
-/// τ_n^{-1} = G_F^2 |V_ud|^2 (1 + 3 g_A^2) m_e^5 / (2 π^3) f
-/// Using phase-space factor f ≈ 1.6887, gives 879.4 s.
-pub const NEUTRON_LIFETIME: f64 = 880.0; // Use PDG value for now
+// Beta-decay phase-space factor for neutron (unitless). PDG value ~1.6887
+pub const PHASE_SPACE_N: f64 = 1.6887;
 
-/// Simple neutrino-electron elastic scattering cross-section (low energy)
-/// σ ≈ (G_F^2 s) / π
-pub fn neutrino_electron_cross_section(e_nu_gev: f64) -> f64 {
-    let s = 2.0 * 0.000511 * e_nu_gev; // GeV^2 (m_e ~0.511 MeV)
-    (G_F_GEV2.powi(2) * s) / std::f64::consts::PI * 3.8938e-32 // Convert GeV^-2 to m^2
+/// Beta-decay total width Γ_n (s⁻¹)
+pub fn neutron_beta_width() -> f64 {
+    // m_e in GeV
+    let m_e = 0.00051099895;
+    let pref = G_F_GEV2.powi(2) * V_UD.powi(2) * (1.0 + 3.0 * G_A.powi(2)) / (2.0 * std::f64::consts::PI.powi(3));
+    let m_e5 = m_e.powi(5);
+    pref * m_e5 * PHASE_SPACE_N * 6.582119569e-25 // ħ in GeV·s converts GeV to s^-1
+}
+
+pub fn neutron_lifetime() -> f64 { 1.0 / neutron_beta_width() }
+
+/// Sample electron energy (in GeV) from allowed β spectrum
+pub fn sample_electron_energy(q_value_gev: f64, rng: &mut impl Rng) -> f64 {
+    // Rejection sampling in [m_e, E_max]
+    let m_e = 0.00051099895;
+    let e_max = q_value_gev + m_e;
+    loop {
+        let e_e = rng.gen_range(m_e..e_max);
+        let p = (e_e * e_e - m_e * m_e).sqrt();
+        let weight = p * e_e * (e_max - e_e).powi(2);
+        let max_w = ( (e_max*e_max - m_e*m_e).sqrt() * e_max ).powi(1) ;
+        if rng.gen::<f64>() * max_w < weight { return e_e; }
+    }
+}
+
+/// Low-energy ν-e elastic scattering cross-section (m²)
+pub fn neutrino_e_scattering(flavour: u8, e_nu_gev: f64, is_antineutrino: bool) -> f64 {
+    // flavour: 0=e,1=mu,2=tau
+    let g_v = 0.5 + 2.0 * SIN2_THETA_W * if flavour==0 {1.0} else { -0.5 };
+    let g_a = 0.5;
+    let (g_v_eff, g_a_eff) = if is_antineutrino {(-g_v, -g_a)} else {(g_v, g_a)};
+    let s = 2.0 * 0.000511 * e_nu_gev; // GeV^2
+    let sigma_gev2 = (G_F_GEV2.powi(2) * s)/(std::f64::consts::PI) * (g_v_eff.powi(2)+g_a_eff.powi(2));
+    sigma_gev2 * 3.8938e-32 // GeV^-2 -> m^2
 }

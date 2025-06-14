@@ -2,6 +2,16 @@
 name = "viz_web"
 version = "0.1.0"
 edition = "2021"
+autobins = false
+
+[lib]
+name = "viz_web"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "viz_web_cli"
+path = "src/bin/stub.rs"
 
 [dependencies]
 universe_sim = { path = "../crates/universe_sim", default-features = false }

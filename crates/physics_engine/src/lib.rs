@@ -603,8 +603,8 @@ impl PhysicsEngine {
                     };
                     
                     let photon_energy = self.particles[photon_idx].energy;
-                    let electron_mass_energy = ELECTRON_MASS * SPEED_OF_LIGHT.powi(2);
-                    let cross_section = klein_nishina_cross_section(photon_energy, electron_mass_energy);
+                    let energy_gev = photon_energy / 1.602_176_634e-10; // convert J to GeV
+                    let cross_section = klein_nishina_cross_section(energy_gev);
                     
                     // Estimate local number density (simplified)
                     let volume = 4.0 * std::f64::consts::PI * distance.powi(3) / 3.0;
@@ -973,7 +973,7 @@ impl PhysicsEngine {
     fn calculate_fusion_reaction(&self, i: usize, j: usize) -> Result<FusionReaction> { Ok(FusionReaction::default()) }
     fn execute_fusion_reaction(&mut self, reaction: FusionReaction) -> Result<()> { Ok(()) }
     fn update_atomic_physics(&mut self) -> Result<()> { Ok(()) }
-    fn update_molecular_dynamics(&mut self) -> Result<()> { Ok(()) }
+    fn update_molecular_dynamics(&mut self, states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
     fn process_phase_transitions(&mut self) -> Result<()> { Ok(()) }
     fn update_emergent_properties(&mut self, states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
     fn update_running_couplings(&mut self) -> Result<()> { Ok(()) }

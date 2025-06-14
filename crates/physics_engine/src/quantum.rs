@@ -97,9 +97,9 @@ impl QuantumSolver {
             return 1.0; // Classical crossing
         }
         
-        // WKB approximation: T ≈ exp(-2κa) where κ = sqrt(2m(V-E))/ℏ
-        let kappa = ((2.0 * self.electron_rest_mass * (barrier_height - energy)).sqrt()) 
-                   / (self.planck_constant / (2.0 * std::f64::consts::PI));
+        let delta_e = (barrier_height - energy) * 1.602_176_634e-19; // J
+        let kappa = ((2.0 * self.electron_rest_mass * delta_e).sqrt())
+                    / (self.planck_constant / (2.0 * std::f64::consts::PI));
         
         (-2.0 * kappa * barrier_width).exp()
     }

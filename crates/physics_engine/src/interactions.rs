@@ -33,12 +33,11 @@ pub enum InteractionType {
 /// 
 /// # Returns
 /// Total cross-section in m²
-pub fn klein_nishina_cross_section(photon_energy: f64, electron_mass_energy: f64) -> f64 {
-    let epsilon = photon_energy / electron_mass_energy;
+pub fn klein_nishina_cross_section_joules(photon_energy: f64, electron_mass_energy: f64) -> f64 {
+    let r_e: f64 = 2.8179403227e-15; // classical electron radius (m)
+    let sigma_thomson = 8.0 * std::f64::consts::PI / 3.0 * r_e.powi(2);
     
-    // Classical electron radius
-    let r_e = ELEMENTARY_CHARGE.powi(2) / (4.0 * PI * 8.854187817e-12 * electron_mass_energy);
-    let r_e_squared = r_e * r_e;
+    let epsilon = photon_energy / electron_mass_energy;
     
     // Klein-Nishina formula
     let term1 = (1.0 + epsilon) / epsilon.powi(3);
@@ -46,7 +45,7 @@ pub fn klein_nishina_cross_section(photon_energy: f64, electron_mass_energy: f64
     let term3 = (1.0 + 2.0 * epsilon).ln() / (2.0 * epsilon);
     let term4 = (1.0 + 3.0 * epsilon) / (1.0 + 2.0 * epsilon).powi(2);
     
-    2.0 * PI * r_e_squared * (term1 * term2 + term3 - term4)
+    2.0 * std::f64::consts::PI * r_e.powi(2) * (term1 * term2 + term3 - term4)
 }
 
 /// Bethe-Heitler cross-section for pair production in nuclear field
@@ -562,19 +561,6 @@ fn rotate_vector_by_angle(v: Vector3<f64>, cos_theta: f64, sin_theta: f64, phi: 
     v * cos_theta + (u * cos_phi + w * sin_phi) * sin_theta
 }
 
-/// Klein–Nishina total cross section for Compton scattering (m²)
-/// energy_gev – photon energy in GeV
-pub fn klein_nishina_cross_section(energy_gev: f64) -> f64 {
-    let r_e = 2.8179403227e-15; // classical electron radius (m)
-    let sigma_thomson = 8.0 * std::f64::consts::PI / 3.0 * r_e.powi(2);
-    // Use low-energy Thomson limit for demo (<~1 MeV) plus logarithmic correction
-    let e_me = energy_gev / 0.000511;
-    let eps = e_me;
-    let term1 = (1.0 + eps) / eps.powi(2) * ( (2.0*(1.0+eps))/(1.0+2.0*eps) - (1.0/eps)*eps.ln() );
-    let term2 = (1.0/(2.0*eps)) * ( (1.0+3.0*eps)/(1.0+2.0*eps).powi(2) );
-    sigma_thomson * (term1 + term2)
-}
-
 /// Bethe–Heitler pair production total cross section (m²)
 /// energy_gev – photon energy, z – nuclear charge
 pub fn bethe_heitler_pair_production(energy_gev: f64, z: u32) -> f64 {
@@ -582,7 +568,26 @@ pub fn bethe_heitler_pair_production(energy_gev: f64, z: u32) -> f64 {
     let alpha = 1.0/137.035999;
     let r_e = 2.8179403227e-15;
     let z_f = z as f64;
-    let factor = (28.0/9.0)*(alpha*r_e*r_e)*z_f.powi(2);
+    let factor = (7.0/9.0)*(alpha*r_e*r_e)*z_f.powi(2);
     let l = (2.0*energy_gev/0.000511).ln();
     factor * (l - 1.0)
+}
+
+/// Klein–Nishina total cross section for Compton scattering (m²)
+/// energy_gev – photon energy in GeV
+pub fn klein_nishina_cross_section(energy_gev: f64) -> f64 {
+    let r_e: f64 = 2.8179403227e-15; // m
+    let sigma_thomson = 8.0 * std::f64::consts::PI / 3.0 * r_e.powi(2);
+
+    let epsilon = energy_gev / 0.000511; // epsilon = E / (m_e c^2)  (m_e c^2 = 0.511 MeV)
+
+    // Avoid division by zero for very low energy
+    if epsilon == 0.0 {
+        return sigma_thomson;
+    }
+
+    let term1 = (1.0 + epsilon) / epsilon.powi(2) * ((2.0 * (1.0 + epsilon)) / (1.0 + 2.0 * epsilon) - (1.0 / epsilon) * epsilon.ln());
+    let term2 = (1.0 / (2.0 * epsilon)) * ((1.0 + 3.0 * epsilon) / (1.0 + 2.0 * epsilon).powi(2));
+
+    sigma_thomson * (term1 + term2)
 }

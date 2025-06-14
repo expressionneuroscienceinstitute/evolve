@@ -4,7 +4,6 @@
 //! via Arrhenius equation and quantum tunneling correction
 
 use anyhow::Result;
-use rand::{Rng, thread_rng};
 use std::collections::HashMap;
 use crate::{PhysicsState, PhysicsConstants};
 
@@ -65,7 +64,7 @@ impl ChemistrySolver {
             products: vec![(12, 1)], // 1 H₂ molecule (using ID 12 for H₂)
             activation_energy: 0.0,  // Barrierless
             pre_exponential_factor: 1e10,
-            temperature_exponent: 0.0,
+            temperature_exponent: 1.0, // Rate increases with T
         });
         
         // O + O → O₂
@@ -74,7 +73,7 @@ impl ChemistrySolver {
             products: vec![(82, 1)], // 1 O₂ molecule
             activation_energy: 0.0,
             pre_exponential_factor: 1e10,
-            temperature_exponent: 0.0,
+            temperature_exponent: 1.0,
         });
         
         // H₂ + O₂ → H₂O

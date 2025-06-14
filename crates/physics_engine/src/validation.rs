@@ -2,7 +2,7 @@
 //! 
 //! Validates conservation laws and physics consistency
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use nalgebra::Vector3;
 use crate::{PhysicsState, PhysicsConstants};
 

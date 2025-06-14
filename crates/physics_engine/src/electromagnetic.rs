@@ -3,7 +3,7 @@
 //! Implements simplified FDTD (Finite Difference Time Domain) solver for
 //! electric and magnetic fields with Coulomb and Lorentz forces
 
-use nalgebra::{Vector3, Matrix3};
+use nalgebra::Vector3;
 use anyhow::Result;
 use crate::{PhysicsState, PhysicsConstants};
 
@@ -158,7 +158,8 @@ impl EMSolver {
                 }
                 
                 let force_magnitude = constants.coulomb_force(states[i].charge, states[j].charge, r);
-                let force = force_magnitude * r_vec.normalize();
+                let direction = r_vec.normalize();
+                let force = -force_magnitude * direction;
                 
                 forces[i] += force;
                 forces[j] -= force; // Newton's third law

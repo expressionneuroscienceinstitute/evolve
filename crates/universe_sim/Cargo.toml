@@ -1,0 +1,38 @@
+[package]
+name = "universe_sim"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bevy_ecs = { workspace = true }
+rkyv = { workspace = true }
+nalgebra = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+sled = { workspace = true }
+zstd = { workspace = true }
+chrono = { workspace = true }
+
+# Physics engine crate
+physics_engine = { path = "../physics_engine" }
+
+# Agent evolution crate  
+agent_evolution = { path = "../agent_evolution" }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bench]]
+name = "universe_bench"
+harness = false

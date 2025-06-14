@@ -45,23 +45,23 @@ pub static PARTICLE_DATA: Lazy<HashMap<ParticleType, ParticleProperties>> = Lazy
     ins!(Bottom, 4.18e9_f64 * 1.78266192e-36,  -1.0/3.0 * ELEMENTARY_CHARGE, 0.5, Some(1.6e-12_f64.recip()), true);
 
     // Leptons
-    ins!(Electron, ELECTRON_MASS, -ELEMENTARY_CHARGE, 0.5, None, true);
-    ins!(ElectronNeutrino, 0.0, 0.0, 0.5, None, true);
-    ins!(Muon, 105.6583745e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some((2.1969811e-6).recip()), true);
-    ins!(MuonNeutrino, 0.0, 0.0, 0.5, None, true);
-    ins!(Tau, 1.77686e9 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some((2.903e-13).recip()), true);
-    ins!(TauNeutrino, 0.0, 0.0, 0.5, None, true);
+    ins!(Electron, ELECTRON_MASS, -ELEMENTARY_CHARGE, 0.5, None, false);
+    ins!(ElectronNeutrino, 0.0, 0.0, 0.5, None, false);
+    ins!(Muon, 105.6583745e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some((2.1969811e-6).recip()), false);
+    ins!(MuonNeutrino, 0.0, 0.0, 0.5, None, false);
+    ins!(Tau, 1.77686e9 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some((2.903e-13).recip()), false);
+    ins!(TauNeutrino, 0.0, 0.0, 0.5, None, false);
 
     // Gauge bosons & scalar
-    ins!(Photon, 0.0, 0.0, 1.0, None, true);
+    ins!(Photon, 0.0, 0.0, 1.0, None, false);
     ins!(Gluon, 0.0, 0.0, 1.0, None, true);
-    ins!(WBoson, 80.379e9 * 1.78266192e-36, ELEMENTARY_CHARGE, 1.0, Some((3.2e-25).recip()), true);
-    ins!(ZBoson, 91.1876e9 * 1.78266192e-36, 0.0, 1.0, Some((2.6e-25).recip()), true);
-    ins!(Higgs, 125.25e9 * 1.78266192e-36, 0.0, 0.0, Some((1.6e-22).recip()), true);
+    ins!(WBoson, 80.379e9 * 1.78266192e-36, ELEMENTARY_CHARGE, 1.0, Some((3.2e-25).recip()), false);
+    ins!(ZBoson, 91.1876e9 * 1.78266192e-36, 0.0, 1.0, Some((2.6e-25).recip()), false);
+    ins!(Higgs, 125.25e9 * 1.78266192e-36, 0.0, 0.0, Some((1.6e-22).recip()), false);
 
     // Composite baryons (approx masses)
-    ins!(Proton, PROTON_MASS, ELEMENTARY_CHARGE, 0.5, None, true);
-    ins!(Neutron, NEUTRON_MASS, 0.0, 0.5, Some((880.2).recip()), true);
+    ins!(Proton, PROTON_MASS, ELEMENTARY_CHARGE, 0.5, None, false);
+    ins!(Neutron, NEUTRON_MASS, 0.0, 0.5, Some((880.2).recip()), false);
 
     m
 });
@@ -89,3 +89,33 @@ pub fn spawn_rest(pt: ParticleType) -> FundamentalParticle {
         interaction_history: Vec::new(),
     }
 }
+
+/// CKM matrix (absolute values) – PDG 2024
+pub static CKM_MATRIX: [[f64; 3]; 3] = [
+    [0.97420, 0.2243, 0.00394],
+    [0.218,   0.997,  0.0422 ],
+    [0.0081,  0.041,  0.99910],
+];
+
+/// Dominant branching ratios for selected unstable particles (<channel list>, BR)
+pub static BRANCHING_RATIOS: Lazy<HashMap<ParticleType, Vec<(Vec<ParticleType>, f64)>>> = Lazy::new(|| {
+    use ParticleType::*;
+    let mut h = HashMap::new();
+
+    // μ⁻ → e⁻ ν̄_e ν_μ (≈ 100 %)
+    h.insert(Muon, vec![ (vec![Electron], 1.0) ]);
+
+    // τ⁻ major modes (approx)
+    h.insert(Tau, vec![ (vec![Muon], 0.1741), (vec![Electron], 0.1783) ]);
+
+    // W boson → l ν (10.8 % each) or qq' (~67 %) – simplified
+    h.insert(WBoson, vec![ (vec![Electron], 0.108), (vec![Muon], 0.106), (vec![Tau], 0.112) ]);
+
+    // Z boson → hadrons (69 %), l⁺l⁻ (3.4 % each) – simplified leptonic
+    h.insert(ZBoson, vec![ (vec![Electron], 0.033), (vec![Muon], 0.033), (vec![Tau], 0.033) ]);
+
+    // Top quark → W + b (~100 %)
+    h.insert(Top, vec![ (vec![WBoson], 1.0) ]);
+
+    h
+});

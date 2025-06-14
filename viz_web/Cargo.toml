@@ -1,0 +1,58 @@
+[package]
+name = "viz_web"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "universe-portal"
+path = "src/main.rs"
+
+[dependencies]
+# Core framework
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# WebSocket and real-time
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+
+# Templating and frontend
+askama = { version = "0.12", features = ["with-axum"] }
+askama_axum = "0.4"
+
+# Authentication
+jsonwebtoken = "9.0"
+argon2 = "0.5"
+
+# Database for web state
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite"] }
+
+# Tracing
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Universe interaction
+universe_sim = { path = "../crates/universe_sim" }
+diagnostics = { path = "../crates/diagnostics" }
+
+# Time handling
+chrono = { workspace = true }
+
+# UUID for session management
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+[build-dependencies]
+# Asset processing
+grass = "0.13"  # SCSS compiler

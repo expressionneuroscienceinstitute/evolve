@@ -68,6 +68,9 @@ approx = "0.5"
 candle-core = "0.3"
 candle-nn = "0.3"
 
+# Testing
+tempfile = "3.8"
+
 [profile.release]
 opt-level = 3
 lto = true

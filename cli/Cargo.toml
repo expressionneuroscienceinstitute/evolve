@@ -1,0 +1,10 @@
+[package]
+name = "universe_cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+universe_sim = { path = "../crates/universe_sim" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }

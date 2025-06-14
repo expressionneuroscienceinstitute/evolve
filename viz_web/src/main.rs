@@ -354,6 +354,12 @@ impl EvolutionMonitor {
         // Set up connection success handler
         let onopen_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
             console_log!("WebSocket connected successfully");
+            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                if let Some(elem) = doc.get_element_by_id("connection-status") {
+                    elem.set_inner_html("\u{1F7E2} Connected");
+                    elem.set_class_name("connection-status connected");
+                }
+            }
         }) as Box<dyn FnMut(web_sys::Event)>);
         
         ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
@@ -374,6 +380,12 @@ impl EvolutionMonitor {
         // Set up error handler
         let onerror_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
             console_log!("WebSocket connection error");
+            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                if let Some(elem) = doc.get_element_by_id("connection-status") {
+                    elem.set_inner_html("\u{1F534} Disconnected");
+                    elem.set_class_name("connection-status disconnected");
+                }
+            }
         }) as Box<dyn FnMut(web_sys::Event)>);
         
         ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
@@ -382,6 +394,12 @@ impl EvolutionMonitor {
         // Set up close handler
         let onclose_callback = Closure::wrap(Box::new(move |_: web_sys::CloseEvent| {
             console_log!("WebSocket connection closed");
+            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                if let Some(elem) = doc.get_element_by_id("connection-status") {
+                    elem.set_inner_html("\u{1F534} Disconnected");
+                    elem.set_class_name("connection-status disconnected");
+                }
+            }
         }) as Box<dyn FnMut(web_sys::CloseEvent)>);
         
         ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));

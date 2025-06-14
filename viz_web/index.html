@@ -379,10 +379,6 @@
         </div>
     </div>
 
-    <div id="controls" style="position:fixed;top:10px;left:10px;background:rgba(30,30,30,0.8);color:#fff;padding:8px;border-radius:4px;font-family:sans-serif;font-size:14px;z-index:10;">
-        <label>Size scale <input id="sizeScale" type="range" min="0.2" max="5" step="0.1" value="1"></label><br/>
-        <label>Min energy (keV) <input id="energyMin" type="number" min="0" value="0"></label>
-    </div>
 
     <div class="controls-panel scrollbar">
         <div class="control-section">
@@ -612,7 +608,6 @@
                     console.error('WebSocket connection failed:', err);
                 }
                 
-                updateConnectionStatus(true);
                 startRenderLoop();
                 
             } catch (error) {

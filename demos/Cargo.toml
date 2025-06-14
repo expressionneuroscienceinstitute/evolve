@@ -1,0 +1,12 @@
+[package]
+name = "demos"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "big_bang_demo"
+path = "01_big_bang.rs"
+
+[dependencies]
+physics_engine = { path = "../crates/physics_engine" }
+anyhow = { workspace = true }

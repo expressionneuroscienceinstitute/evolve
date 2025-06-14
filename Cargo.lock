@@ -525,6 +525,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "demos"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "physics_engine",
+]
+
+[[package]]
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [

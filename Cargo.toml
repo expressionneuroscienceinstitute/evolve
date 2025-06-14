@@ -5,17 +5,14 @@ members = [
     "crates/physics_engine",
     "crates/agent_evolution",
     "crates/networking",
-    "crates/diagnostics"
+    "crates/diagnostics",
+    "demos"
 ]
 resolver = "2"
 
 # Optional web dashboard crate built only when the `dashboard` feature is enabled
 [workspace.optional]
 dashboard = ["viz_web"]
-
-[[bin]]
-name = "big_bang_demo"
-path = "demos/01_big_bang.rs"
 
 [workspace.dependencies]
 # Core simulation

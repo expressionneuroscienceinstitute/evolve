@@ -28,6 +28,7 @@ pub mod atomic_physics;
 pub mod molecular_dynamics;
 pub mod phase_transitions;
 pub mod emergent_properties;
+pub mod interactions;
 
 pub use constants::*;
 
@@ -39,6 +40,9 @@ pub enum ParticleType {
     
     // Leptons
     Electron, ElectronNeutrino, Muon, MuonNeutrino, Tau, TauNeutrino,
+    
+    // Antiparticles
+    Positron,
     
     // Gauge bosons
     Photon, WBoson, ZBoson, Gluon,
@@ -119,7 +123,7 @@ pub enum FieldType {
     DarkMatterField,
 }
 
-/// Comprehensive physics engine with fundamental particle simulation
+/// Main physics engine for universe simulation
 pub struct PhysicsEngine {
     pub particles: Vec<FundamentalParticle>,
     pub quantum_fields: HashMap<FieldType, QuantumField>,
@@ -140,6 +144,9 @@ pub struct PhysicsEngine {
     pub temperature: f64,
     pub energy_density: f64,
     pub particle_creation_threshold: f64,
+    pub volume: f64,  // Simulation volume in m³
+    pub compton_count: u64,  // Track Compton scattering events
+    pub pair_production_count: u64,  // Track pair production events
 }
 
 /// Atomic nucleus with detailed structure
@@ -297,6 +304,9 @@ impl PhysicsEngine {
             temperature: 0.0,
             energy_density: 0.0,
             particle_creation_threshold: 1e-10,
+            volume: 1e-30,  // 1 cubic femtometer
+            compton_count: 0,
+            pair_production_count: 0,
         };
         
         // Initialize quantum fields
@@ -307,6 +317,9 @@ impl PhysicsEngine {
         
         // Initialize interaction matrix
         engine.initialize_interactions()?;
+        
+        // Set larger volume for demo
+        engine.volume = 1e-42; // Cubic femtometer scale
         
         Ok(engine)
     }
@@ -369,9 +382,9 @@ impl PhysicsEngine {
     
     /// Create Big Bang initial conditions with fundamental particles
     pub fn initialize_big_bang(&mut self) -> Result<()> {
-        // Start with extremely high temperature and energy density
-        self.temperature = 1e32; // Planck temperature
-        self.energy_density = 1e113; // Planck energy density
+        // Start with high but computationally reasonable temperature
+        self.temperature = 1e12; // 1 TeV scale (reduced from Planck temperature)
+        self.energy_density = 1e30; // Reduced accordingly
         
         // Create initial quantum soup of all particle types
         self.create_primordial_plasma()?;
@@ -388,19 +401,23 @@ impl PhysicsEngine {
     /// Create primordial plasma of fundamental particles
     fn create_primordial_plasma(&mut self) -> Result<()> {
         let mut rng = thread_rng();
-        let num_particles = 1_000_000; // Start with 1M particles
+        let num_particles = 1000; // Reduced from 1M to 1000 for demo
         
-        for _ in 0..num_particles {
+        for _ in 0..num_particles/2 {
             // Create particle-antiparticle pairs
             let particle_type = self.sample_particle_from_thermal_distribution(self.temperature);
             
+            // Position particles closer together for interactions
+            let position = Vector3::new(
+                rng.gen_range(-1e-14..1e-14), // 10 fm scale
+                rng.gen_range(-1e-14..1e-14),
+                rng.gen_range(-1e-14..1e-14),
+            );
+            
+            // Create particle
             let particle = FundamentalParticle {
                 particle_type,
-                position: Vector3::new(
-                    rng.gen_range(-1e-10..1e-10), // 0.1 nm scale
-                    rng.gen_range(-1e-10..1e-10),
-                    rng.gen_range(-1e-10..1e-10),
-                ),
+                position,
                 momentum: self.sample_thermal_momentum(particle_type, self.temperature),
                 spin: self.initialize_spin(particle_type),
                 color_charge: self.assign_color_charge(particle_type),
@@ -413,7 +430,37 @@ impl PhysicsEngine {
                 interaction_history: Vec::new(),
             };
             
-            self.particles.push(particle);
+            // Create antiparticle for leptons before pushing particle
+            if matches!(particle_type, ParticleType::Electron | ParticleType::Muon | ParticleType::Tau) {
+                let antiparticle_type = match particle_type {
+                    ParticleType::Electron => ParticleType::Positron,
+                    _ => particle_type, // For now, only positrons implemented
+                };
+                
+                let antiparticle = FundamentalParticle {
+                    particle_type: antiparticle_type,
+                    position: position + Vector3::new(
+                        rng.gen_range(-1e-15..1e-15),
+                        rng.gen_range(-1e-15..1e-15),
+                        rng.gen_range(-1e-15..1e-15),
+                    ),
+                    momentum: self.sample_thermal_momentum(antiparticle_type, self.temperature),
+                    spin: self.initialize_spin(antiparticle_type),
+                    color_charge: self.assign_color_charge(antiparticle_type),
+                    electric_charge: -self.get_electric_charge(particle_type),
+                    mass: self.get_particle_mass(antiparticle_type),
+                    energy: 0.0,
+                    creation_time: self.current_time,
+                    decay_time: self.calculate_decay_time(antiparticle_type),
+                    quantum_state: QuantumState::new(),
+                    interaction_history: Vec::new(),
+                };
+                
+                self.particles.push(particle);
+                self.particles.push(antiparticle);
+            } else {
+                self.particles.push(particle);
+            }
         }
         
         // Update particle energies
@@ -475,79 +522,151 @@ impl PhysicsEngine {
     }
     
     /// Comprehensive physics simulation step
-    pub fn step(&mut self, physics_states: &mut [PhysicsState]) -> Result<()> {
-        // 1. Update quantum fields
-        self.update_quantum_fields()?;
-        
-        // 2. Process particle interactions
-        self.process_particle_interactions()?;
-        
-        // 3. Handle particle decays
-        self.process_particle_decays()?;
-        
-        // 4. Update nuclear physics
-        self.update_nuclear_physics()?;
-        
-        // 5. Update atomic physics
-        self.update_atomic_physics()?;
-        
-        // 6. Update molecular dynamics
-        self.update_molecular_dynamics()?;
-        
-        // 7. Handle phase transitions
-        self.process_phase_transitions()?;
-        
-        // 8. Update emergent properties
-        self.update_emergent_properties(physics_states)?;
-        
-        // 9. Update running coupling constants
-        self.update_running_couplings()?;
-        
-        // 10. Check for spontaneous symmetry breaking
-        self.check_symmetry_breaking()?;
-        
-        // 11. Update spacetime curvature (if general relativity enabled)
-        self.update_spacetime_curvature()?;
-        
-        // 12. Update temperature and energy density
-        self.update_thermodynamic_state()?;
-        
+    pub fn step(&mut self, classical_states: &mut [PhysicsState]) -> Result<()> {
+        // Update time
         self.current_time += self.time_step;
         
-        Ok(())
-    }
-    
-    /// Update all quantum fields using field equations
-    fn update_quantum_fields(&mut self) -> Result<()> {
-        for (field_type, field) in &mut self.quantum_fields {
-            self.field_equations.update_field(field, self.time_step, &self.particles)?;
-        }
-        Ok(())
-    }
-    
-    /// Process all particle interactions
-    fn process_particle_interactions(&mut self) -> Result<()> {
-        let mut interactions = Vec::new();
+        // Quantum evolution
+        self.evolve_quantum_state()?;
         
-        // Find all particle pairs within interaction range
+        // Process interactions (including new QED interactions)
+        self.process_particle_interactions()?;
+        
+        // Process decays
+        self.process_particle_decays()?;
+        
+        // Nuclear processes
+        self.process_nuclear_reactions()?;
+        
+        // Update temperature based on particle energies
+        self.update_temperature()?;
+        
+        // Classical state evolution would go here if we had the subsystems
+        // For now, we skip this part
+        
+        Ok(())
+    }
+    
+    /// Process particle interactions (QED, weak, strong)
+    fn process_particle_interactions(&mut self) -> Result<()> {
+        use interactions::*;
+        use rand::thread_rng;
+        
+        let mut rng = thread_rng();
+        let mut interactions_to_process = Vec::new();
+        
+        // Find potential Compton scattering pairs
         for i in 0..self.particles.len() {
-            for j in (i+1)..self.particles.len() {
-                let distance = (self.particles[i].position - self.particles[j].position).norm();
-                let interaction_range = self.calculate_interaction_range(
-                    self.particles[i].particle_type,
-                    self.particles[j].particle_type
-                );
+            for j in i+1..self.particles.len() {
+                let p1 = &self.particles[i];
+                let p2 = &self.particles[j];
                 
-                if distance < interaction_range {
-                    let interaction = self.calculate_interaction(i, j)?;
-                    interactions.push(interaction);
+                // Check distance (interaction range ~ 1 fm)
+                let distance = (p1.position - p2.position).norm();
+                if distance > 1e-15 {
+                    continue;
+                }
+                
+                // Check for Compton scattering
+                if can_compton_scatter(p1, p2) {
+                    let (photon_idx, electron_idx) = if p1.particle_type == ParticleType::Photon {
+                        (i, j)
+                    } else {
+                        (j, i)
+                    };
+                    
+                    let photon_energy = self.particles[photon_idx].energy;
+                    let electron_mass_energy = ELECTRON_MASS * SPEED_OF_LIGHT.powi(2);
+                    let cross_section = klein_nishina_cross_section(photon_energy, electron_mass_energy);
+                    
+                    // Estimate local number density (simplified)
+                    let volume = 4.0 * std::f64::consts::PI * distance.powi(3) / 3.0;
+                    let number_density = 1.0 / volume;
+                    
+                    let probability = interaction_probability(
+                        cross_section,
+                        number_density,
+                        SPEED_OF_LIGHT,
+                        self.time_step,
+                    );
+                    
+                    if rng.gen::<f64>() < probability {
+                        interactions_to_process.push(Interaction {
+                            particle_indices: (photon_idx, electron_idx),
+                            interaction_type: InteractionType::ComptonScattering,
+                            cross_section,
+                            probability,
+                        });
+                    }
                 }
             }
         }
         
-        // Apply interactions
-        for interaction in interactions {
-            self.apply_interaction(interaction)?;
+        // Process pair production for high-energy photons
+        let mut new_particles = Vec::new();
+        let mut photons_to_remove = Vec::new();
+        
+        for (i, particle) in self.particles.iter().enumerate() {
+            if particle.particle_type == ParticleType::Photon {
+                let electron_mass_energy = ELECTRON_MASS * SPEED_OF_LIGHT.powi(2);
+                
+                // Check if photon has enough energy for pair production
+                if particle.energy > 2.0 * electron_mass_energy {
+                    // Use hydrogen (Z=1) for early universe
+                    let cross_section = bethe_heitler_cross_section(particle.energy, 1);
+                    
+                    // Estimate probability based on local proton density
+                    let proton_density = self.particles.iter()
+                        .filter(|p| p.particle_type == ParticleType::Proton)
+                        .count() as f64 / self.volume;
+                    
+                    let probability = interaction_probability(
+                        cross_section,
+                        proton_density,
+                        SPEED_OF_LIGHT,
+                        self.time_step,
+                    );
+                    
+                    if rng.gen::<f64>() < probability {
+                        if let Some((electron, positron)) = pair_produce(particle, &mut rng) {
+                            new_particles.push(electron);
+                            new_particles.push(positron);
+                            photons_to_remove.push(i);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Apply Compton scattering
+        for interaction in interactions_to_process {
+            let (photon_idx, electron_idx) = interaction.particle_indices;
+            
+            // Clone particles to avoid borrow issues
+            let mut photon = self.particles[photon_idx].clone();
+            let mut electron = self.particles[electron_idx].clone();
+            
+            scatter_compton(&mut photon, &mut electron, &mut rng);
+            
+            // Update particles
+            self.particles[photon_idx] = photon;
+            self.particles[electron_idx] = electron;
+            
+            // Count the event
+            self.compton_count += 1;
+        }
+        
+        // Remove photons that pair-produced (in reverse order)
+        for &idx in photons_to_remove.iter().rev() {
+            self.particles.swap_remove(idx);
+        }
+        
+        // Count pair production events
+        self.pair_production_count += new_particles.len() as u64 / 2;
+        
+        // Add new particles from pair production
+        for particle in new_particles {
+            self.particles.push(particle);
         }
         
         Ok(())
@@ -577,7 +696,7 @@ impl PhysicsEngine {
     }
     
     /// Update nuclear physics (fusion, fission, nuclear reactions)
-    fn update_nuclear_physics(&mut self) -> Result<()> {
+    fn process_nuclear_reactions(&mut self) -> Result<()> {
         // Check for nuclear fusion possibilities
         self.process_nuclear_fusion()?;
         
@@ -642,12 +761,27 @@ impl PhysicsEngine {
     // Placeholder implementations for complex physics
     fn sample_thermal_momentum(&self, particle_type: ParticleType, temperature: f64) -> Vector3<f64> {
         let mut rng = thread_rng();
-        let thermal_velocity = (3.0 * BOLTZMANN * temperature / self.get_particle_mass(particle_type)).sqrt();
+        let mass = self.get_particle_mass(particle_type);
+        
+        // For massless particles, use E = pc = 3kT
+        // For massive particles, use relativistic Maxwell-Boltzmann
+        let typical_momentum = if mass < 1e-40 {
+            // Massless particle
+            3.0 * BOLTZMANN * temperature / SPEED_OF_LIGHT
+        } else {
+            // Massive particle - use non-relativistic approximation for now
+            (3.0 * mass * BOLTZMANN * temperature).sqrt()
+        };
+        
+        // Random direction
+        let theta = rng.gen::<f64>() * std::f64::consts::PI;
+        let phi = rng.gen::<f64>() * 2.0 * std::f64::consts::PI;
+        
         Vector3::new(
-            rng.gen_range(-thermal_velocity..thermal_velocity),
-            rng.gen_range(-thermal_velocity..thermal_velocity),
-            rng.gen_range(-thermal_velocity..thermal_velocity),
-        ) * self.get_particle_mass(particle_type)
+            typical_momentum * theta.sin() * phi.cos(),
+            typical_momentum * theta.sin() * phi.sin(),
+            typical_momentum * theta.cos(),
+        )
     }
     
     fn initialize_spin(&self, particle_type: ParticleType) -> Vector3<Complex<f64>> {
@@ -686,9 +820,12 @@ impl PhysicsEngine {
     
     fn update_particle_energies(&mut self) -> Result<()> {
         for particle in &mut self.particles {
-            let kinetic_energy = 0.5 * particle.mass * particle.momentum.norm_squared() / (particle.mass * particle.mass);
-            let rest_energy = particle.mass * SPEED_OF_LIGHT * SPEED_OF_LIGHT;
-            particle.energy = rest_energy + kinetic_energy;
+            let p_squared = particle.momentum.norm_squared();
+            let m = particle.mass;
+            let c = SPEED_OF_LIGHT;
+            
+            // Relativistic energy: E² = (pc)² + (mc²)²
+            particle.energy = ((p_squared * c * c) + (m * c * c).powi(2)).sqrt();
         }
         Ok(())
     }
@@ -720,6 +857,35 @@ impl PhysicsEngine {
         if !self.particles.is_empty() {
             self.temperature = 2.0 * total_kinetic_energy / (3.0 * BOLTZMANN * self.particles.len() as f64);
         }
+        
+        Ok(())
+    }
+    
+    /// Evolve quantum state of all particles
+    fn evolve_quantum_state(&mut self) -> Result<()> {
+        // Placeholder for quantum evolution
+        // In a full implementation, this would solve the Schrödinger/Dirac equation
+        Ok(())
+    }
+    
+    /// Update temperature based on particle energies
+    fn update_temperature(&mut self) -> Result<()> {
+        if self.particles.is_empty() {
+            return Ok(());
+        }
+        
+        // Calculate average kinetic energy
+        let total_kinetic_energy: f64 = self.particles.iter()
+            .map(|p| p.energy - p.mass * SPEED_OF_LIGHT.powi(2))
+            .filter(|&ke| ke > 0.0)
+            .sum();
+        
+        let num_particles = self.particles.len() as f64;
+        let avg_kinetic_energy = total_kinetic_energy / num_particles;
+        
+        // Temperature from kinetic theory: <KE> = (3/2) k_B T
+        // For relativistic particles, use <E> ≈ 3 k_B T
+        self.temperature = avg_kinetic_energy / (3.0 * BOLTZMANN);
         
         Ok(())
     }

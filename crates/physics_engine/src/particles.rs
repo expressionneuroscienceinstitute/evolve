@@ -43,6 +43,7 @@ pub static PARTICLE_DATA: Lazy<HashMap<ParticleType, ParticleProperties>> = Lazy
 
     // Leptons
     ins!(Electron, ELECTRON_MASS, -ELEMENTARY_CHARGE, 0.5, None, false);
+    ins!(Positron, ELECTRON_MASS, ELEMENTARY_CHARGE, 0.5, None, false);
     ins!(ElectronNeutrino, 0.0, 0.0, 0.5, None, false);
     ins!(Muon, 105.6583745e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some(2.1969811e-6_f64.recip()), false);
     ins!(MuonNeutrino, 0.0, 0.0, 0.5, None, false);

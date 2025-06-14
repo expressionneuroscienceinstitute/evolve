@@ -14,6 +14,9 @@ use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::HashMap;
 
+#[cfg(feature = "bevy")]
+use bevy_ecs::prelude::Component;
+
 pub mod constants;
 pub mod classical;
 pub mod electromagnetic;
@@ -28,6 +31,7 @@ pub use constants::*;
 
 /// Core physics state for a single particle/entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "bevy", derive(Component))]
 pub struct PhysicsState {
     pub position: Vector3<f64>,
     pub velocity: Vector3<f64>,
@@ -42,6 +46,7 @@ pub struct PhysicsState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTable {
     /// Abundances in parts per million (index = proton number Z)
+    #[serde(with = "serde_arrays")]
     pub abundances: [u32; 118],
 }
 
@@ -149,6 +154,7 @@ pub struct StratumLayer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MaterialType {
+    Gas,
     Regolith,
     Topsoil,
     Subsoil,

@@ -289,7 +289,7 @@ pub fn calculate_physics_metrics(states: &[PhysicsState], constants: &PhysicsCon
 }
 
 /// Physics validation metrics
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PhysicsMetrics {
     pub total_mass: f64,
     pub total_energy: f64,

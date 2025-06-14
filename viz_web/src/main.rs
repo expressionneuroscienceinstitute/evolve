@@ -349,7 +349,14 @@ impl EvolutionMonitor {
     
     /// Establish websocket and start reading JSON messages representing SimulationState
     pub fn connect_ws(&mut self, websocket_url: String) {
-        let ws = web_sys::WebSocket::new(&websocket_url).unwrap();
+        console_log!("Connecting to WebSocket at {}", websocket_url);
+        let ws = match web_sys::WebSocket::new(&websocket_url) {
+            Ok(ws) => ws,
+            Err(err) => {
+                console_log!("Failed to create WebSocket: {:?}", err);
+                return;
+            }
+        };
         
         // Set up connection success handler
         let onopen_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
@@ -371,6 +378,12 @@ impl EvolutionMonitor {
                 let data_str = text.as_string().unwrap_or_default();
                 console_log!("Received WebSocket message: {}", data_str);
                 // TODO: Parse and update simulation state
+            } else {
+                let message_type = match e.data().dyn_into::<ArrayBuffer>() {
+                    Ok(buffer) => format!("binary (size: {} bytes)", buffer.byte_length()),
+                    Err(_) => "unknown type".to_string(),
+                };
+                console_log!("Received non-text WebSocket message: {}", message_type);
             }
         }) as Box<dyn FnMut(MessageEvent)>);
         

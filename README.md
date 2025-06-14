@@ -127,6 +127,68 @@ mutation_rate = 0.01
 consciousness_threshold = 0.1
 ```
 
+### 🧪 Running the Built-In Demos + Web Dashboard
+
+EVOLVE ships with two quick demos that exercise different physics layers and automatically stream live data to the browser dashboard.
+
+| Demo | What it Shows | Binary |
+|------|---------------|--------|
+| **Big Bang / QED** | Compton scattering & pair-production right after the Big Bang | `big_bang_demo` |
+| **Weak Interactions** | Neutron β-decay, neutrino–electron scattering | `weak_interactions_demo` |
+
+#### 1  Prerequisites (first time only)
+```bash
+rustup target add wasm32-unknown-unknown   # build WASM
+cargo install trunk --locked               # web bundler / dev-server
+npm i -g ws node-fetch                     # tiny deps for head-less smoke test
+```
+
+#### 2  Start the simulation with a WebSocket feed (port 8080)
+```bash
+cargo run --release -p demos --bin weak_interactions_demo \
+           -- --serve-dash 8080 \
+           > demos/outputs/weak_interactions.csv &
+SIM_PID=$!
+```
+You should see:
+```
+WebSocket exporter listening on 0.0.0.0:8080
+```
+
+#### 3  Build & serve the dashboard (port 9000)
+```bash
+cd viz_web
+trunk serve --release --port 9000 --open | cat &
+DASH_PID=$!
+```
+This automatically opens your browser at <http://localhost:9000> showing live particles.  (The *Big Bang* demo uses the same feed flag.)
+
+#### 4  Head-less smoke test (optional CI-friendly check)
+```bash
+node tools/smoke_dashboard.js
+```
+Expected output:
+```
+[ok] HTTP respond 200
+[ok] Received SimulationState frame
+{ "current_tick": 1234, "temperature": 8.01e+11, ... }
+```
+
+#### 5  Clean-up
+```bash
+kill $SIM_PID $DASH_PID   # stop sim & web-server
+```
+
+### 🛠️ Troubleshooting
+
+| Symptom | Cause / Fix |
+|---------|-------------|
+| **`404` when opening the dashboard** | Make sure you ran `trunk serve` from the `viz_web/` directory *after* running `cargo install trunk`.  The default URL is <http://localhost:9000>. |
+| **Smoke test hangs on WebSocket** | Confirm the demo was started with `--serve-dash 8080` and that no firewall blocks WS traffic. |
+| **`wasm32-unknown-unknown` target missing** | Run `rustup target add wasm32-unknown-unknown`. |
+| **Node script complains about `ws`** | Install test deps with `npm i -g ws node-fetch`. |
+| **Particles render but controls do nothing** | Check browser console — setters are exported as `set_particle_size_scale` and `set_energy_filter_min`; refresh page after rebuilding dashboard. |
+
 ## 📊 Monitoring and Analysis
 
 ### **View Modes**

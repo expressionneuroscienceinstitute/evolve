@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-universe_sim = { path = "../crates/universe_sim" }
+universe_sim = { path = "../crates/universe_sim", default-features = false }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["v4", "js"] }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = [
+    "Window", "Document", "HtmlCanvasElement", "CanvasRenderingContext2d",
+    "WebSocket", "MessageEvent", "console"
+] }
 wasm-bindgen = { workspace = true }
-macroquad = { workspace = true }
+getrandom = { version = "0.3", features = ["wasm_js"] }

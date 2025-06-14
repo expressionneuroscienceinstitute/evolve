@@ -272,12 +272,13 @@ impl EvolutionEngine {
         
         // Run AI decision making process
         let decision_type = self.run_neural_decision_process(agent, &context)?;
+        let decision_type_clone = decision_type.clone();
         let success_prob = self.calculate_success_probability(agent, &decision_type, &context);
         
         Ok(Decision {
             id: Uuid::new_v4(),
             timestamp: current_tick,
-            decision_type,
+            decision_type: decision_type_clone,
             context,
             outcome: DecisionOutcome::default(),
             energy_cost: self.calculate_energy_cost(agent, &decision_type),
@@ -599,7 +600,7 @@ pub struct WorldState {
     pub opportunities: Vec<Opportunity>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ResourceType {
     Energy, Matter, Information, Social, Technological,
 }

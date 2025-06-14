@@ -378,6 +378,11 @@
         </div>
     </div>
 
+    <div id="controls" style="position:fixed;top:10px;left:10px;background:rgba(30,30,30,0.8);color:#fff;padding:8px;border-radius:4px;font-family:sans-serif;font-size:14px;z-index:10;">
+        <label>Size scale <input id="sizeScale" type="range" min="0.2" max="5" step="0.1" value="1"></label><br/>
+        <label>Min energy (keV) <input id="energyMin" type="number" min="0" value="0"></label>
+    </div>
+
     <div class="controls-panel scrollbar">
         <div class="control-section">
             <h3>🔭 View Modes</h3>
@@ -583,7 +588,7 @@
     </div>
 
     <script type="module">
-        import init, { EvolutionMonitor } from './pkg/viz_web.js';
+        import init, { EvolutionMonitor, start_dashboard } from './pkg/viz_web.js';
 
         let monitor = null;
         let animationId = null;
@@ -729,6 +734,21 @@
             if (animationId) {
                 cancelAnimationFrame(animationId);
             }
+        });
+
+        // Trunk replaces this with correct wasm/JS paths
+        const WS_URL = `ws://${location.hostname}:8080`;
+        init().then(() => {
+            monitor = start_dashboard("sim-canvas", WS_URL);
+            // hook UI events
+            document.getElementById('sizeScale').addEventListener('input', e=>{
+                const v=parseFloat(e.target.value);
+                monitor.set_particle_size_scale(v);
+            });
+            document.getElementById('energyMin').addEventListener('change', e=>{
+                const v=parseFloat(e.target.value);
+                monitor.set_energy_filter_min(v);
+            });
         });
     </script>
 </body>

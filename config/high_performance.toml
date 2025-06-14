@@ -1,0 +1,46 @@
+# Universe Simulation High-Performance Configuration
+# ==================================================
+# Optimized for workstations and high-end servers
+
+# Time simulation parameters
+tick_span_years = 1_000_000.0          # 1 million years per tick
+target_ups = 5000.0                    # High UPS target for speed
+max_ticks = null                       # No limit
+
+# Initial conditions
+initial_particle_count = 10000         # More particles for detail
+universe_radius_ly = 2000.0            # Larger universe
+big_bang_temperature = 3000.0          # Standard temperature
+
+# Physics parameters
+physics_timestep = 0.0000001           # Fine timestep for accuracy
+enable_relativity = true               # Full physics
+enable_quantum = true                  # Full quantum effects
+enable_chemistry = true                # Full chemical reactions
+
+# Agent evolution parameters
+agent_mutation_rate = 0.001            # Standard mutation rate
+max_agents_per_planet = 50000          # High population limit
+agent_lifespan_ticks = 2000            # Longer lifespan for complex evolution
+enable_self_modification = true        # Full self-modification
+
+# Performance and resource limits
+memory_limit_gb = 16.0                 # 16 GB limit
+cpu_limit_percent = 90.0               # High CPU usage
+auto_save_interval = 50000             # Less frequent saves for speed
+checkpoint_retention = 20              # More checkpoints for safety
+
+# God-mode parameters
+god_mode_enabled = false               # Disabled by default
+max_miracles_per_epoch = 10            # More miracles allowed
+divine_entropy_cost = 100000000000000000000.0
+
+# Networking and distribution
+enable_clustering = true               # Enable distributed execution
+cluster_node_limit = 64                # High node limit
+enable_oracle_link = true              # Full communication
+
+# Validation and safety
+strict_physics_validation = true       # Full validation
+enable_safety_guards = true            # Keep safety on
+simulation_seed = null

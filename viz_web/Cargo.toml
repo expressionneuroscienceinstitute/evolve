@@ -1,0 +1,9 @@
+[package]
+name = "viz_web"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+universe_sim = { path = "../crates/universe_sim" }
+wasm-bindgen = { workspace = true }
+macroquad = { workspace = true }

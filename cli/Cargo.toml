@@ -1,0 +1,19 @@
+[package]
+name = "universectl"
+version = "0.1.0"
+edition = "2021"
+description = "Command-line interface for the Universe Simulation"
+
+[[bin]]
+name = "universectl"
+path = "src/main.rs"
+
+[dependencies]
+universe_sim = { path = "../crates/universe_sim" }
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+serde = { workspace = true }
+toml = { workspace = true }

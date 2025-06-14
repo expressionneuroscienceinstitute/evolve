@@ -682,9 +682,10 @@ async fn start_websocket_server(port: u16, tx: broadcast::Sender<String>) {
     
     let routes = websocket_route.with(cors);
     
-    println!("WebSocket server listening on ws://localhost:{}/ws", port);
+    println!("WebSocket server listening on ws://0.0.0.0:{}/ws", port);
+    // Bind on all interfaces so the dashboard can connect from any host
     warp::serve(routes)
-        .run(([127, 0, 0, 1], port))
+        .run(([0, 0, 0, 0], port))
         .await;
 }
 
@@ -692,6 +693,8 @@ async fn handle_websocket(websocket: warp::ws::WebSocket, tx: broadcast::Sender<
     use futures_util::{SinkExt, StreamExt};
     use warp::ws::Message;
     
+    println!("WebSocket client connected");
+
     let (mut ws_tx, mut ws_rx) = websocket.split();
     let mut rx = tx.subscribe();
     
@@ -714,6 +717,7 @@ async fn handle_websocket(websocket: warp::ws::WebSocket, tx: broadcast::Sender<
             match result {
                 Ok(msg) => {
                     if msg.is_close() {
+                        println!("WebSocket client disconnected");
                         break;
                     }
                 }

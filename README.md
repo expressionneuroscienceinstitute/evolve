@@ -303,6 +303,7 @@ kill $SIM_PID $DASH_PID   # stop sim & web-server
 |---------|-------------|
 | **`404` when opening the dashboard** | Make sure you ran `trunk serve` from the `viz_web/` directory *after* running `cargo install trunk`.  The default URL is <http://localhost:9000>. |
 | **Smoke test hangs on WebSocket** | Confirm the demo was started with `--serve-dash 8080` and that no firewall blocks WS traffic. |
+| **Dashboard shows `Disconnected`** | Check the browser console for detailed WebSocket logs.  Ensure the simulation printed `WebSocket server listening` and that the URL matches `ws://<host>:8080/ws`. |
 | **`wasm32-unknown-unknown` target missing** | Run `rustup target add wasm32-unknown-unknown`. |
 | **Node script complains about `ws`** | Install test deps with `npm i -g ws node-fetch`. |
 | **Particles render but controls do nothing** | Check browser console — setters are exported as `set_particle_size_scale` and `set_energy_filter_min`; refresh page after rebuilding dashboard. |

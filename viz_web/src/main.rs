@@ -724,8 +724,10 @@ impl EvolutionMonitor {
     fn render_innovation_milestones(&mut self, _innovations: &Vec<InnovationRecord>, _y: f64) -> Result<(), JsValue> { Ok(()) }
     fn render_ui_overlay(&mut self) -> Result<(), JsValue> { Ok(()) }
     
+    #[wasm_bindgen]
     pub fn set_particle_size_scale(&mut self, scale: f64) { self.particle_size_scale = scale; }
-    pub fn set_energy_filter_min(&mut self, min_kev: f64) { self.energy_filter_min = min_kev * 1.60218e-16; /* keV to J */ }
+    #[wasm_bindgen]
+    pub fn set_energy_filter_min(&mut self, min_kev: f64) { self.energy_filter_min = min_kev * 1.60218e-16; }
 }
 
 // Supporting types and structures
@@ -832,9 +834,9 @@ fn web_window() -> web_sys::Window { web_sys::window().expect("no global window"
 
 /// Convenience exported function to start the dashboard from JS
 #[wasm_bindgen]
-pub fn start_dashboard(canvas_id: &str, websocket_url: &str) -> Result<(), JsValue> {
+pub fn start_dashboard(canvas_id: &str, websocket_url: &str) -> Result<EvolutionMonitor, JsValue> {
     let mut monitor = EvolutionMonitor::new(canvas_id)?;
     monitor.connect_ws(websocket_url)?;
     monitor.start_render_loop()?;
-    Ok(())
+    Ok(monitor)
 }

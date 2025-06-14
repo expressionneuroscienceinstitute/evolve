@@ -1123,6 +1123,7 @@ dependencies = [
  "bevy_ecs",
  "nalgebra",
  "ndarray",
+ "once_cell",
  "ordered-float",
  "rand",
  "rand_chacha",

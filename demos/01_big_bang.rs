@@ -18,7 +18,7 @@ fn main() -> Result<()> {
             let temp = engine.temperature;
             let total = engine.particles.len();
             let photons = engine.particles.iter().filter(|p| matches!(p.particle_type, physics_engine::ParticleType::Photon)).count();
-            let quarks = engine.particles.iter().filter(|p| p.properties().has_color).count();
+            let quarks = engine.particles.iter().filter(|p| physics_engine::particles::get_properties(p.particle_type).has_color).count();
             let leptons = total - quarks - photons;
             println!("{tick},{temp},{total},{photons},{quarks},{leptons}");
         }

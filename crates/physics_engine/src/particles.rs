@@ -119,3 +119,29 @@ pub static BRANCHING_RATIOS: Lazy<HashMap<ParticleType, Vec<(Vec<ParticleType>, 
 
     h
 });
+
+/// Electroweak and QCD global parameters (PDG 2024)
+pub mod sm_params {
+    /// Weak mixing angle \(\sin^2 \theta_W\) in \(\overline{MS}\) at \(M_Z\)
+    pub const SIN2_THETA_W: f64 = 0.23122; // ±0.00003
+
+    /// CKM CP-violating phase δ (radians) – global fit
+    pub const DELTA_CP: f64 = 1.20; // ±0.08
+
+    /// Jarlskog invariant |J| = 3.04 × 10⁻⁵
+    pub const JARLSKOG_J: f64 = 3.04e-5;
+
+    /// Strong coupling α_s(M_Z) (5-flavour) – world average
+    pub const ALPHA_S_MZ: f64 = 0.1179; // ±0.0009
+}
+
+/// One-loop running of α_s using Λ^(5)_MS = 211 MeV derived from PDG average
+pub fn alpha_s_one_loop(q2_gev2: f64) -> f64 {
+    // Λ^(5)_MS ≈ 0.211 GeV
+    let lambda2 = 0.211f64.powi(2);
+    let b0 = (33.0 - 2.0 * 5.0) / (12.0 * std::f64::consts::PI);
+    1.0 / (b0 * (q2_gev2 / lambda2).ln())
+}
+
+/// Convenience: α_s(Q) with Q in GeV (one-loop)
+pub fn alpha_s(q_gev: f64) -> f64 { alpha_s_one_loop(q_gev * q_gev) }

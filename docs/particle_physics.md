@@ -127,6 +127,61 @@ The Cabibbo-Kobayashi-Maskawa matrix describes quark mixing in weak interactions
 - H → ZZ*: BR ≈ 3%
 - H → γγ: BR ≈ 0.2%
 
+## QED Interactions Implementation
+
+### Compton Scattering (γ + e⁻ → γ + e⁻)
+
+The simulator implements Compton scattering using the Klein-Nishina formula for the differential cross-section:
+
+```
+σ_KN(ε) = 2πr_e² [(1+ε)/ε³ {2(1+ε)/(1+2ε) - ln(1+2ε)/ε} + ln(1+2ε)/(2ε) - (1+3ε)/(1+2ε)²]
+```
+
+Where:
+- ε = E_γ/(m_e c²) is the dimensionless photon energy
+- r_e = e²/(4πε₀ m_e c²) is the classical electron radius
+
+The scattering angle is sampled using rejection sampling from the Klein-Nishina angular distribution.
+
+### Pair Production (γ → e⁺ + e⁻)
+
+Pair production in the field of a nucleus is implemented using the Bethe-Heitler cross-section:
+
+```
+σ_BH(E_γ, Z) = 4αr_e² Z² [ln(183/Z^(1/3)) - f_c]
+```
+
+Where:
+- Z is the atomic number of the nucleus
+- f_c = α²Z² is the Coulomb correction factor
+- The formula is valid for complete screening (high energy limit)
+
+### Implementation Details
+
+1. **Interaction Range**: Set to ~1 fm (10⁻¹⁵ m) for QED processes
+2. **Probability Calculation**: P = 1 - exp(-σnvΔt) where:
+   - σ = cross-section
+   - n = number density
+   - v = relative velocity (c for photons)
+   - Δt = time step
+
+3. **Energy-Momentum Conservation**: Strictly enforced in all interactions
+4. **Relativistic Kinematics**: Full relativistic treatment with E² = (pc)² + (mc²)²
+
+### Validation
+
+The implementation has been validated against:
+- Thomson limit (low energy): σ → (8π/3)r_e² 
+- Klein-Nishina high-energy limit: σ ∝ ln(ε)/ε
+- Pair production threshold: E_γ > 2m_e c² = 1.022 MeV
+
+## References
+
+1. Particle Data Group, R.L. Workman et al., Prog. Theor. Exp. Phys. 2024, 083C01 (2024)
+2. Klein, O. and Nishina, Y., Z. Phys. 52, 853 (1929)
+3. Bethe, H. and Heitler, W., Proc. R. Soc. Lond. A 146, 83 (1934)
+4. Peskin, M.E. and Schroeder, D.V., "An Introduction to Quantum Field Theory" (1995)
+
 ## Implementation Notes
 
 ### Mass-Energy Conversion

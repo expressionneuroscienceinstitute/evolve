@@ -7,7 +7,6 @@ use anyhow::Result;
 use universe_sim::{UniverseSimulation, config::SimulationConfig};
 use tokio::time::{sleep, Duration};
 use std::path::PathBuf;
-use tracing::{info, warn};
 use warp::Filter;
 use tokio::sync::broadcast;
 use serde_json;
@@ -402,8 +401,8 @@ async fn cmd_start(
             if serve_dash.is_some() {
                 let simulation_state = serde_json::json!({
                     "type": "simulation_update",
-                    "tick": stats.current_tick,
-                    "age_gyr": stats.universe_age_gyr,
+                    "current_tick": stats.current_tick,
+                    "universe_age_gyr": stats.universe_age_gyr,
                     "cosmic_era": format!("{:?}", stats.cosmic_era),
                     "particle_count": stats.particle_count,
                     "ups": ups,
@@ -413,7 +412,9 @@ async fn cmd_start(
                         .as_secs()
                 });
                 
-                let _ = tx.send(simulation_state.to_string());
+                if let Err(e) = tx.send(simulation_state.to_string()) {
+                    eprintln!("Failed to send simulation update: {}", e);
+                }
             }
         }
         

@@ -64,6 +64,7 @@ pub struct EvolutionMonitor {
     consciousness_monitor: ConsciousnessMonitor,
     innovation_tracker: InnovationTracker,
     analytics_engine: AnalyticsEngine,
+    connected: bool,
 }
 
 /// Complete simulation state received from backend
@@ -342,78 +343,52 @@ impl EvolutionMonitor {
             consciousness_monitor: ConsciousnessMonitor::new(),
             innovation_tracker: InnovationTracker::new(),
             analytics_engine: AnalyticsEngine::new(),
+            connected: false,
         })
     }
     
     /// Establish websocket and start reading JSON messages representing SimulationState
-    pub fn connect_ws(&mut self, websocket_url: &str) -> Result<(), JsValue> {
-        console_log!("Attempting to connect to WebSocket: {}", websocket_url);
-        let ws = WebSocket::new(websocket_url)?;
-        
-        // Set up message handler
-        let onmessage_cb = Closure::wrap(Box::new(move |e: web_sys::MessageEvent| {
-            if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
-                let s = txt.as_string().unwrap_or_default();
-                console_log!("Received WebSocket message: {}", s);
-                
-                // Try to parse simulation state from JSON
-                // TODO: Update simulation state from parsed JSON
-            }
-        }) as Box<dyn FnMut(_)>);
-        
-        ws.set_onmessage(Some(onmessage_cb.as_ref().unchecked_ref()));
-        onmessage_cb.forget();
+    pub fn connect_ws(&mut self, websocket_url: String) {
+        let ws = web_sys::WebSocket::new(&websocket_url).unwrap();
         
         // Set up connection success handler
-        let window = web_sys::window().unwrap();
-        let document = window.document().unwrap();
-        let onopen_cb = Closure::wrap(Box::new(move |_: web_sys::Event| {
+        let onopen_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
             console_log!("WebSocket connected successfully");
-            
-            // Update connection status in UI
-            if let Some(status_elem) = document.get_element_by_id("connection-status") {
-                status_elem.set_text_content(Some("🟢 Connected"));
-                status_elem.set_class_name("connection-status connected");
+        }) as Box<dyn FnMut(web_sys::Event)>);
+        
+        ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
+        onopen_callback.forget();
+
+        // Set up message handler
+        let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
+            if let Ok(text) = e.data().dyn_into::<JsString>() {
+                let data_str = text.as_string().unwrap_or_default();
+                console_log!("Received WebSocket message: {}", data_str);
+                // TODO: Parse and update simulation state
             }
-        }) as Box<dyn FnMut(_)>);
+        }) as Box<dyn FnMut(MessageEvent)>);
         
-        ws.set_onopen(Some(onopen_cb.as_ref().unchecked_ref()));
-        onopen_cb.forget();
-        
+        ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
+        onmessage_callback.forget();
+
         // Set up error handler
-        let window2 = web_sys::window().unwrap();
-        let document2 = window2.document().unwrap();
-        let onerror_cb = Closure::wrap(Box::new(move |e: web_sys::Event| {
-            console_log!("WebSocket error: {:?}", e);
-            
-            // Update connection status in UI
-            if let Some(status_elem) = document2.get_element_by_id("connection-status") {
-                status_elem.set_text_content(Some("🔴 Connection Error"));
-                status_elem.set_class_name("connection-status disconnected");
-            }
-        }) as Box<dyn FnMut(_)>);
+        let onerror_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
+            console_log!("WebSocket connection error");
+        }) as Box<dyn FnMut(web_sys::Event)>);
         
-        ws.set_onerror(Some(onerror_cb.as_ref().unchecked_ref()));
-        onerror_cb.forget();
-        
+        ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
+        onerror_callback.forget();
+
         // Set up close handler
-        let window3 = web_sys::window().unwrap();
-        let document3 = window3.document().unwrap();
-        let onclose_cb = Closure::wrap(Box::new(move |e: web_sys::CloseEvent| {
-            console_log!("WebSocket closed with code: {}, reason: {}", e.code(), e.reason());
-            
-            // Update connection status in UI
-            if let Some(status_elem) = document3.get_element_by_id("connection-status") {
-                status_elem.set_text_content(Some("🔴 Disconnected"));
-                status_elem.set_class_name("connection-status disconnected");
-            }
-        }) as Box<dyn FnMut(_)>);
+        let onclose_callback = Closure::wrap(Box::new(move |_: web_sys::CloseEvent| {
+            console_log!("WebSocket connection closed");
+        }) as Box<dyn FnMut(web_sys::CloseEvent)>);
         
-        ws.set_onclose(Some(onclose_cb.as_ref().unchecked_ref()));
-        onclose_cb.forget();
-        
+        ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
+        onclose_callback.forget();
+
         self.websocket = Some(ws);
-        Ok(())
+        self.connected = true;
     }
     
     /// Start RAF loop for continuous rendering
@@ -437,7 +412,7 @@ impl EvolutionMonitor {
             ViewMode::DecisionTracking => self.render_decision_tracking()?,
             ViewMode::ConsciousnessMap => self.render_consciousness_map()?,
             ViewMode::InnovationTimeline => self.render_innovation_timeline()?,
-            ViewMode::SelectionPressures => self.render_selection_pressures()?,
+            ViewMode::SelectionPressures => self.render_selection_pressures(&Vec::new())?,
             ViewMode::QuantumFields => self.render_quantum_fields()?,
             _ => self.render_agent_overview()?,
         }
@@ -747,7 +722,7 @@ impl EvolutionMonitor {
     fn draw_interaction_indicators(&mut self, _particle: &ParticleVisualization) -> Result<(), JsValue> { Ok(()) }
     fn render_quantum_field_overlay(&mut self) -> Result<(), JsValue> { Ok(()) }
     fn render_quantum_fields(&mut self) -> Result<(), JsValue> { Ok(()) }
-    fn render_selection_pressures(&mut self) -> Result<(), JsValue> { Ok(()) }
+    fn render_selection_pressures(&mut self, _: &Vec<SelectionPressureVisualization>) -> Result<(), JsValue> { Ok(()) }
     fn draw_consciousness_indicator(&mut self, _agent: &AgentVisualization, _x: f64, _y: f64) -> Result<(), JsValue> { Ok(()) }
     fn draw_innovation_aura(&mut self, _agent: &AgentVisualization, _x: f64, _y: f64) -> Result<(), JsValue> { Ok(()) }
     fn draw_social_connections(&mut self, _agent: &AgentVisualization) -> Result<(), JsValue> { Ok(()) }
@@ -765,7 +740,124 @@ impl EvolutionMonitor {
 
     #[wasm_bindgen]
     pub fn connect(&mut self, websocket_url: &str) -> Result<(), JsValue> {
-        self.connect_ws(websocket_url)
+        self.connect_ws(websocket_url.to_string());
+        Ok(())
+    }
+
+    fn set_fill_style(&self, color: &str) -> Result<(), JsValue> {
+        self.context.set_fill_style(&JsValue::from_str(color));
+        Ok(())
+    }
+
+    fn set_stroke_style(&self, color: &str) -> Result<(), JsValue> {
+        self.context.set_stroke_style(&JsValue::from_str(color));
+        Ok(())
+    }
+
+    fn draw_particle(&mut self, particle: &ParticleVisualization) -> Result<(), JsValue> {
+        let (x, y) = self.map_3d_to_2d(particle.position);
+        let size = self.get_particle_size(particle.mass) * self.particle_size_scale;
+        let (r, g, b, a) = self.get_particle_color(&particle.particle_type);
+        
+        self.context.begin_path();
+        self.context.arc(x, y, size, 0.0, std::f64::consts::PI * 2.0)?;
+        self.set_fill_style(&format!("rgba({},{},{},{})", r, g, b, a))?;
+        self.context.fill();
+        
+        Ok(())
+    }
+
+    fn draw_agent(&mut self, agent: &AgentVisualization) -> Result<(), JsValue> {
+        let (x, y) = self.map_3d_to_2d(agent.position);
+        let size = 10.0 + agent.tech_level as f64 * 2.0;
+        let color = self.get_agent_color(agent);
+        
+        self.context.begin_path();
+        self.context.arc(x, y, size, 0.0, std::f64::consts::PI * 2.0)?;
+        self.set_fill_style(&format!("rgba({},{},{},{})", 
+            (color[0] * 255.0) as u8,
+            (color[1] * 255.0) as u8,
+            (color[2] * 255.0) as u8,
+            color[3]))?;
+        self.context.fill();
+        
+        Ok(())
+    }
+
+    fn draw_ui_text(&mut self, text: &str, x: f64, y: f64) -> Result<(), JsValue> {
+        self.set_fill_style("white")?;
+        self.context.fill_text(text, x, y)?;
+        Ok(())
+    }
+
+    fn draw_ui_box(&mut self, x: f64, y: f64, width: f64, height: f64, color: &str) -> Result<(), JsValue> {
+        self.context.begin_path();
+        self.context.rect(x, y, width, height);
+        self.set_fill_style(color)?;
+        self.context.fill();
+        self.set_stroke_style("white")?;
+        self.context.stroke();
+        Ok(())
+    }
+
+    fn draw_ui_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, color: &str) -> Result<(), JsValue> {
+        self.context.begin_path();
+        self.context.move_to(x1, y1);
+        self.context.line_to(x2, y2);
+        self.set_stroke_style(color)?;
+        self.context.stroke();
+        Ok(())
+    }
+
+    fn draw_ui_graph(&mut self, data: &[f64], x: f64, y: f64, width: f64, height: f64) -> Result<(), JsValue> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        
+        let max = data.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let min = data.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+        let range = max - min;
+        
+        self.context.begin_path();
+        self.context.move_to(x, y + height);
+        
+        for (i, &value) in data.iter().enumerate() {
+            let px = x + (i as f64 / (data.len() - 1) as f64) * width;
+            let py = y + height - ((value - min) / range) * height;
+            self.context.line_to(px, py);
+        }
+        
+        self.set_stroke_style(&format!("rgba(0,255,255,0.8)"))?;
+        self.context.stroke();
+        
+        // Draw axes
+        self.set_stroke_style("white")?;
+        self.context.begin_path();
+        self.context.move_to(x, y);
+        self.context.line_to(x, y + height);
+        self.context.line_to(x + width, y + height);
+        self.context.stroke();
+        
+        Ok(())
+    }
+
+    fn draw_ui_panel(&mut self) -> Result<(), JsValue> {
+        let width = self.canvas.width() as f64;
+        let height = self.canvas.height() as f64;
+        
+        // Draw semi-transparent background
+        self.context.begin_path();
+        self.context.rect(0.0, 0.0, width, 60.0);
+        self.set_fill_style("rgba(0,0,0,0.7)")?;
+        self.context.fill();
+        
+        // Draw stats
+        self.set_fill_style("white")?;
+        self.context.fill_text(&format!("Age: {:.2} Gyr", self.simulation_state.universe_age_gyr), 10.0, 20.0)?;
+        self.context.fill_text(&format!("Particles: {}", self.simulation_state.particles.len()), 200.0, 20.0)?;
+        self.context.fill_text(&format!("Agents: {}", self.simulation_state.agents.len()), 400.0, 20.0)?;
+        
+        Ok(())
     }
 }
 
@@ -881,7 +973,7 @@ fn web_window() -> web_sys::Window { web_sys::window().expect("no global window"
 #[wasm_bindgen]
 pub fn start_dashboard(canvas_id: &str, websocket_url: &str) -> Result<EvolutionMonitor, JsValue> {
     let mut monitor = EvolutionMonitor::new(canvas_id)?;
-    monitor.connect_ws(websocket_url)?;
+    monitor.connect_ws(websocket_url.to_string());
     monitor.start_render_loop()?;
     Ok(monitor)
 }

@@ -606,7 +606,11 @@
                 
                 // Connect to simulation backend
                 const wsUrl = `ws://${window.location.hostname}:8080/ws`;
-                await monitor.connect(wsUrl);
+                try {
+                    monitor.connect(wsUrl);
+                } catch (err) {
+                    console.error('WebSocket connection failed:', err);
+                }
                 
                 updateConnectionStatus(true);
                 startRenderLoop();
@@ -665,13 +669,16 @@
         }
 
         function updateSimulationStats() {
-            // These would be updated from WebSocket messages in a real implementation
-            document.getElementById('universe-age').textContent = '13.8 Gyr';
-            document.getElementById('temperature').textContent = '2.7 K';
-            document.getElementById('particle-count').textContent = '1,000,000';
-            document.getElementById('agent-count').textContent = '50,000';
-            document.getElementById('consciousness-level').textContent = '15.7%';
-            document.getElementById('ups').textContent = '120.5';
+            if (monitor && monitor.simulation_state) {
+                const state = monitor.simulation_state;
+                document.getElementById('universe-age').textContent = state.universe_age_gyr.toFixed(2) + ' Gyr';
+                document.getElementById('temperature').textContent = state.temperature.toFixed(1) + ' K';
+                document.getElementById('particle-count').textContent = state.particle_count.toLocaleString();
+                document.getElementById('agent-count').textContent = state.agents.length.toLocaleString();
+                document.getElementById('consciousness-level').textContent = 
+                    ((state.agents.filter(a => a.consciousness_level > 0.5).length / state.agents.length) * 100).toFixed(1) + '%';
+                document.getElementById('ups').textContent = state.ups.toFixed(1);
+            }
         }
 
         window.setViewMode = function(mode) {

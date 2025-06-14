@@ -147,6 +147,7 @@ pub struct PhysicsEngine {
     pub volume: f64,  // Simulation volume in m³
     pub compton_count: u64,  // Track Compton scattering events
     pub pair_production_count: u64,  // Track pair production events
+    pub neutrino_scatter_count: u64, // Track neutrino-electron scatters
 }
 
 /// Atomic nucleus with detailed structure
@@ -307,6 +308,7 @@ impl PhysicsEngine {
             volume: 1e-30,  // 1 cubic femtometer
             compton_count: 0,
             pair_production_count: 0,
+            neutrino_scatter_count: 0,
         };
         
         // Initialize quantum fields
@@ -463,6 +465,29 @@ impl PhysicsEngine {
             }
         }
         
+        // Add a neutron population to demonstrate beta decay
+        for _ in 0..50 {
+            let neutron = FundamentalParticle {
+                particle_type: ParticleType::Neutron,
+                position: Vector3::new(
+                    rng.gen_range(-1e-14..1e-14),
+                    rng.gen_range(-1e-14..1e-14),
+                    rng.gen_range(-1e-14..1e-14),
+                ),
+                momentum: Vector3::zeros(),
+                spin: self.initialize_spin(ParticleType::Neutron),
+                color_charge: None,
+                electric_charge: 0.0,
+                mass: self.get_particle_mass(ParticleType::Neutron),
+                energy: 0.0,
+                creation_time: self.current_time,
+                decay_time: Some(self.current_time + interactions::NEUTRON_LIFETIME),
+                quantum_state: QuantumState::new(),
+                interaction_history: Vec::new(),
+            };
+            self.particles.push(neutron);
+        }
+        
         // Update particle energies
         self.update_particle_energies()?;
         
@@ -597,6 +622,34 @@ impl PhysicsEngine {
                             cross_section,
                             probability,
                         });
+                    }
+                }
+
+                // Check for neutrino-electron scattering
+                let is_neutrino_electron =
+                    (matches!(p1.particle_type, ParticleType::ElectronNeutrino | ParticleType::MuonNeutrino | ParticleType::TauNeutrino) && p2.particle_type == ParticleType::Electron) ||
+                    (matches!(p2.particle_type, ParticleType::ElectronNeutrino | ParticleType::MuonNeutrino | ParticleType::TauNeutrino) && p1.particle_type == ParticleType::Electron);
+                if is_neutrino_electron {
+                    let (nu_idx, e_idx) = if matches!(p1.particle_type, ParticleType::ElectronNeutrino | ParticleType::MuonNeutrino | ParticleType::TauNeutrino) {
+                        (i, j)
+                    } else {
+                        (j, i)
+                    };
+                    let e_nu = self.particles[nu_idx].energy / (1.602176634e-10); // convert J to GeV
+                    let cross_section = interactions::neutrino_electron_cross_section(e_nu);
+
+                    // Use same probability formula
+                    let volume = 4.0 * std::f64::consts::PI * distance.powi(3) / 3.0;
+                    let number_density = 1.0 / volume;
+                    let probability = interaction_probability(
+                        cross_section,
+                        number_density,
+                        SPEED_OF_LIGHT,
+                        self.time_step,
+                    );
+                    if rng.gen::<f64>() < probability {
+                        // For now just count scatter without changing momenta
+                        self.neutrino_scatter_count += 1;
                     }
                 }
             }

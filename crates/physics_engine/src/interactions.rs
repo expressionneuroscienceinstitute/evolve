@@ -265,3 +265,29 @@ pub fn interaction_probability(
     let rate = cross_section * number_density * relative_velocity;
     1.0 - (-rate * time_step).exp()
 }
+
+// ========================= Weak Interactions =============================
+
+/// Fermi coupling constant (GeV^{-2})
+pub const G_F_GEV2: f64 = 1.1663787e-5;
+
+/// Weak mixing angle sin^2 θ_W (MS-bar at M_Z)
+pub const SIN2_THETA_W: f64 = 0.23122;
+
+/// CKM element |V_ud| (dominant for beta decay)
+pub const V_UD: f64 = 0.97420;
+
+/// Axial coupling g_A (neutron beta decay)
+pub const G_A: f64 = 1.2723;
+
+/// Neutron lifetime from V-A theory (s).  We compute once and store.
+/// τ_n^{-1} = G_F^2 |V_ud|^2 (1 + 3 g_A^2) m_e^5 / (2 π^3) f
+/// Using phase-space factor f ≈ 1.6887, gives 879.4 s.
+pub const NEUTRON_LIFETIME: f64 = 880.0; // Use PDG value for now
+
+/// Simple neutrino-electron elastic scattering cross-section (low energy)
+/// σ ≈ (G_F^2 s) / π
+pub fn neutrino_electron_cross_section(e_nu_gev: f64) -> f64 {
+    let s = 2.0 * 0.000511 * e_nu_gev; // GeV^2 (m_e ~0.511 MeV)
+    (G_F_GEV2.powi(2) * s) / std::f64::consts::PI * 3.8938e-32 // Convert GeV^-2 to m^2
+}

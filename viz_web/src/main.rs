@@ -54,6 +54,9 @@ pub struct EvolutionMonitor {
     selected_agent: Option<Uuid>,
     selected_lineage: Option<Uuid>,
     time_scale: f64,
+    // Visualization config
+    particle_size_scale: f64,
+    energy_filter_min: f64,
     particle_filter: ParticleFilter,
     decision_analyzer: DecisionAnalyzer,
     lineage_tracker: LineageTracker,
@@ -330,6 +333,8 @@ impl EvolutionMonitor {
             selected_agent: None,
             selected_lineage: None,
             time_scale: 1.0,
+            particle_size_scale: 1.0,
+            energy_filter_min: 0.0,
             particle_filter: ParticleFilter::default(),
             decision_analyzer: DecisionAnalyzer::new(),
             lineage_tracker: LineageTracker::new(),  
@@ -416,6 +421,7 @@ impl EvolutionMonitor {
         
         // Render particles with different colors based on type
         for particle in &self.simulation_state.particles {
+            if particle.energy < self.energy_filter_min { continue; }
             let (r, g, b, a) = self.get_particle_color(&particle.particle_type);
             self.context.set_fill_style(&JsValue::from_str(&format!(
                 "rgba({}, {}, {}, {})", r, g, b, a
@@ -423,7 +429,7 @@ impl EvolutionMonitor {
             
             // Map 3D position to 2D screen coordinates
             let (x, y) = self.map_3d_to_2d(particle.position);
-            let size = self.get_particle_size(particle.mass) * self.time_scale;
+            let size = self.get_particle_size(particle.mass) * self.particle_size_scale;
             
             // Draw particle
             self.context.begin_path();
@@ -717,6 +723,9 @@ impl EvolutionMonitor {
     fn render_evolution_timeline(&mut self, _timeline: &Vec<EvolutionTimelineEvent>, _y: f64) -> Result<(), JsValue> { Ok(()) }
     fn render_innovation_milestones(&mut self, _innovations: &Vec<InnovationRecord>, _y: f64) -> Result<(), JsValue> { Ok(()) }
     fn render_ui_overlay(&mut self) -> Result<(), JsValue> { Ok(()) }
+    
+    pub fn set_particle_size_scale(&mut self, scale: f64) { self.particle_size_scale = scale; }
+    pub fn set_energy_filter_min(&mut self, min_kev: f64) { self.energy_filter_min = min_kev * 1.60218e-16; /* keV to J */ }
 }
 
 // Supporting types and structures

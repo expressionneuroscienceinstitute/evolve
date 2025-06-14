@@ -31,6 +31,7 @@ nalgebra = { version = "0.32", features = ["serde-serialize"] }
 rand = "0.8"
 rand_chacha = "0.3"
 ordered-float = "4.0"
+once_cell = "1.19"
 
 # Networking
 quinn = "0.10"  # QUIC implementation

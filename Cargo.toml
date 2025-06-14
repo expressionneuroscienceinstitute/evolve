@@ -6,7 +6,8 @@ members = [
     "crates/agent_evolution",
     "crates/networking",
     "crates/diagnostics",
-    "demos"
+    "demos",
+    "viz_web"
 ]
 resolver = "2"
 

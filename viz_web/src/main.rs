@@ -21,7 +21,6 @@ use js_sys::*;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use tokio_tungstenite::tungstenite::Message;
 use serde_json;
 
 // Import our simulation types

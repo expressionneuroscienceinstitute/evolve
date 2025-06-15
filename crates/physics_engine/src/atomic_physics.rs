@@ -4,8 +4,6 @@
 //! electronic structure, ionization, and interaction with photons.
 
 use anyhow::{anyhow, bail, Result};
-use nalgebra::Vector3;
-use rand::Rng;
 
 use crate::constants::RYDBERG_CONSTANT;
 use crate::Electron;

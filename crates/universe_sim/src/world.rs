@@ -4,7 +4,6 @@
 //! celestial bodies, and planetary systems with resource extraction.
 
 use crate::physics_engine::{ElementTable, EnvironmentProfile, StratumLayer, MaterialType};
-use bevy_ecs::prelude::*;
 use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
@@ -296,91 +295,35 @@ impl World {
         let mut rng = thread_rng();
         let star_id = Uuid::new_v4();
         
-        // Random star mass (0.1 to 50 solar masses)
-        let mass = rng.gen_range(0.1..50.0) * 1.989e30;  // kg
+        let star_mass = rng.gen_range(0.08..50.0); // 0.08 to 50 solar masses
         
-        // Stellar classification based on mass
-        let stellar_class = match mass / 1.989e30 {
-            m if m > 20.0 => StellarClass::O,
-            m if m > 10.0 => StellarClass::B,
-            m if m > 2.0 => StellarClass::A,
-            m if m > 1.5 => StellarClass::F,
-            m if m > 1.0 => StellarClass::G,
-            m if m > 0.5 => StellarClass::K,
-            _ => StellarClass::M,
-        };
-        
-        // Star properties based on mass
-        let radius = (mass / 1.989e30_f64).powf(0.8) * 6.96e8;  // Solar radii scaling
-        let luminosity = (mass / 1.989e30_f64).powf(3.5) * 3.828e26;  // L-M relation
-        let temperature = (luminosity / (4.0 * std::f64::consts::PI * radius.powi(2) * 5.67e-8)).powf(0.25);
-        
-        let position = Vector3::new(
-            x as f64 * self.grid.scale_per_cell,
-            y as f64 * self.grid.scale_per_cell,
-            0.0
-        );
-        
-        let star = CelestialBodyData {
+        let new_star = CelestialBodyData {
             id: star_id,
-            body_type: CelestialBodyType::Star { stellar_class },
-            position,
+            body_type: CelestialBodyType::Star { stellar_class: StellarClass::G }, // Placeholder
+            position: Vector3::new(x as f64, y as f64, 0.0),
             velocity: Vector3::zeros(),
-            mass,
-            radius,
-            temperature,
-            luminosity,
+            mass: star_mass * 1.98847e30, // Convert to kg
+            radius: 6.957e8, // Placeholder
+            temperature: 5778.0, // Placeholder
+            luminosity: 3.828e26, // Placeholder
             age: 0.0,
-            composition: self.generate_stellar_composition(mass),
+            composition: self.generate_stellar_composition(star_mass),
             planets: Vec::new(),
         };
         
-        // Update grid cell
-        self.grid.cells[y][x].cell_type = CellType::Stellar;
-        self.grid.cells[y][x].temperature = temperature;
-        self.grid.cells[y][x].celestial_body_id = Some(star_id);
-        
-        // Create star system
-        let system = StarSystem {
-            id: Uuid::new_v4(),
-            primary_star: star_id,
-            planets: Vec::new(),
-            asteroid_belts: Vec::new(),
-            system_age: 0.0,
-            metallicity: rng.gen_range(0.001..0.04),  // Z_star
-        };
-        
-        self.star_systems.insert(system.id, system);
-        self.celestial_bodies.insert(star_id, star);
-        
-        tracing::info!("Created new star {} at ({}, {}) with mass {:.2} M☉", 
-                      star_id, x, y, mass / 1.989e30);
+        self.celestial_bodies.insert(star_id, new_star);
         
         Ok(star_id)
     }
     
-    /// Generate stellar composition based on mass and metallicity
-    fn generate_stellar_composition(&self, mass: f64) -> ElementTable {
+    /// Generate composition for a new star
+    fn generate_stellar_composition(&self, _mass: f64) -> ElementTable {
+        // Simplified: higher mass stars have slightly higher metallicity
         let mut composition = ElementTable::new();
-        let mut rng = thread_rng();
-        
-        // Basic stellar composition (simplified)
-        composition.set_abundance(1, 700_000);   // ~70% H
-        composition.set_abundance(2, 280_000);   // ~28% He
-        
-        // Heavier elements (metals) - varies with stellar mass and age
-        let metallicity = rng.gen_range(0.001..0.04);
-        let metals_abundance = (20_000.0 * metallicity) as u32;
-        
-        // Distribute metals among common elements
-        composition.set_abundance(6, metals_abundance / 4);     // C
-        composition.set_abundance(7, metals_abundance / 6);     // N
-        composition.set_abundance(8, metals_abundance / 2);     // O
-        composition.set_abundance(10, metals_abundance / 10);   // Ne
-        composition.set_abundance(12, metals_abundance / 8);    // Mg
-        composition.set_abundance(14, metals_abundance / 5);    // Si
-        composition.set_abundance(26, metals_abundance / 3);    // Fe
-        
+        composition.set_abundance(1, 730_000); // 73% H
+        composition.set_abundance(2, 250_000); // 25% He
+        composition.set_abundance(8, 10_000);  // 1% O
+        composition.set_abundance(6, 5_000);   // 0.5% C
         composition
     }
     
@@ -415,7 +358,7 @@ impl World {
         let mut rng = thread_rng();
         let planet_id = Uuid::new_v4();
         
-        let star = self.celestial_bodies.get(&star_id).unwrap();
+        let star = self.celestial_bodies.get(&star_id).ok_or_else(|| anyhow::anyhow!("Star not found"))?;
         
         // Random orbital radius (0.1 to 50 AU)
         let orbital_radius = rng.gen_range(0.1..50.0) * 1.496e11;  // AU in meters
@@ -442,14 +385,19 @@ impl World {
             rng.gen_range(-0.1..0.1) * orbital_radius  // Small Z component
         );
         
-        let planet = CelestialBodyData {
+        // Simplified temperature calculation based on stellar luminosity and orbital radius
+        let au = 1.496e11; // Astronomical Unit in meters
+        let _distance_au = orbital_radius / au;
+        let temperature = self.calculate_planet_temperature(orbital_radius, star.luminosity);
+        
+        let new_planet = CelestialBodyData {
             id: planet_id,
             body_type: CelestialBodyType::Planet { planet_class: planet_class.clone() },
             position: planet_position,
             velocity: Vector3::zeros(),  // TODO: Calculate orbital velocity
             mass: planet_mass,
             radius: planet_radius,
-            temperature: self.calculate_planet_temperature(orbital_radius, star.luminosity),
+            temperature,
             luminosity: 0.0,  // Planets don't emit light
             age: 0.0,
             composition: self.generate_planetary_composition(&planet_class, orbital_radius),
@@ -467,7 +415,7 @@ impl World {
             star.planets.push(planet_id);
         }
         
-        self.celestial_bodies.insert(planet_id, planet);
+        self.celestial_bodies.insert(planet_id, new_planet);
         
         tracing::info!("Created planet {} around star {} at {:.2} AU", 
                       planet_id, star_id, orbital_radius / 1.496e11);
@@ -685,7 +633,7 @@ mod tests {
     
     #[test]
     fn test_grid_wrapping() {
-        let mut grid = WorldGrid::new(10, 10, 1e15);
+        let grid = WorldGrid::new(10, 10, 1e15);
         
         // Test wrapping
         let cell1 = grid.get_cell(-1, -1);

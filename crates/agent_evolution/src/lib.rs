@@ -530,61 +530,31 @@ impl EvolutionEngine {
     }
     
     /// Analyze decision impact and generate report
-    fn analyze_decision_impact(&self, agent: &AutonomousAgent, decision: &Decision, outcome: &DecisionOutcome) -> Result<DecisionReport> {
-        Ok(DecisionReport {
-            agent_id: agent.id,
-            decision: decision.clone(),
-            outcome: outcome.clone(),
-            learning_update: LearningUpdate::default(),
-            fitness_change: outcome.fitness_impact,
-        })
+    fn analyze_decision_impact(&self, _agent: &AutonomousAgent, _decision: &Decision, _outcome: &DecisionOutcome) -> Result<DecisionReport> {
+        unimplemented!()
     }
     
     /// Update agent learning based on decision outcome
-    fn update_agent_learning(&self, agent: &mut AutonomousAgent, decision: &Decision, outcome: &DecisionOutcome) -> Result<()> {
-        // Update learning based on success/failure
-        let learning_adjustment = if outcome.fitness_impact > 0.0 {
-            agent.learning_rate * 0.1
-        } else {
-            -agent.learning_rate * 0.05
-        };
-        
-        // Adjust neural weights based on learning
-        let adjustment_factor = learning_adjustment / agent.neural_weights.len() as f64;
-        for weight in &mut agent.neural_weights {
-            *weight += adjustment_factor;
-        }
-        
-        // Update consciousness level based on learning
-        agent.consciousness_level += learning_adjustment.abs() * 0.01;
-        agent.consciousness_level = agent.consciousness_level.min(1.0).max(0.0);
-        
-        Ok(())
+    fn update_agent_learning(&self, _agent: &mut AutonomousAgent, _decision: &Decision, _outcome: &DecisionOutcome) -> Result<()> {
+        unimplemented!()
     }
     
     /// Process reproduction events
-    fn process_reproduction(&self, agents: &mut Query<&mut AutonomousAgent>, _world_state: &WorldState, current_tick: u64) -> Result<ReproductionResults> {
-        let mut reproduction_count = 0;
-        let mut rng = thread_rng();
-        
-        // Collect agents ready for reproduction
-        let mut reproductive_agents = Vec::new();
-        for agent in agents.iter() {
-            if agent.energy > 100.0 && agent.sentience_level > 0.1 {
-                reproductive_agents.push(agent.id);
-            }
+    fn process_reproduction(&self, _agents: &mut Query<&mut AutonomousAgent>, _world_state: &WorldState, _current_tick: u64) -> Result<ReproductionResults> {
+        let mut _reproduction_count = 0;
+        let _reproductive_agents: Vec<Entity> = Vec::new();
+
+        // for agent in agents.iter() {
+        //     if agent.energy > agent.resource_requirements.get(&ResourceType::Energy).unwrap_or(&0.0) * 1.5 {
+        //         reproductive_agents.push(agent.id);
+        //     }
+        // }
+
+        for _agent_id in _reproductive_agents {
+            // Simplified reproduction logic
         }
-        
-        // Simple reproduction logic - agents with high energy can reproduce
-        for agent_id in reproductive_agents {
-            if rng.gen::<f64>() < 0.01 { // 1% chance per tick
-                reproduction_count += 1;
-                // In a real implementation, we would create offspring here
-                // For now, just count the event
-            }
-        }
-        
-        Ok(ReproductionResults::default())
+
+        Ok(ReproductionResults)
     }
 }
 
@@ -775,7 +745,7 @@ pub type Opportunity = String;
 
 impl WorldState {
     /// Get local resources available to an agent
-    pub fn get_local_resources(&self, agent_id: Uuid) -> HashMap<ResourceType, f64> {
+    pub fn get_local_resources(&self, _agent_id: Uuid) -> HashMap<ResourceType, f64> {
         // Simplified resource availability
         let mut local_resources = HashMap::new();
         local_resources.insert(ResourceType::Energy, 100.0);
@@ -785,19 +755,19 @@ impl WorldState {
     }
     
     /// Get nearby agents within a radius
-    pub fn get_nearby_agents(&self, agent_id: Uuid, radius: f64) -> Vec<AgentInteraction> {
+    pub fn get_nearby_agents(&self, _agent_id: Uuid, _radius: f64) -> Vec<AgentInteraction> {
         // Simplified - return some nearby agents
         vec!["agent_1".to_string(), "agent_2".to_string()]
     }
     
     /// Get threats present for an agent
-    pub fn get_threats(&self, agent_id: Uuid) -> Vec<ThreatType> {
-        vec![ThreatType::Environmental, ThreatType::Competition]
+    pub fn get_threats(&self, _agent_id: Uuid) -> Vec<ThreatType> {
+        vec![ThreatType::Predator]
     }
     
     /// Get opportunities available to an agent
-    pub fn get_opportunities(&self, agent_id: Uuid) -> Vec<OpportunityType> {
-        vec!["resource_patch".to_string(), "mating_opportunity".to_string()]
+    pub fn get_opportunities(&self, _agent_id: Uuid) -> Vec<OpportunityType> {
+        vec!["resource_rich_area".to_string()]
     }
 }
 

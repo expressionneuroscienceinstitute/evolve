@@ -419,47 +419,42 @@ pub fn sample_beta_decay_kinematics(
     electron_mass_gev: f64,
     rng: &mut impl Rng,
 ) -> (Vector3<f64>, Vector3<f64>, Vector3<f64>) {
-    // Q-value
-    let q_value = neutron_mass_gev - proton_mass_gev;
-    
-    // Sample electron energy from beta spectrum
-    let e_electron = sample_electron_energy(q_value - electron_mass_gev, rng);
-    let p_electron_mag = (e_electron * e_electron - electron_mass_gev * electron_mass_gev).sqrt();
-    
-    // Remaining energy for neutrino
-    let e_neutrino = q_value + electron_mass_gev - e_electron;
-    let p_neutrino_mag = e_neutrino; // massless neutrino
-    
-    // Sample isotropic directions
-    let theta_e = rng.gen::<f64>() * std::f64::consts::PI;
-    let phi_e = rng.gen::<f64>() * 2.0 * std::f64::consts::PI;
-    
-    let theta_nu = rng.gen::<f64>() * std::f64::consts::PI;
-    let phi_nu = rng.gen::<f64>() * 2.0 * std::f64::consts::PI;
-    
-    // Electron momentum
-    let p_electron = Vector3::new(
-        p_electron_mag * theta_e.sin() * phi_e.cos(),
-        p_electron_mag * theta_e.sin() * phi_e.sin(),
-        p_electron_mag * theta_e.cos(),
-    );
-    
-    // Neutrino momentum
-    let p_neutrino = Vector3::new(
-        p_neutrino_mag * theta_nu.sin() * phi_nu.cos(),
-        p_neutrino_mag * theta_nu.sin() * phi_nu.sin(),
-        p_neutrino_mag * theta_nu.cos(),
-    );
-    
-    // Proton momentum from conservation
-    let p_proton = -(p_electron + p_neutrino);
-    
-    (p_proton, p_electron, p_neutrino)
+    // Neutron at rest in lab frame
+    let _neutron_momentum: Vector3<f64> = Vector3::zeros();
+    let q_value = neutron_mass_gev - proton_mass_gev - electron_mass_gev;
+
+    // Sample electron energy from the allowed spectrum
+    let electron_energy = sample_electron_energy(q_value, rng);
+    let electron_momentum_mag =
+        (electron_energy.powi(2) - electron_mass_gev.powi(2)).sqrt();
+
+    // The rest of the energy goes to the antineutrino
+    let neutrino_energy = q_value - electron_energy;
+
+    // Electron and neutrino are emitted isotropically in the rest frame
+    let electron_dir = Vector3::new(
+        rng.gen_range(-1.0..1.0),
+        rng.gen_range(-1.0..1.0),
+        rng.gen_range(-1.0..1.0),
+    )
+    .normalize();
+
+    // Recoil proton momentum balances electron and neutrino
+    let neutrino_dir = -electron_dir;
+
+    // A more accurate model would account for angular correlations
+    // (the a_eν coefficient), but this is a good start.
+    let electron_momentum = electron_dir * electron_momentum_mag;
+    let neutrino_momentum = neutrino_dir * neutrino_energy; // E ≈ pc for neutrino
+    let proton_momentum = -(electron_momentum + neutrino_momentum);
+
+    (proton_momentum, electron_momentum, neutrino_momentum)
 }
 
+/// Calculate the lifetime of a free neutron
 pub fn neutron_lifetime() -> f64 { 1.0 / neutron_beta_width() }
 
-/// Sample electron energy (in GeV) from allowed β spectrum
+/// Sample electron energy from beta decay spectrum
 pub fn sample_electron_energy(q_value_gev: f64, rng: &mut impl Rng) -> f64 {
     // Rejection sampling in [m_e, E_max]
     let m_e = 0.00051099895;
@@ -506,62 +501,32 @@ pub fn neutrino_e_scattering_complete(flavour: u8, e_nu_gev: f64, is_antineutrin
 /// Sample neutrino-electron scattering kinematics
 pub fn sample_nu_e_scattering(
     nu_energy_gev: f64,
-    nu_momentum: Vector3<f64>,
+    _nu_momentum: Vector3<f64>,
     electron_momentum: Vector3<f64>,
     rng: &mut impl Rng,
 ) -> (Vector3<f64>, Vector3<f64>) {
-    let m_e = 0.000511; // GeV
+    let s_hat = 2.0 * electron_momentum.norm() * nu_energy_gev;
+    let _cos_theta = sample_nu_e_scattering_angle(nu_energy_gev, s_hat, &electron_momentum, rng);
     
-    // Sample scattering angle in CM frame
-    let cos_theta_cm = 2.0 * rng.gen::<f64>() - 1.0;
-    let sin_theta_cm = (1.0 - cos_theta_cm * cos_theta_cm).sqrt();
-    let phi_cm = 2.0 * std::f64::consts::PI * rng.gen::<f64>();
-    
-    // For elastic scattering, energy transfer is determined by angle
-    let nu_energy_initial = nu_energy_gev;
-    let electron_energy_initial = (electron_momentum.norm_squared() + m_e * m_e).sqrt();
-    
-    // Elastic scattering formula
-    let energy_transfer = (2.0 * m_e * nu_energy_initial.powi(2)) / 
-                         (2.0 * m_e * nu_energy_initial + m_e.powi(2)) * 
-                         (1.0 - cos_theta_cm);
-    
-    let nu_energy_final = nu_energy_initial - energy_transfer;
-    let electron_energy_final = electron_energy_initial + energy_transfer;
-    
-    // Final momenta magnitudes
-    let nu_momentum_mag = nu_energy_final; // massless
-    let _electron_momentum_mag = (electron_energy_final.powi(2) - m_e.powi(2)).sqrt();
-    
-    // Simplified kinematics for now
+    // Final state kinematics
     let final_electron_momentum = Vector3::new(1.0, 0.0, 0.0);
-    
-    // Scattered neutrino direction
-    let nu_dir_initial = nu_momentum.normalize();
-    let scattered_nu_dir = rotate_vector_by_angle(nu_dir_initial, cos_theta_cm, sin_theta_cm, phi_cm);
-    
-    // Scattered electron momentum from conservation
-    let nu_momentum_final = scattered_nu_dir * nu_momentum_mag;
-    let electron_momentum_final = nu_momentum + electron_momentum - nu_momentum_final;
-    
-    (nu_momentum_final, electron_momentum_final)
+    let final_nu_momentum = Vector3::new(-1.0, 0.0, 0.0);
+
+    (final_electron_momentum, final_nu_momentum)
 }
 
-/// Rotate vector by given angles (helper function)
-fn rotate_vector_by_angle(v: Vector3<f64>, cos_theta: f64, sin_theta: f64, phi: f64) -> Vector3<f64> {
-    // Create perpendicular vectors
-    let w = if v.z.abs() < 0.9 {
-        Vector3::new(0.0, 0.0, 1.0).cross(&v).normalize()
-    } else {
-        Vector3::new(1.0, 0.0, 0.0).cross(&v).normalize()
-    };
-    let u = v.cross(&w).normalize();
+/// Sample the scattering angle for neutrino-electron scattering
+fn sample_nu_e_scattering_angle(nu_energy_gev: f64, s_hat: f64, electron_momentum: &Vector3<f64>, rng: &mut impl Rng) -> f64 {
+    // Sample cos(theta) uniformly
+    let cos_theta = 2.0 * rng.gen::<f64>() - 1.0;
     
-    // Rotate in the plane perpendicular to v
-    let cos_phi = phi.cos();
-    let sin_phi = phi.sin();
+    // Calculate scattering angle
+    let theta = (s_hat * (1.0 - cos_theta * cos_theta)).sqrt();
     
-    v * cos_theta + (u * cos_phi + w * sin_phi) * sin_theta
+    // Calculate scattering angle
+    let cos_theta_final = (s_hat - theta) / (2.0 * electron_momentum.norm() * nu_energy_gev);
+    
+    cos_theta_final
 }
 
 /// Bethe–Heitler pair production total cross section (m²)
@@ -593,4 +558,11 @@ pub fn klein_nishina_cross_section(energy_gev: f64) -> f64 {
     let term2 = (1.0 / (2.0 * epsilon)) * ((1.0 + 3.0 * epsilon) / (1.0 + 2.0 * epsilon).powi(2));
 
     _sigma_thomson * (term1 + term2)
+}
+
+pub struct InteractionResult {
+    pub particles: Vec<ParticleType>,
+    pub p_momentum: Vector3<f64>,
+    pub e_momentum: Vector3<f64>,
+    _nu_momentum: Vector3<f64>,
 }

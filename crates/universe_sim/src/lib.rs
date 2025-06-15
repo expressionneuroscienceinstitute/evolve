@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn test_universe_creation() {
         let config = config::SimulationConfig::default();
-        let mut sim = UniverseSimulation::new(config).unwrap();
+        let sim = UniverseSimulation::new(config).unwrap();
         
         assert_eq!(sim.current_tick, 0);
         assert_eq!(sim.universe_age_gyr(), 0.0);

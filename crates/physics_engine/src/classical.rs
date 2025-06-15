@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_relativistic_integration() {
-        let mut solver = ClassicalSolver::new(1e-12);
+        let solver = ClassicalSolver::new(1e-12);
         let constants = PhysicsConstants::default();
         
         let mut state = PhysicsState {

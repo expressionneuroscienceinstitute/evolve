@@ -5,9 +5,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;

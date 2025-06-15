@@ -149,7 +149,7 @@ impl QuantumSolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::Vector3;
+    
     use approx::assert_relative_eq;
 
     #[test]

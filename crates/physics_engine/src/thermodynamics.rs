@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_temperature_update() {
-        let mut solver = ThermoSolver::new();
+        let solver = ThermoSolver::new();
         let constants = PhysicsConstants::default();
         
         let mut state = PhysicsState {

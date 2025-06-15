@@ -60,7 +60,7 @@ pub fn check_energy_conservation(states: &[PhysicsState], constants: &PhysicsCon
             let r = (states[i].position - states[j].position).magnitude();
             if r > 1e-30 {
                 // Gravitational potential energy
-                let gravitational_pe = -constants.G * states[i].mass * states[j].mass / r;
+                let gravitational_pe = -constants.g * states[i].mass * states[j].mass / r;
                 
                 // Electromagnetic potential energy (if charged)
                 let em_pe = if states[i].charge.abs() > 1e-30 && states[j].charge.abs() > 1e-30 {
@@ -174,7 +174,7 @@ pub fn check_relativistic_constraints(states: &[PhysicsState], constants: &Physi
 pub fn check_fusion_thresholds(states: &[PhysicsState], constants: &PhysicsConstants) -> Result<()> {
     for state in states {
         // Check if particle mass corresponds to stellar object
-        let mass_solar = state.mass / constants.M_sun;
+        let mass_solar = state.mass / constants.m_sun;
         
         if mass_solar > 0.01 { // Potentially stellar mass
             let can_fuse = constants.can_fuse(mass_solar);
@@ -199,7 +199,7 @@ pub fn check_fusion_thresholds(states: &[PhysicsState], constants: &PhysicsConst
 /// Validate nucleosynthesis conditions (R5: Nucleosynthesis Window)
 pub fn check_nucleosynthesis_window(states: &[PhysicsState], constants: &PhysicsConstants) -> Result<()> {
     for state in states {
-        let mass_solar = state.mass / constants.M_sun;
+        let mass_solar = state.mass / constants.m_sun;
         
         // Check for conditions that could produce heavy elements
         if mass_solar > constants.supernova_threshold {

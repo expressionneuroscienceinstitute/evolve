@@ -1,4 +1,3 @@
-use physics_engine::constants::*;
 
 const M_Z: f64 = 91.1876; // GeV Z-boson mass
 

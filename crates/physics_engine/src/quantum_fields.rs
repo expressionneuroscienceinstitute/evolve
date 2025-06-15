@@ -6,7 +6,6 @@
 
 use anyhow::Result;
 use ndarray::{Array, Ix3};
-use rand::Rng;
 use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
 

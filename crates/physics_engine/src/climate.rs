@@ -304,7 +304,7 @@ impl ClimateSolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::Vector3;
+    
 
     #[test]
     fn test_climate_solver_creation() {

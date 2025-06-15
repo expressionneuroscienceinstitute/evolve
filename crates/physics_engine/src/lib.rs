@@ -870,21 +870,18 @@ impl PhysicsEngine {
     }
     
     pub fn update_particle_energies(&mut self) -> Result<()> {
-        for particle in &mut self.particles {
-            let p_squared = particle.momentum.norm_squared();
-            let m = particle.mass;
-            let c = SPEED_OF_LIGHT;
-            
-            // Relativistic energy: E² = (pc)² + (mc²)²
-            particle.energy = ((p_squared * c * c) + (m * c * c).powi(2)).sqrt();
+        for particle in self.particles.iter_mut() {
+            particle.energy = (particle.mass.powi(2) + particle.momentum.norm_squared()).sqrt();
         }
         Ok(())
     }
-    
-    // Placeholder methods for complex physics processes
+
+    #[allow(dead_code)]
     fn calculate_interaction_range(&self, _p1: ParticleType, _p2: ParticleType) -> f64 { 1e-15 }
-    fn calculate_interaction(&self, _i: usize, _j: usize) -> Result<Interaction> { Ok(Interaction::default()) }
-    fn apply_interaction(&mut self, _interaction: Interaction) -> Result<()> { Ok(()) }
+    #[allow(dead_code)]
+    fn calculate_interaction(&self, _i: usize, _j: usize) -> Result<interactions::Interaction> { Ok(interactions::Interaction::default()) }
+    #[allow(dead_code)]
+    fn apply_interaction(&mut self, _interaction: interactions::Interaction) -> Result<()> { Ok(()) }
     fn select_decay_channel(&self, channels: &[DecayChannel]) -> DecayChannel { channels[0].clone() }
     fn execute_decay(&mut self, index: usize, channel: DecayChannel) -> Result<()> {
         // Remove parent particle
@@ -961,20 +958,27 @@ impl PhysicsEngine {
     fn can_fuse(&self, _n1: &AtomicNucleus, _n2: &AtomicNucleus) -> Result<bool> { Ok(false) }
     fn calculate_fusion_reaction(&self, _i: usize, _j: usize) -> Result<FusionReaction> { Ok(FusionReaction::default()) }
     fn execute_fusion_reaction(&mut self, _reaction: FusionReaction) -> Result<()> { Ok(()) }
+    #[allow(dead_code)]
     fn update_atomic_physics(&mut self) -> Result<()> { Ok(()) }
+    #[allow(dead_code)]
     fn update_molecular_dynamics(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
     fn process_phase_transitions(&mut self) -> Result<()> { Ok(()) }
+    #[allow(dead_code)]
     fn update_emergent_properties(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
+    #[allow(dead_code)]
     fn update_running_couplings(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
+    #[allow(dead_code)]
     fn check_symmetry_breaking(&mut self) -> Result<()> { Ok(()) }
+    #[allow(dead_code)]
     fn update_spacetime_curvature(&mut self) -> Result<()> { Ok(()) }
+    #[allow(dead_code)]
     fn update_thermodynamic_state(&mut self) -> Result<()> {
         // Update temperature based on particle kinetic energies
         self.update_temperature()?;
         Ok(())
     }
     
-    /// Evolve quantum state of all particles
+    #[allow(dead_code)]
     fn evolve_quantum_state(&mut self) -> Result<()> {
         // Placeholder for quantum evolution
         // In a full implementation, this would solve the Schrödinger/Dirac equation

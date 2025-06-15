@@ -124,6 +124,7 @@ pub enum FieldType {
 }
 
 /// Main physics engine for universe simulation
+#[derive(Serialize, Deserialize)]
 pub struct PhysicsEngine {
     pub particles: Vec<FundamentalParticle>,
     pub quantum_fields: HashMap<FieldType, QuantumField>,
@@ -247,12 +248,12 @@ pub struct AtomicOrbital {
     pub quantum_numbers: QuantumNumbers,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OrbitalType {
     S, P, D, F,
 }
 
-/// Molecule with detailed bonding
+/// Complete molecule with atomic composition and bonding
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Molecule {
     pub atoms: Vec<Atom>,
@@ -266,7 +267,7 @@ pub struct Molecule {
     pub reaction_coordinates: Vec<ReactionCoordinate>,
 }
 
-/// Chemical bond between atoms
+/// Chemical bond between two atoms
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChemicalBond {
     pub atom_indices: (usize, usize),
@@ -278,7 +279,8 @@ pub struct ChemicalBond {
     pub overlap_integral: f64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// Types of chemical bonds
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BondType {
     Ionic, Covalent, Metallic, HydrogenBond, VanDerWaals,
 }
@@ -976,7 +978,7 @@ impl PhysicsEngine {
     fn update_molecular_dynamics(&mut self, states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
     fn process_phase_transitions(&mut self) -> Result<()> { Ok(()) }
     fn update_emergent_properties(&mut self, states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
-    fn update_running_couplings(&mut self) -> Result<()> { Ok(()) }
+    fn update_running_couplings(&mut self, states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
     fn check_symmetry_breaking(&mut self) -> Result<()> { Ok(()) }
     fn update_spacetime_curvature(&mut self) -> Result<()> { Ok(()) }
     fn update_thermodynamic_state(&mut self) -> Result<()> {
@@ -1023,19 +1025,21 @@ impl PhysicsEngine {
 }
 
 // Supporting types and implementations
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Interaction;
 
-#[derive(Debug, Clone)]
+/// Decay channel for an unstable particle
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecayChannel {
     pub products: Vec<ParticleType>,
     pub branching_ratio: f64,
     pub decay_constant: f64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct FusionReaction;
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct InteractionMatrix;
 impl InteractionMatrix {
     pub fn new() -> Self { Self }
@@ -1044,33 +1048,39 @@ impl InteractionMatrix {
     pub fn set_strong_coupling(&mut self, coupling: f64) {}
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SpacetimeGrid;
 impl SpacetimeGrid {
     pub fn new(size: usize, spacing: f64) -> Self { Self }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct QuantumVacuum;
 impl QuantumVacuum {
     pub fn new() -> Self { Self }
     pub fn initialize_fluctuations(&mut self, temperature: f64) -> Result<()> { Ok(()) }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FieldEquations;
 impl FieldEquations {
     pub fn new() -> Self { Self }
     pub fn update_field(&self, field: &mut QuantumField, dt: f64, particles: &[FundamentalParticle]) -> Result<()> { Ok(()) }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ParticleAccelerator;
 impl ParticleAccelerator {
     pub fn new() -> Self { Self }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RunningCouplings;
 impl RunningCouplings {
     pub fn new() -> Self { Self }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SymmetryBreaking;
 impl SymmetryBreaking {
     pub fn new() -> Self { Self }
@@ -1104,12 +1114,12 @@ impl QuantumState {
 }
 
 // Additional type definitions
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BoundaryConditions {
     Periodic, Absorbing, Reflecting,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MeasurementBasis {
     Position, Momentum, Energy, Spin,
 }
@@ -1126,8 +1136,8 @@ pub type ReactionCoordinate = Vector3<f64>;
 pub const MUON_MASS: f64 = 1.883e-28; // kg
 pub const TAU_MASS: f64 = 3.167e-27; // kg
 
-/// Core physics state for classical particles (legacy interface)
-#[derive(Debug, Clone, Serialize, Deserialize, Component)]
+/// Simplified physics state for celestial bodies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhysicsState {
     pub position: Vector3<f64>,
     pub velocity: Vector3<f64>,
@@ -1138,7 +1148,7 @@ pub struct PhysicsState {
     pub entropy: f64,
 }
 
-/// Record of particle interactions for lineage tracking
+/// Records a single interaction event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InteractionEvent {
     pub timestamp: f64,
@@ -1150,7 +1160,8 @@ pub struct InteractionEvent {
     pub cross_section: f64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// Type of physical interaction
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum InteractionType {
     ElectromagneticScattering,
     WeakDecay,
@@ -1162,7 +1173,7 @@ pub enum InteractionType {
     PairProduction,
 }
 
-/// Element table for compatibility with existing code
+/// Table of elemental abundances.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTable {
     #[serde(with = "serde_arrays")]
@@ -1260,7 +1271,7 @@ pub struct StratumLayer {
     pub elements: ElementTable,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MaterialType {
     Gas, Regolith, Topsoil, Subsoil, SedimentaryRock, 
     IgneousRock, MetamorphicRock, OreVein, Ice, Magma,

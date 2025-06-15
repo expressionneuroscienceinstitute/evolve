@@ -6,8 +6,10 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 bevy_ecs = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
 nalgebra = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }

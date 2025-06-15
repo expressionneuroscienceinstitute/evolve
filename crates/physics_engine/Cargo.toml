@@ -17,6 +17,7 @@ ordered-float = { workspace = true }
 approx = { workspace = true }
 bevy_ecs = { workspace = true, optional = true }
 once_cell = { workspace = true }
+log = { workspace = true }
 
 [features]
 default = ["gpu-acceleration", "bevy"]

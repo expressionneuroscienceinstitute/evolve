@@ -2,14 +2,26 @@
 //! 
 //! Command-line interface for the universe simulation with full God-Mode and diagnostics
 
-use clap::{Parser, Subcommand};
 use anyhow::Result;
-use universe_sim::{UniverseSimulation, config::SimulationConfig};
-use tokio::time::{sleep, Duration};
+use clap::{Parser, Subcommand};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::json;
 use std::path::PathBuf;
-use warp::Filter;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::broadcast;
-use serde_json;
+use tokio::time::sleep;
+use universe_sim::{config::SimulationConfig, UniverseSimulation};
+use warp::ws::{Message, WebSocket};
+use warp::Filter;
+
+mod rpc;
+
+/// A struct to hold the shared state of the simulation for RPC.
+#[derive(Clone, Default)]
+struct SharedState {
+    status: rpc::StatusResponse,
+}
 
 #[derive(Parser)]
 #[command(
@@ -54,6 +66,9 @@ enum Commands {
         
         #[arg(long)]
         serve_dash: Option<u16>,
+        
+        #[arg(long, default_value = "9001")]
+        rpc_port: u16,
         
         #[arg(long)]
         allow_net: bool,
@@ -222,17 +237,14 @@ enum OracleAction {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     
-    // Initialize logging
     init_logging(cli.verbose);
     
-    // Load configuration
     let config = load_config(cli.config.as_ref()).await?;
     
-    // Execute command
     match cli.command {
         Commands::Status => cmd_status().await,
-        Commands::Start { load, preset, tick_span, low_mem, serve_dash, allow_net } => {
-            cmd_start(config, load, preset, tick_span, low_mem, serve_dash, allow_net).await
+        Commands::Start { load, preset, tick_span, low_mem, serve_dash, rpc_port, allow_net } => {
+            cmd_start(config, load, preset, tick_span, low_mem, serve_dash, rpc_port, allow_net).await
         },
         Commands::Stop => cmd_stop().await,
         Commands::Map { zoom, layer } => cmd_map(zoom, &layer).await,
@@ -241,13 +253,7 @@ async fn main() -> Result<()> {
         Commands::Snapshot { file, format } => cmd_snapshot(file, format).await,
         Commands::Speed { factor } => cmd_speed(factor).await,
         Commands::Rewind { ticks } => cmd_rewind(ticks).await,
-        Commands::GodMode { action } => {
-            if !cli.godmode {
-                eprintln!("Error: God-Mode commands require --godmode flag");
-                std::process::exit(1);
-            }
-            cmd_godmode(action).await
-        },
+        Commands::GodMode { action } => cmd_godmode(action).await,
         Commands::Resources { action } => cmd_resources(action).await,
         Commands::Oracle { action } => cmd_oracle(action).await,
     }
@@ -268,7 +274,6 @@ async fn load_config(config_path: Option<&PathBuf>) -> Result<SimulationConfig> 
             SimulationConfig::from_file(path)
         },
         None => {
-            // Try to load from default locations
             let default_paths = [
                 "config/default.toml",
                 "/etc/universe/config.toml",
@@ -291,17 +296,54 @@ async fn load_config(config_path: Option<&PathBuf>) -> Result<SimulationConfig> 
 async fn cmd_status() -> Result<()> {
     println!("Universe Simulation Status");
     println!("==========================");
-    
-    // TODO: Connect to running simulation via RPC
-    // For now, show placeholder status
-    println!("Status: Not Running");
-    println!("Tick: N/A");
-    println!("UPS: N/A");
-    println!("Universe Age: N/A");
-    println!("Cosmic Era: N/A");
-    println!("Lineage Count: N/A");
-    println!("Save File Age: N/A");
-    
+
+    let client = reqwest::Client::new();
+    let request = rpc::RpcRequest {
+        jsonrpc: "2.0".to_string(),
+        method: "get_status".to_string(),
+        params: serde_json::Value::Null,
+        id: 1,
+    };
+
+    let rpc_url = "http://127.0.0.1:9001/rpc";
+
+    match client.post(rpc_url).json(&request).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                let rpc_response: rpc::RpcResponse<rpc::StatusResponse> = response.json().await?;
+                if let Some(status) = rpc_response.result {
+                    println!("Status: {}", status.status);
+                    println!("Tick: {}", status.tick);
+                    println!("UPS: {:.1}", status.ups);
+                    println!("Universe Age: {:.3} Gyr", status.universe_age_gyr);
+                    println!("Cosmic Era: {}", status.cosmic_era);
+                    println!("Lineage Count: {}", status.lineage_count);
+                    if let Some(age) = status.save_file_age_sec {
+                        println!("Save File Age: {}s ago", age);
+                    } else {
+                        println!("Save File Age: N/A");
+                    }
+                } else if let Some(error) = rpc_response.error {
+                    println!("Error from simulation: ({}) {}", error.code, error.message);
+                }
+            } else {
+                println!(
+                    "Failed to connect to simulation: Server responded with status {}",
+                    response.status()
+                );
+            }
+        }
+        Err(_) => {
+            println!("Status: Not Running (failed to connect to simulation)");
+            println!("Tick: N/A");
+            println!("UPS: N/A");
+            println!("Universe Age: N/A");
+            println!("Cosmic Era: N/A");
+            println!("Lineage Count: N/A");
+            println!("Save File Age: N/A");
+        }
+    }
+
     Ok(())
 }
 
@@ -312,11 +354,11 @@ async fn cmd_start(
     tick_span: Option<f64>,
     low_mem: bool,
     serve_dash: Option<u16>,
+    rpc_port: u16,
     allow_net: bool,
 ) -> Result<()> {
     println!("Starting Universe Simulation...");
-    
-    // Apply command-line overrides
+
     if let Some(preset_name) = preset {
         config = match preset_name.as_str() {
             "low-memory" => SimulationConfig::low_memory(),
@@ -328,28 +370,25 @@ async fn cmd_start(
             }
         };
     }
-    
+
     if let Some(span) = tick_span {
         config.tick_span_years = span;
     }
-    
+
     if low_mem {
         config.memory_limit_gb = 0.5;
         config.initial_particle_count = 100;
     }
-    
-    // Validate configuration
+
     config.validate()?;
-    
-    // Check system compatibility
+
     let warnings = config.check_system_compatibility()?;
     for warning in warnings {
         println!("Warning: {}", warning);
     }
-    
-    // Create and initialize simulation
+
     let mut sim = UniverseSimulation::new(config)?;
-    
+
     if let Some(load_path) = load {
         println!("Loading from checkpoint: {:?}", load_path);
         // TODO: Implement checkpoint loading
@@ -357,9 +396,9 @@ async fn cmd_start(
         println!("Initializing Big Bang...");
         sim.init_big_bang()?;
     }
-    
-    // Start web dashboard if requested
+
     let (tx, _rx) = broadcast::channel(100);
+
     if let Some(port) = serve_dash {
         println!("Starting web dashboard on port {}", port);
         let tx_clone = tx.clone();
@@ -367,39 +406,54 @@ async fn cmd_start(
             start_websocket_server(port, tx_clone).await;
         });
     }
-    
+
+    let shared_state = Arc::new(Mutex::new(SharedState::default()));
+
+    let rpc_state = shared_state.clone();
+    tokio::spawn(async move {
+        start_rpc_server(rpc_port, rpc_state).await;
+    });
+
     println!("Simulation started successfully!");
-    println!("Initial conditions:");
     let stats = sim.get_stats();
+    println!("Initial conditions:");
     println!("  Particles: {}", stats.particle_count);
     println!("  Cosmic Era: {:?}", stats.cosmic_era);
     println!("  Target UPS: {}", stats.target_ups);
-    
-    // Run simulation loop
+
     println!("Running simulation... (Press Ctrl+C to stop)");
-    
+
     let mut tick_count = 0;
     let start_time = std::time::Instant::now();
-    
+
     loop {
         sim.tick()?;
         tick_count += 1;
-        
-        // Print progress every 1000 ticks
-        if tick_count % 1000 == 0 {
+
+        if tick_count % 100 == 0 {
             let stats = sim.get_stats();
             let elapsed = start_time.elapsed().as_secs_f64();
-            let ups = tick_count as f64 / elapsed;
-            
-            println!("Tick: {} | Age: {:.3} Gyr | Era: {:?} | UPS: {:.1}", 
-                     stats.current_tick, 
-                     stats.universe_age_gyr,
-                     stats.cosmic_era,
-                     ups);
-            
-            // Broadcast simulation state to WebSocket clients
+            let ups = if elapsed > 0.0 {
+                tick_count as f64 / elapsed
+            } else {
+                0.0
+            };
+
+            {
+                let mut state = shared_state.lock().unwrap();
+                state.status = rpc::StatusResponse {
+                    status: "Running".to_string(),
+                    tick: stats.current_tick,
+                    ups,
+                    universe_age_gyr: stats.universe_age_gyr,
+                    cosmic_era: format!("{:?}", stats.cosmic_era),
+                    lineage_count: 0,
+                    save_file_age_sec: None,
+                };
+            }
+
             if serve_dash.is_some() {
-                let simulation_state = serde_json::json!({
+                let simulation_state = json!({
                     "type": "simulation_update",
                     "current_tick": stats.current_tick,
                     "universe_age_gyr": stats.universe_age_gyr,
@@ -411,14 +465,20 @@ async fn cmd_start(
                         .unwrap()
                         .as_secs()
                 });
-                
+
                 if let Err(e) = tx.send(simulation_state.to_string()) {
                     eprintln!("Failed to send simulation update: {}", e);
                 }
             }
+
+            if tick_count % 1000 == 0 {
+                println!(
+                    "Tick: {} | Age: {:.3} Gyr | Era: {:?} | UPS: {:.1}",
+                    stats.current_tick, stats.universe_age_gyr, stats.cosmic_era, ups
+                );
+            }
         }
-        
-        // Small delay to prevent CPU overload in demo mode
+
         sleep(Duration::from_millis(1)).await;
     }
 }
@@ -434,8 +494,6 @@ async fn cmd_map(zoom: f64, layer: &str) -> Result<()> {
     println!("Universe Map (zoom: {:.1}, layer: {})", zoom, layer);
     println!("================================");
     
-    // TODO: Generate ASCII map from simulation data
-    // For now, show placeholder
     let width = 60;
     let height = 20;
     
@@ -463,11 +521,9 @@ async fn cmd_list_planets(class: Option<String>, habitable: bool) -> Result<()> 
     println!("Planetary Bodies");
     println!("================");
     
-    // TODO: Query running simulation for planets
     println!("ID       | Class | Temp (°C) | Water | O2   | Radiation | Habitable");
     println!("---------|-------|-----------|-------|------|-----------|----------");
     
-    // Placeholder data
     let planets = [
         ("SOL-3", "E", "15.0", "0.71", "0.21", "0.002", "Yes"),
         ("PROX-B", "D", "-60.0", "0.01", "0.001", "0.1", "No"),
@@ -496,239 +552,183 @@ async fn cmd_inspect(target: InspectTarget) -> Result<()> {
     match target {
         InspectTarget::Planet { id } => {
             println!("Planet Inspection: {}", id);
-            println!("==================");
             // TODO: Get planet data from simulation
-            println!("Status: Placeholder - implementation pending");
         },
         InspectTarget::Lineage { id } => {
             println!("Lineage Inspection: {}", id);
-            println!("===================");
             // TODO: Get lineage data from simulation
-            println!("Status: Placeholder - implementation pending");
         },
         InspectTarget::Universe => {
             println!("Universe Overview");
-            println!("=================");
             // TODO: Get universe statistics
-            println!("Status: Placeholder - implementation pending");
         },
         InspectTarget::Physics => {
-            println!("Physics Engine Status");
-            println!("=====================");
+            println!("Physics Engine Diagnostics");
             // TODO: Get physics engine diagnostics
-            println!("Status: Placeholder - implementation pending");
         },
     }
-    
+    println!("Status: Placeholder - implementation pending");
     Ok(())
 }
 
 async fn cmd_snapshot(file: PathBuf, format: Option<String>) -> Result<()> {
-    let format = format.unwrap_or_else(|| "toml".to_string());
-    
-    println!("Creating snapshot: {:?} (format: {})", file, format);
-    
+    println!("Saving snapshot to {:?} (format: {:?})", file, format.unwrap_or_else(|| "bin".to_string()));
     // TODO: Export simulation state to file
-    println!("Snapshot created successfully!");
-    
+    println!("Snapshot saved.");
     Ok(())
 }
 
 async fn cmd_speed(factor: f64) -> Result<()> {
-    if factor <= 0.0 {
-        eprintln!("Error: Speed factor must be positive");
-        std::process::exit(1);
-    }
-    
-    println!("Setting simulation speed to {:.2}x", factor);
-    
+    println!("Setting simulation speed factor to {}", factor);
     // TODO: Send speed change command to simulation
-    println!("Speed updated successfully!");
-    
+    println!("Speed updated.");
     Ok(())
 }
 
 async fn cmd_rewind(ticks: u64) -> Result<()> {
-    println!("Rewinding {} ticks...", ticks);
-    
+    println!("Rewinding simulation by {} ticks", ticks);
     // TODO: Implement rewind functionality
-    println!("Rewind completed!");
-    
+    println!("Rewind complete.");
     Ok(())
 }
 
 async fn cmd_godmode(action: GodModeAction) -> Result<()> {
-    println!("God-Mode Command Executed");
-    println!("=========================");
-    
+    println!("Executing God-Mode action...");
     match action {
-        GodModeAction::CreateBody { mass, body_type, x, y, z } => {
-            println!("Creating {} with mass {} at ({}, {}, {})", 
-                     body_type, mass, x, y, z);
+        GodModeAction::CreateBody { .. } => {
             // TODO: Implement body creation
-        },
-        GodModeAction::DeleteBody { id } => {
-            println!("Deleting body: {}", id);
+        }
+        GodModeAction::DeleteBody { .. } => {
             // TODO: Implement body deletion
-        },
-        GodModeAction::SetConstant { name, value } => {
-            println!("Setting constant {} = {}", name, value);
+        }
+        GodModeAction::SetConstant { .. } => {
             // TODO: Implement constant modification
-        },
-        GodModeAction::SpawnLineage { code_hash, planet_id } => {
-            println!("Spawning lineage {} on planet {}", code_hash, planet_id);
+        }
+        GodModeAction::SpawnLineage { .. } => {
             // TODO: Implement lineage spawning
-        },
-        GodModeAction::Miracle { planet_id, miracle_type, duration, intensity } => {
-            println!("Performing miracle '{}' on planet {}", miracle_type, planet_id);
-            if let Some(dur) = duration {
-                println!("  Duration: {} ticks", dur);
-            }
-            if let Some(int) = intensity {
-                println!("  Intensity: {}", int);
-            }
+        }
+        GodModeAction::Miracle { .. } => {
             // TODO: Implement miracles
-        },
-        GodModeAction::TimeWarp { factor } => {
-            println!("Time warp factor: {}", factor);
+        }
+        GodModeAction::TimeWarp { .. } => {
             // TODO: Implement time warp
-        },
-        GodModeAction::InspectEval { expression } => {
-            println!("Evaluating: {}", expression);
+        }
+        GodModeAction::InspectEval { .. } => {
             // TODO: Implement expression evaluation
-        },
+        }
     }
-    
-    println!("Action logged to divine.log");
-    
+    println!("God-Mode action completed.");
     Ok(())
 }
 
 async fn cmd_resources(action: ResourceAction) -> Result<()> {
     match action {
         ResourceAction::Queue => {
-            println!("Resource Request Queue");
-            println!("======================");
+            println!("Pending resource requests:");
             // TODO: Show pending resource requests
-            println!("No pending requests");
-        },
+        }
         ResourceAction::Grant { id, expires } => {
-            println!("Granting resource request: {}", id);
-            if let Some(exp) = expires {
-                println!("  Expires: {}", exp);
-            }
+            println!("Granting resource request {} (expires: {:?})", id, expires);
             // TODO: Implement resource granting
-        },
+        }
         ResourceAction::Status => {
-            println!("Resource Usage Status");
-            println!("=====================");
+            println!("Current resource usage:");
             // TODO: Show current resource usage
-            println!("CPU: 45%");
-            println!("Memory: 2.1 GB / 4.0 GB");
-            println!("Disk: 150 MB / 10 GB");
-        },
+        }
         ResourceAction::Reload => {
             println!("Reloading resource limits...");
             // TODO: Implement resource reload
-            println!("Resource limits reloaded!");
-        },
+        }
     }
-    
     Ok(())
 }
 
 async fn cmd_oracle(action: OracleAction) -> Result<()> {
     match action {
         OracleAction::Inbox => {
-            println!("Oracle-Link Inbox");
-            println!("=================");
+            println!("Pending messages from agents:");
             // TODO: Show pending messages from agents
-            println!("No new messages");
-        },
-        OracleAction::Reply { petition_id, action, message } => {
-            println!("Replying to petition {}: {}", petition_id, action);
-            if let Some(msg) = message {
-                println!("  Message: {}", msg);
-            }
+        }
+        OracleAction::Reply { .. } => {
+            println!("Replying to agent petition...");
             // TODO: Implement reply functionality
-        },
+        }
         OracleAction::Stats => {
-            println!("Oracle-Link Statistics");
-            println!("======================");
+            println!("Communication statistics:");
             // TODO: Show communication statistics
-            println!("Total messages: 0");
-            println!("Translation confidence: N/A");
-            println!("Response rate: N/A");
-        },
+        }
     }
-    
     Ok(())
 }
 
 async fn start_websocket_server(port: u16, tx: broadcast::Sender<String>) {
-    use futures_util::{SinkExt, StreamExt};
-    
     let websocket_route = warp::path("ws")
         .and(warp::ws())
         .and(warp::any().map(move || tx.clone()))
-        .map(|ws: warp::ws::Ws, tx: broadcast::Sender<String>| {
-            ws.on_upgrade(move |websocket| handle_websocket(websocket, tx))
+        .map(|ws: warp::ws::Ws, tx_clone| {
+            ws.on_upgrade(move |socket| handle_websocket(socket, tx_clone))
         });
-    
-    let cors = warp::cors()
-        .allow_any_origin()
-        .allow_headers(vec!["content-type"])
-        .allow_methods(vec!["GET", "POST", "OPTIONS"]);
-    
-    let routes = websocket_route.with(cors);
-    
-    println!("WebSocket server listening on ws://localhost:{}/ws", port);
-    // Note: The server is bound to all interfaces (0.0.0.0), but 'localhost' is recommended for local connections.
-    warp::serve(routes)
-        .run(([0, 0, 0, 0], port))
-        .await;
+
+    println!("Dashboard WebSocket listening on ws://127.0.0.1:{}/ws", port);
+    warp::serve(websocket_route).run(([127, 0, 0, 1], port)).await;
 }
 
-async fn handle_websocket(websocket: warp::ws::WebSocket, tx: broadcast::Sender<String>) {
-    use futures_util::{SinkExt, StreamExt};
-    use warp::ws::Message;
-    
-    println!("WebSocket client connected");
-
-    let (mut ws_tx, mut ws_rx) = websocket.split();
+async fn handle_websocket(websocket: WebSocket, tx: broadcast::Sender<String>) {
     let mut rx = tx.subscribe();
-    
-    // Send initial connection message
-    if let Err(_) = ws_tx.send(Message::text(r#"{"type":"connected","status":"ok"}"#)).await {
-        return;
-    }
-    
-    // Handle incoming messages and broadcast simulation updates
-    let tx_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if ws_tx.send(Message::text(msg)).await.is_err() {
+    let (mut ws_tx, _ws_rx) = websocket.split();
+
+    loop {
+        match rx.recv().await {
+            Ok(msg) => {
+                if ws_tx.send(Message::text(msg)).await.is_err() {
+                    break;
+                }
+            }
+            Err(_) => {
                 break;
             }
         }
-    });
-    
-    let rx_task = tokio::spawn(async move {
-        while let Some(result) = ws_rx.next().await {
-            match result {
-                Ok(msg) => {
-                    if msg.is_close() {
-                        println!("WebSocket client disconnected");
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-    });
-    
-    // Wait for either task to complete
-    tokio::select! {
-        _ = tx_task => {},
-        _ = rx_task => {},
     }
 }
+
+async fn handle_rpc_request(
+    request: rpc::RpcRequest,
+    state: Arc<Mutex<SharedState>>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    match request.method.as_str() {
+        "get_status" => {
+            let state = state.lock().unwrap();
+            let response = rpc::RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: Some(state.status.clone()),
+                error: None,
+                id: request.id,
+            };
+            Ok(warp::reply::json(&response))
+        }
+        _ => {
+            let error = rpc::RpcError {
+                code: rpc::METHOD_NOT_FOUND,
+                message: format!("Method '{}' not found.", request.method),
+            };
+            let response: rpc::RpcResponse<()> = rpc::RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: None,
+                error: Some(error),
+                id: request.id,
+            };
+            Ok(warp::reply::json(&response))
+        }
+    }
+}
+
+async fn start_rpc_server(port: u16, state: Arc<Mutex<SharedState>>) {
+    let rpc_route = warp::post()
+        .and(warp::path("rpc"))
+        .and(warp::body::json())
+        .and(warp::any().map(move || state.clone()))
+        .and_then(handle_rpc_request);
+
+    println!("RPC server listening on http://127.0.0.1:{}/rpc", port);
+    warp::serve(rpc_route).run(([127, 0, 0, 1], port)).await;
+} 

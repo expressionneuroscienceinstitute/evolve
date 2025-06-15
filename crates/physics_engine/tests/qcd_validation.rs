@@ -4,7 +4,7 @@ const M_Z: f64 = 91.1876; // GeV Z-boson mass
 
 // Reference: PDG 2024 Table 9.2 alpha_s(M_Z)=0.1179 ±0.0009
 const ALPHA_S_MZ_PDG: f64 = 0.1179;
-const TOLERANCE_REL: f64 = 0.1; // 10 % band for demo stub
+const TOLERANCE_REL: f64 = 1e-9; // Machine precision
 
 // Simple 1-loop QCD beta-function as placeholder until full RunDec3 implemented
 fn alpha_s_1loop(mu: f64) -> f64 {

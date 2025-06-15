@@ -10,8 +10,8 @@ path = "src/lib.rs"
 crate-type = ["cdylib"]
 
 [[bin]]
-name = "viz_web_cli"
-path = "src/bin/stub.rs"
+name = "viz_web_server"
+path = "src/bin/server.rs"
 
 [dependencies]
 universe_sim = { path = "../crates/universe_sim", default-features = false }

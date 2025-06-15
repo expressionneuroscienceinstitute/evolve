@@ -3,12 +3,12 @@
 //! This module is responsible for parsing Evaluated Nuclear Data File (ENDF)
 //! files and populating the nuclear cross-section database.
 
-use crate::nuclear_physics::{NuclearCrossSectionDatabase, ReactionCrossSectionData, FusionCrossSectionData};
+use crate::nuclear_physics::NuclearCrossSectionDatabase;
 use anyhow::Result;
 use std::fs;
 use std::path::Path;
 
-pub fn load_endf_data(db: &mut NuclearCrossSectionDatabase, endf_dir: &Path) -> Result<()> {
+pub fn load_endf_data(_db: &mut NuclearCrossSectionDatabase, endf_dir: &Path) -> Result<()> {
     log::info!("Loading ENDF data from directory: {:?}", endf_dir);
     
     for entry in fs::read_dir(endf_dir)? {

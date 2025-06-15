@@ -20,7 +20,7 @@ impl NodeId {
 }
 
 /// Represents a message exchanged between network nodes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum NetworkMessage {
     /// A command to a specific node.
     Command { target_node: NodeId, payload: String },
@@ -35,7 +35,7 @@ pub enum NetworkMessage {
 }
 
 /// Represents a unit of simulation work to be distributed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkloadPacket {
     pub task_id: u64,
     pub simulation_segment: Vec<u8>, // Serialized portion of simulation state

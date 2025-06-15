@@ -7,7 +7,14 @@ use anyhow::Result;
 use rand::prelude::*;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use crate::BOLTZMANN;
+
+/// Global nuclear cross-section database singleton
+/// Initialized lazily when first accessed
+pub static NUCLEAR_DATABASE: LazyLock<NuclearCrossSectionDatabase> = LazyLock::new(|| {
+    NuclearCrossSectionDatabase::new()
+});
 
 /// Represents an atomic nucleus, composed of protons and neutrons.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

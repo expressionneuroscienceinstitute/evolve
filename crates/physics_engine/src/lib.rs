@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use rand::{Rng, thread_rng};
 use bevy_ecs::prelude::Component;
 
-use self::nuclear_physics::{Nucleus, StellarNucleosynthesis};
+use self::nuclear_physics::StellarNucleosynthesis;
 
 pub use constants::*;
 
@@ -152,6 +152,7 @@ pub struct PhysicsEngine {
     pub pair_production_count: u64,  // Track pair production events
     pub neutrino_scatter_count: u64, // Track neutrino-electron scatters
     pub particle_decay_count: u64, // Track all particle decay events
+    pub neutron_decay_count: u64, // Track neutron beta decay events
     pub fusion_count: u64, // Track nuclear fusion events
     pub fission_count: u64, // Track nuclear fission events
 }
@@ -327,6 +328,7 @@ impl PhysicsEngine {
             pair_production_count: 0,
             neutrino_scatter_count: 0,
             particle_decay_count: 0,
+            neutron_decay_count: 0,
             fusion_count: 0,
             fission_count: 0,
         };
@@ -1073,7 +1075,7 @@ impl PhysicsEngine {
                                channel.products.contains(&ParticleType::ElectronAntiNeutrino);
 
         if is_neutron_decay {
-            // Specific logic for neutron decay if needed, but counter is already incremented
+            self.neutron_decay_count += 1;
         } else {
             // Simple momentum sharing for other decays
             // This is a placeholder; real physics would require detailed momentum calculation

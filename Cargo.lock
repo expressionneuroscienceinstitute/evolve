@@ -689,6 +689,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "endf_parser"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fec41912675083523f7a090505d389db6867c44c1503f93532276eff2552d9ca"
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1755,6 +1761,7 @@ dependencies = [
  "anyhow",
  "approx",
  "bevy_ecs",
+ "endf_parser",
  "log",
  "nalgebra",
  "ndarray",

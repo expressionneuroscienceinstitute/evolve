@@ -27,6 +27,7 @@ enable_self_modification = true        # Allow agents to modify their code
 memory_limit_gb = 4.0                  # Memory usage limit (GB)
 cpu_limit_percent = 70.0               # CPU usage limit (0-100%)
 auto_save_interval = 10000             # Ticks between autosaves
+auto_save_path = "./checkpoints/"      # Path for autosaved checkpoints
 checkpoint_retention = 10              # Number of checkpoints to keep
 
 # God-mode parameters

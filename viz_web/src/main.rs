@@ -26,10 +26,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 // Import our simulation types
-use universe_sim::*;
 use universe_sim::cosmic_era::CosmicEra;
-use agent_evolution::*;
-use physics_engine::*;
 
 #[wasm_bindgen]
 extern "C" {
@@ -100,7 +97,8 @@ pub struct SimulationState {
     pub physics_metrics: PhysicsMetrics,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[wasm_bindgen]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ViewMode {
     ParticlePhysics,
     AtomicStructure,
@@ -116,6 +114,12 @@ pub enum ViewMode {
     QuantumFields,
     EnergyFlows,
     EmergentComplexity,
+}
+
+impl Default for ViewMode {
+    fn default() -> Self {
+        ViewMode::AgentOverview
+    }
 }
 
 /// Particle visualization data
@@ -326,121 +330,41 @@ impl EvolutionMonitor {
         canvas.set_height((canvas.offset_height() as f64 * dpr) as u32);
         context.scale(dpr, dpr)?;
         
+        let decision_analyzer = DecisionAnalyzer::new();
+        let lineage_tracker = LineageTracker::new();
+        let consciousness_monitor = ConsciousnessMonitor::new();
+        let innovation_tracker = InnovationTracker::new();
+        let analytics_engine = AnalyticsEngine::new();
+
         Ok(EvolutionMonitor {
             canvas,
             context,
             websocket: None,
             simulation_state: SimulationState::default(),
-            view_mode: ViewMode::AgentOverview,
+            view_mode: ViewMode::default(),
             selected_agent: None,
             selected_lineage: None,
             time_scale: 1.0,
             particle_size_scale: 1.0,
             energy_filter_min: 0.0,
             particle_filter: ParticleFilter::default(),
-            decision_analyzer: DecisionAnalyzer::new(),
-            lineage_tracker: LineageTracker::new(),  
-            consciousness_monitor: ConsciousnessMonitor::new(),
-            innovation_tracker: InnovationTracker::new(),
-            analytics_engine: AnalyticsEngine::new(),
+            decision_analyzer,
+            lineage_tracker,
+            consciousness_monitor,
+            innovation_tracker,
+            analytics_engine,
             connected: false,
         })
-    }
-    
-    /// Establish websocket and start reading JSON messages representing SimulationState
-    pub fn connect_ws(&mut self, websocket_url: String) {
-        console_log!("Connecting to WebSocket at {}", websocket_url);
-        let ws = match web_sys::WebSocket::new(&websocket_url) {
-            Ok(ws) => ws,
-            Err(err) => {
-                console_log!("Failed to create WebSocket: {:?}", err);
-                return;
-            }
-        };
-        
-        // Set up connection success handler
-        let onopen_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
-            console_log!("WebSocket connected successfully");
-            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                if let Some(elem) = doc.get_element_by_id("connection-status") {
-                    elem.set_inner_html("\u{1F7E2} Connected");
-                    elem.set_class_name("connection-status connected");
-                }
-            }
-        }) as Box<dyn FnMut(web_sys::Event)>);
-        
-        ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
-        onopen_callback.forget();
-
-        // Set up message handler
-        let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-            if let Ok(text) = e.data().dyn_into::<JsString>() {
-                let data_str = text.as_string().unwrap_or_default();
-                console_log!("Received WebSocket message ({} chars)", data_str.len());
-                
-                // Store to a global JS variable so the render loop can pick it up on the next frame
-                if let Some(win) = web_sys::window() {
-                    let _ = js_sys::Reflect::set(
-                        &win,
-                        &JsValue::from_str("__simulation_data"),
-                        &JsValue::from_str(&data_str),
-                    );
-                }
-            } else {
-                let message_type = match e.data().dyn_into::<ArrayBuffer>() {
-                    Ok(buffer) => format!("binary (size: {} bytes)", buffer.byte_length()),
-                    Err(_) => "unknown type".to_string(),
-                };
-                console_log!("Received non-text WebSocket message: {}", message_type);
-            }
-        }) as Box<dyn FnMut(MessageEvent)>);
-        
-        ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
-        onmessage_callback.forget();
-
-        // Set up error handler
-        let onerror_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
-            console_log!("WebSocket connection error");
-            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                if let Some(elem) = doc.get_element_by_id("connection-status") {
-                    elem.set_inner_html("\u{1F534} Disconnected");
-                    elem.set_class_name("connection-status disconnected");
-                }
-            }
-        }) as Box<dyn FnMut(web_sys::Event)>);
-        
-        ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
-        onerror_callback.forget();
-
-        // Set up close handler
-        let onclose_callback = Closure::wrap(Box::new(move |_: web_sys::CloseEvent| {
-            console_log!("WebSocket connection closed");
-            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                if let Some(elem) = doc.get_element_by_id("connection-status") {
-                    elem.set_inner_html("\u{1F534} Disconnected");
-                    elem.set_class_name("connection-status disconnected");
-                }
-            }
-        }) as Box<dyn FnMut(web_sys::CloseEvent)>);
-        
-        ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
-        onclose_callback.forget();
-
-        self.websocket = Some(ws);
-        self.connected = true;
-    }
-    
-    /// Start RAF loop for continuous rendering
-    pub fn start_render_loop(&mut self) -> Result<(), JsValue> {
-        // Placeholder RAF loop – to be replaced with full implementation.
-        Ok(())
     }
     
     /// Main rendering loop
     #[wasm_bindgen]
     pub fn render(&mut self) -> Result<(), JsValue> {
-        // Check for new simulation data from WebSocket
-        self.update_simulation_state()?;
+        // No longer need to check for global JS variable, state is updated directly
+        // self.update_simulation_state()?;
+        
+        // Update HTML UI elements with current simulation state
+        self.update_html_ui()?;
         
         // Clear canvas
         self.context.clear_rect(0.0, 0.0, 
@@ -465,28 +389,53 @@ impl EvolutionMonitor {
         Ok(())
     }
     
-    /// Check for and process new simulation data from WebSocket
-    fn update_simulation_state(&mut self) -> Result<(), JsValue> {
-        if let Some(win) = web_sys::window() {
-            if let Ok(data_js) = js_sys::Reflect::get(&win, &JsValue::from_str("__simulation_data")) {
-                if !data_js.is_null() && !data_js.is_undefined() {
-                    if let Some(data_str) = data_js.as_string() {
-                        // Clear the property to avoid reprocessing
-                        let _ = js_sys::Reflect::set(&win, &JsValue::from_str("__simulation_data"), &JsValue::NULL);
-                        
-                        // Parse and update simulation state
-                        match serde_json::from_str::<SimulationState>(&data_str) {
-                            Ok(new_state) => {
-                                self.simulation_state = new_state;
-                                console_log!("Updated simulation state - {} agents, {} particles", 
-                                            self.simulation_state.agents.len(),
-                                            self.simulation_state.particles.len());
-                            }
-                            Err(err) => {
-                                console_log!("Failed to parse simulation state: {}", err);
-                            }
-                        }
-                    }
+    fn update_html_ui(&self) -> Result<(), JsValue> {
+        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+            // Update particle count
+            if let Some(elem) = doc.get_element_by_id("particle-count") {
+                elem.set_inner_html(&self.simulation_state.particles.len().to_string());
+            }
+            
+            // Update universe age
+            if let Some(elem) = doc.get_element_by_id("universe-age") {
+                elem.set_inner_html(&format!("{:.3} Gyr", self.simulation_state.universe_age_gyr));
+            }
+            
+            // Update temperature
+            if let Some(elem) = doc.get_element_by_id("temperature") {
+                elem.set_inner_html(&format!("{:.2e} K", self.simulation_state.temperature));
+            }
+            
+            // Update current tick
+            if let Some(elem) = doc.get_element_by_id("current-tick") {
+                elem.set_inner_html(&self.simulation_state.current_tick.to_string());
+            }
+            
+            // Update cosmic era
+            if let Some(elem) = doc.get_element_by_id("cosmic-era") {
+                elem.set_inner_html(&format!("{:?}", self.simulation_state.cosmic_era));
+            }
+            
+            // Update energy density
+            if let Some(elem) = doc.get_element_by_id("energy-density") {
+                elem.set_inner_html(&format!("{:.2e} J/m³", self.simulation_state.energy_density));
+            }
+            
+            // Update agent count
+            if let Some(elem) = doc.get_element_by_id("agent-count") {
+                elem.set_inner_html(&self.simulation_state.agents.len().to_string());
+            }
+            
+            // Update active lineages
+            if let Some(elem) = doc.get_element_by_id("active-lineages") {
+                elem.set_inner_html(&self.simulation_state.population_stats.active_lineages.to_string());
+            }
+            
+            // Update connection status to show we're connected and receiving data
+            if let Some(elem) = doc.get_element_by_id("connection-status") {
+                if self.connected {
+                    elem.set_inner_html("🟢 Connected");
+                    elem.set_class_name("connection-status connected");
                 }
             }
         }
@@ -503,7 +452,7 @@ impl EvolutionMonitor {
             if particle.energy < self.energy_filter_min { continue; }
             let (r, g, b, a) = self.get_particle_color(&particle.particle_type);
             let color_str = format!("rgba({}, {}, {}, {})", r, g, b, a);
-            self.context.set_fill_style(&color_str.into());
+            self.context.set_fill_style_str(&color_str);
             
             // Map 3D position to 2D screen coordinates
             let (x, y) = self.map_3d_to_2d(particle.position);
@@ -549,7 +498,7 @@ impl EvolutionMonitor {
                 (color[2] * 255.0) as u8,
                 color[3]
             );
-            self.context.set_fill_style(&color_str.into());
+            self.context.set_fill_style_str(&color_str);
             
             // Draw agent
             self.context.begin_path();
@@ -593,7 +542,7 @@ impl EvolutionMonitor {
         for (lineage_id, lineage) in self.simulation_state.lineages.clone() {
             // Draw lineage header
             self.context.set_font("16px Arial");
-            self.context.set_fill_style(&"white".into());
+            self.context.set_fill_style_str("white");
             self.context.fill_text(&format!(
                 "Lineage {} - Gen {} - {} living", 
                 lineage_id.to_string()[..8].to_string(),
@@ -629,7 +578,7 @@ impl EvolutionMonitor {
             
             // Color based on success/failure
             let color = if decision.success { "green" } else { "red" };
-            self.context.set_fill_style(&JsValue::from_str(color));
+            self.context.set_fill_style_str(color);
             
             // Draw decision point
             self.context.begin_path();
@@ -638,11 +587,11 @@ impl EvolutionMonitor {
             
             // Draw decision type label
             self.context.set_font("10px Arial");
-            self.context.set_fill_style(&"white".into());
+            self.context.set_fill_style_str("white");
             self.context.fill_text(&decision.decision_type, x - 20.0, y - 10.0)?;
             
             // Draw impact line
-            self.context.set_stroke_style(&JsValue::from_str("rgba(0,255,255,0.8)"));
+            self.context.set_stroke_style_str("rgba(0,255,255,0.8)");
             self.context.set_line_width(2.0);
             self.context.begin_path();
             self.context.move_to(x, y_base);
@@ -667,9 +616,9 @@ impl EvolutionMonitor {
                 let height = consciousness * 100.0;
                 let alpha = consciousness;
                 
-                self.context.set_stroke_style(&JsValue::from_str(&format!(
+                self.context.set_stroke_style_str(&format!(
                     "rgba(255, 255, 0, {})", alpha
-                )));
+                ));
                 self.context.set_line_width(2.0);
                 
                 self.context.begin_path();
@@ -678,9 +627,9 @@ impl EvolutionMonitor {
                 self.context.stroke();
                 
                 // Draw consciousness level indicator
-                self.context.set_fill_style(&JsValue::from_str(&format!(
+                self.context.set_fill_style_str(&format!(
                     "rgba(255, 255, 0, {})", alpha
-                )));
+                ));
                 self.context.begin_path();
                 self.context.arc(x, y - height, 3.0, 0.0, 2.0 * std::f64::consts::PI)?;
                 self.context.fill();
@@ -697,7 +646,7 @@ impl EvolutionMonitor {
         let timeline_width = self.canvas.width() as f64 - 100.0;
         
         // Draw timeline base
-        self.context.set_stroke_style(&"white".into());
+        self.context.set_stroke_style_str("white");
         self.context.set_line_width(2.0);
         self.context.begin_path();
         self.context.move_to(timeline_start, timeline_y);
@@ -711,14 +660,14 @@ impl EvolutionMonitor {
             let impact_height = innovation.impact_score * 50.0;
             
             // Innovation marker
-            self.context.set_fill_style(&"cyan".into());
+            self.context.set_fill_style_str("cyan");
             self.context.begin_path();
             self.context.arc(x, timeline_y - impact_height, 4.0, 0.0, 2.0 * std::f64::consts::PI)?;
             self.context.fill();
             
             // Innovation label
             self.context.set_font("8px Arial");
-            self.context.set_fill_style(&"white".into());
+            self.context.set_fill_style_str("white");
             self.context.fill_text(&innovation.innovation_type, x - 15.0, timeline_y - impact_height - 8.0)?;
         }
         
@@ -823,19 +772,22 @@ impl EvolutionMonitor {
     #[wasm_bindgen]
     pub fn set_energy_filter_min(&mut self, min_kev: f64) { self.energy_filter_min = min_kev * 1.60218e-16; }
 
-    #[wasm_bindgen]
-    pub fn connect(&mut self, websocket_url: &str) -> Result<(), JsValue> {
-        self.connect_ws(websocket_url.to_string());
-        Ok(())
+    pub fn reset(&mut self) {
+        self.particle_size_scale = 1.0;
+        self.energy_filter_min = 0.0;
+        self.view_mode = ViewMode::default();
+        self.selected_agent = None;
+        self.selected_lineage = None;
+        console_log!("EvolutionMonitor state has been reset.");
     }
 
     fn set_fill_style(&self, color: &str) -> Result<(), JsValue> {
-        self.context.set_fill_style(&color.into());
+        self.context.set_fill_style_str(color);
         Ok(())
     }
 
     fn set_stroke_style(&self, color: &str) -> Result<(), JsValue> {
-        self.context.set_stroke_style(&color.into());
+        self.context.set_stroke_style_str(color);
         Ok(())
     }
 
@@ -928,26 +880,129 @@ impl EvolutionMonitor {
 
     fn draw_ui_panel(&mut self) -> Result<(), JsValue> {
         let width = self.canvas.width() as f64;
-        let height = self.canvas.height() as f64;
+        let _height = self.canvas.height() as f64;
         
         // Draw semi-transparent background
         self.context.begin_path();
         self.context.rect(0.0, 0.0, width, 60.0);
-        self.set_fill_style("rgba(0,0,0,0.7)")?;
+        self.context.set_fill_style_str("rgba(0,0,0,0.7)");
         self.context.fill();
         
         // Draw stats
-        self.set_fill_style("white")?;
+        self.context.set_font("12px Segoe UI");
+        self.context.set_fill_style_str("white");
         self.context.fill_text(&format!("Age: {:.2} Gyr", self.simulation_state.universe_age_gyr), 10.0, 20.0)?;
+        self.context.fill_text(&format!("Temp: {:.2e} K", self.simulation_state.temperature), 10.0, 40.0)?;
         self.context.fill_text(&format!("Particles: {}", self.simulation_state.particles.len()), 200.0, 20.0)?;
-        self.context.fill_text(&format!("Agents: {}", self.simulation_state.agents.len()), 400.0, 20.0)?;
+        self.context.fill_text(&format!("Agents: {}", self.simulation_state.agents.len()), 200.0, 40.0)?;
+        self.context.fill_text(&format!("Lineages: {}", self.simulation_state.lineages.len()), 400.0, 20.0)?;
         
         Ok(())
     }
 }
 
+/// Establish websocket and start reading JSON messages representing SimulationState
+fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) {
+    let mut monitor = monitor_rc.borrow_mut();
+    console_log!("Connecting to WebSocket at {}", websocket_url);
+    let ws = match web_sys::WebSocket::new(&websocket_url) {
+        Ok(ws) => ws,
+        Err(err) => {
+            console_log!("Failed to create WebSocket: {:?}", err);
+            return;
+        }
+    };
+    
+    // Set up connection success handler
+    let onopen_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
+        console_log!("WebSocket connected successfully");
+        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+            if let Some(elem) = doc.get_element_by_id("connection-status") {
+                elem.set_inner_html("🟢 Connected");
+                elem.set_class_name("connection-status connected");
+            }
+        }
+    }) as Box<dyn FnMut(web_sys::Event)>);
+    
+    ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
+    onopen_callback.forget();
+
+    // Set up message handler
+    let message_monitor_rc = monitor_rc.clone();
+    let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
+        if let Ok(text) = e.data().dyn_into::<JsString>() {
+            let data_str = text.as_string().unwrap_or_default();
+            console_log!("Received WebSocket message ({} chars)", data_str.len());
+            
+            let mut monitor = message_monitor_rc.borrow_mut();
+            match serde_json::from_str::<SimulationState>(&data_str) {
+                Ok(new_state) => {
+                    monitor.simulation_state = new_state;
+                }
+                Err(err) => {
+                    console_log!("Failed to parse simulation state: {}", err);
+                }
+            }
+        } else {
+            let message_type = match e.data().dyn_into::<ArrayBuffer>() {
+                Ok(buffer) => format!("binary (size: {} bytes)", buffer.byte_length()),
+                Err(_) => "unknown type".to_string(),
+            };
+            console_log!("Received non-text WebSocket message: {}", message_type);
+        }
+    }) as Box<dyn FnMut(MessageEvent)>);
+    
+    ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
+    onmessage_callback.forget();
+
+    // Set up error handler
+    let onerror_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
+        console_log!("WebSocket connection error");
+        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+            if let Some(elem) = doc.get_element_by_id("connection-status") {
+                elem.set_inner_html("🔴 Disconnected");
+                elem.set_class_name("connection-status disconnected");
+            }
+        }
+    }) as Box<dyn FnMut(web_sys::Event)>);
+    
+    ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
+    onerror_callback.forget();
+
+    // Set up close handler
+    let onclose_callback = Closure::wrap(Box::new(move |_: web_sys::CloseEvent| {
+        console_log!("WebSocket connection closed");
+        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+            if let Some(elem) = doc.get_element_by_id("connection-status") {
+                elem.set_inner_html("🔴 Disconnected");
+                elem.set_class_name("connection-status disconnected");
+            }
+        }
+    }) as Box<dyn FnMut(web_sys::CloseEvent)>);
+    
+    ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
+    onclose_callback.forget();
+
+    monitor.websocket = Some(ws);
+    monitor.connected = true;
+}
+
+/// Start RAF loop for continuous rendering
+fn start_render_loop(monitor_rc: Rc<RefCell<EvolutionMonitor>>) -> Result<(), JsValue> {
+    let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+    let g = f.clone();
+
+    *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
+        monitor_rc.borrow_mut().render().unwrap();
+        web_window().request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref()).unwrap();
+    }) as Box<dyn FnMut()>));
+
+    web_window().request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref())?;
+    Ok(())
+}
+
 // Supporting types and structures
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct ParticleFilter {
     pub show_quarks: bool,
     pub show_leptons: bool,
@@ -1054,11 +1109,61 @@ fn window() -> Option<Window> {
 // Add helper to get window
 fn web_window() -> web_sys::Window { web_sys::window().expect("no global window") }
 
-/// Convenience exported function to start the dashboard from JS
+/// Convenience exported function to start the dashboard from JS - NO LONGER NEEDED
+/*
 #[wasm_bindgen]
 pub fn start_dashboard(canvas_id: &str, websocket_url: &str) -> Result<EvolutionMonitor, JsValue> {
     let mut monitor = EvolutionMonitor::new(canvas_id)?;
     monitor.connect_ws(websocket_url.to_string());
     monitor.start_render_loop()?;
     Ok(monitor)
+}
+*/
+
+#[wasm_bindgen(start)]
+pub fn run() -> Result<(), JsValue> {
+    // This function is called when the WASM is loaded.
+    // It sets up the simulation monitor and the render loop.
+
+    // Use this to log panic messages to the browser console
+    #[cfg(debug_assertions)]
+    console_error_panic_hook::set_once();
+
+    let monitor = EvolutionMonitor::new("simulation-canvas")?;
+    let monitor_rc = Rc::new(RefCell::new(monitor));
+    
+    let window = web_window();
+    let location = window.location();
+    let ws_protocol = if location.protocol()? == "https:" { "wss:" } else { "ws:" };
+    let hostname = location.hostname()?;
+    let websocket_url = format!("{}//{}:8080/ws", ws_protocol, hostname);
+
+    connect_ws(monitor_rc.clone(), websocket_url);
+    start_render_loop(monitor_rc.clone())?;
+    
+    // Set up UI event handlers
+    setup_ui_event_handlers(monitor_rc)?;
+
+    Ok(())
+}
+
+fn setup_ui_event_handlers(monitor_rc: Rc<RefCell<EvolutionMonitor>>) -> Result<(), JsValue> {
+    let window = web_window();
+    let document = window.document().expect("should have a document on window");
+
+    // View mode buttons
+    let view_buttons = document.query_selector_all(".view-btn")?;
+    for i in 0..view_buttons.length() {
+        if let Some(node) = view_buttons.item(i) {
+            let button = node.dyn_into::<HtmlElement>()?;
+            let monitor_clone = monitor_rc.clone();
+            let callback = Closure::wrap(Box::new(move || {
+                monitor_clone.borrow_mut().set_view_mode(i as u8);
+            }) as Box<dyn FnMut()>);
+            button.set_onclick(Some(callback.as_ref().unchecked_ref()));
+            callback.forget();
+        }
+    }
+
+    Ok(())
 }

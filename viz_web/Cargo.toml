@@ -21,9 +21,11 @@ uuid = { workspace = true, features = ["v4", "js"] }
 js-sys = { workspace = true }
 web-sys = { workspace = true, features = [
     "Window", "Document", "HtmlCanvasElement", "CanvasRenderingContext2d",
-    "WebSocket", "MessageEvent", "console", "BinaryType", "CloseEvent"
+    "WebSocket", "MessageEvent", "console", "BinaryType", "CloseEvent",
+    "Location", "Element", "HtmlElement", "NodeList"
 ] }
 wasm-bindgen = { workspace = true }
+console_error_panic_hook = { workspace = true }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 agent_evolution = { path = "../crates/agent_evolution", default-features = false }
 physics_engine   = { path = "../crates/physics_engine", default-features = false }

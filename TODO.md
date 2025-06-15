@@ -81,25 +81,33 @@ This file tracks the stubs and TODO items found in the codebase.
   - **Status:** COMPLETED - Added full inspection for planets, lineages, universe, and physics
   - **Implementation:** Comprehensive rendering with fallback to sample data when simulation not running
 
-- [ ] **HIGH PRIORITY** - Connect map generation to real simulation particle data
-  - **Current:** Uses synthetic mathematical functions for density visualization
-  - **Needed:** Extract actual particle positions, field strengths, and celestial body locations from running simulation
-  - **Implementation:** Add RPC method to universe simulation to return spatial data in grid format
+- [x] **HIGH PRIORITY** - Connect map generation to real simulation particle data
+  - **Status:** COMPLETED
+  - **Implementation:** Modified `get_map_data` in `universe_sim` to synchronize particle data from the main ECS world to the `physics_engine`'s particle list before rendering. This allows the map to visualize the actual positions of particles from the simulation. A `TODO` was added to address the underlying architectural inconsistency between the ECS and the physics engine's state management.
+  - **Current:** ~~Uses synthetic mathematical functions for density visualization~~ Now uses real particle data.
+  - **Needed:** ~~Extract actual particle positions, field strengths, and celestial body locations from running simulation~~ This is now implemented.
+  - **Implementation:** ~~Add RPC method to universe simulation to return spatial data in grid format~~ The RPC method existed; it was populated with real data.
 
-- [ ] **HIGH PRIORITY** - Connect planet listing to real simulation planetary data  
-  - **Current:** Returns hardcoded sample planets with basic properties
-  - **Needed:** Query actual PlanetaryEnvironment entities from simulation ECS world
-  - **Implementation:** Add planet query method to universe simulation, serialize environmental data
+- [x] **HIGH PRIORITY** - Connect planet listing to real simulation planetary data  
+  - **Status:** COMPLETED
+  - **Implementation:** Implemented the `process_planet_formation` function in `universe_sim` to procedurally generate planets around new stars. This populates the ECS world with `PlanetaryEnvironment` entities that can be queried. The `get_planet_data` function already worked, but now it has data to return. This removes the reliance on hardcoded sample data in the CLI.
+  - **Current:** ~~Returns hardcoded sample planets with basic properties~~ Now returns real, procedurally generated planets from the simulation.
+  - **Needed:** ~~Query actual PlanetaryEnvironment entities from simulation ECS world~~ Implemented via `process_planet_formation`.
+  - **Implementation:** ~~Add planet query method to universe simulation, serialize environmental data~~ The query method existed; the data generation has been implemented.
 
-- [ ] **HIGH PRIORITY** - Connect lineage inspection to real simulation lineage data
-  - **Current:** Returns hardcoded sample lineage data
-  - **Needed:** Query actual AgentLineage entities from simulation ECS world
-  - **Implementation:** Add lineage query method to universe simulation
+- [x] **HIGH PRIORITY** - Connect lineage inspection to real simulation lineage data
+  - **Status:** COMPLETED
+  - **Implementation:** Implemented `process_life_emergence` to spawn `AgentLineage` entities on habitable planets. `get_lineage_inspection_data` already existed and now has data to query.
+  - **Current:** ~~Returns hardcoded sample lineage data~~ Now returns real, procedurally generated lineage data.
+  - **Needed:** ~~Query actual AgentLineage entities from simulation ECS world~~ Implemented.
+  - **Implementation:** ~~Add lineage query method to universe simulation~~ Existed.
 
-- [ ] **HIGH PRIORITY** - Connect planet inspection to real simulation planetary data
-  - **Current:** Returns hardcoded sample planet data
-  - **Needed:** Query actual PlanetaryEnvironment data from simulation ECS world
-  - **Implementation:** Add detailed planet query method to universe simulation
+- [x] **HIGH PRIORITY** - Connect planet inspection to real simulation planetary data
+  - **Status:** COMPLETED
+  - **Implementation:** Done as part of connecting planet listing. `get_planet_inspection_data` already existed and works with the procedurally generated planets.
+  - **Current:** ~~Returns hardcoded sample planet data~~ Now returns real planet data.
+  - **Needed:** ~~Query actual PlanetaryEnvironment data from simulation ECS world~~ Implemented.
+  - **Implementation:** ~~Add detailed planet query method to universe simulation~~ Existed.
 
 - [x] **LOW PRIORITY** - Fix unused mut warnings in CLI code
   - **Status:** COMPLETED - Removed unnecessary mut keywords
@@ -112,42 +120,50 @@ This file tracks the stubs and TODO items found in the codebase.
   - **Features:** Electronic transitions, ionization/recombination, atomic collisions
   - **Scientific Accuracy:** Includes photoionization, spontaneous emission, and collision dynamics
 
-- [ ] **MEDIUM PRIORITY** - Implement realistic nuclear binding energy calculations
-  - **Current:** Uses simplified linear approximation (-8.0e-13 * mass_number)
-  - **Needed:** Semi-empirical mass formula (SEMF) with pairing, surface, and Coulomb terms
-  - **Scientific Accuracy:** Critical for realistic nucleosynthesis in stellar cores
+- [x] **MEDIUM PRIORITY** - Implement realistic nuclear binding energy calculations
+  - **Status:** COMPLETED
+  - **Implementation:** Replaced the hardcoded `-8.0e-13 * mass_number` approximation with calls to a proper Semi-Empirical Mass Formula (SEMF) implementation in the `nuclear_physics` module. All fusion and fission calculations now use this more accurate energy value.
+  - **Current:** ~~Uses simplified linear approximation (-8.0e-13 * mass_number)~~
+  - **Needed:** ~~Semi-empirical mass formula (SEMF) with pairing, surface, and Coulomb terms~~
+  - **Scientific Accuracy:** ~~Critical for realistic nucleosynthesis in stellar cores~~ This is now implemented, improving scientific accuracy.
 
-- [ ] **MEDIUM PRIORITY** - Add proper nuclear decay chains
-  - **Current:** Nuclear fission creates generic fragments
-  - **Needed:** Realistic fission product distributions, decay chains for unstable isotopes
-  - **Implementation:** Database of isotope properties, decay probabilities
+- [x] **MEDIUM PRIORITY** - Add proper nuclear decay chains
+  - **Status:** COMPLETED - Implemented comprehensive nuclear decay system
+  - **Implementation:** Added realistic decay modes (alpha, beta+, beta-, EC, SF) with NNDC data
+  - **Features:** Nuclear database with actual half-lives, realistic fission fragment distributions
+  - **Scientific Accuracy:** Based on Chart of Nuclides and Wahl's fission systematics
 
-- [ ] **HIGH PRIORITY** - Implement stellar nucleosynthesis sequences
-  - **Current:** Only basic H+H fusion implemented
-  - **Needed:** pp-chain, CNO cycle, He burning (3α process), advanced burning stages
+- [x] **HIGH PRIORITY** - Implement stellar nucleosynthesis sequences
+  - **Status:** COMPLETED - Implemented comprehensive stellar nucleosynthesis engine
+  - **Implementation:** Added complete stellar nucleosynthesis with proton-proton chain, CNO cycle, triple-alpha process, and advanced burning stages
+  - **Features:** Temperature-dependent reaction rates, Gamow peak calculations, proper Q-values, realistic cross-sections
   - **Scientific Accuracy:** Essential for realistic star formation and element production
 
-- [ ] **MEDIUM PRIORITY** - Add neutron capture processes (s-process, r-process)
-  - **Current:** Neutrons from fission have no capture interactions
-  - **Needed:** Cross-sections for neutron capture on heavy nuclei
-  - **Scientific Accuracy:** Required for heavy element synthesis beyond iron
+- [x] **MEDIUM PRIORITY** - Add neutron capture processes (s-process, r-process)
+  - **Status:** COMPLETED - Implemented comprehensive neutron capture nucleosynthesis
+  - **Implementation:** Added s-process and r-process with realistic cross-sections from ENDF/B-VIII.0
+  - **Features:** Temperature-dependent rates, magic number effects, systematic estimates for unknown isotopes
+  - **Scientific Accuracy:** Essential for heavy element synthesis beyond iron (Au, Pt, U, etc.)
 
 ### `crates/universe_sim/src/lib.rs` - Simulation Integration
 
-- [ ] **HIGH PRIORITY** - Connect physics engine nuclear processes to cosmic evolution
-  - **Current:** Nuclear fusion/fission exist in physics engine but aren't used by cosmic processes
-  - **Needed:** Star formation creates appropriate nuclear fuel, stellar evolution drives nucleosynthesis
-  - **Implementation:** Bridge between CelestialBody entities and nuclear reaction rates
+- [x] **HIGH PRIORITY** - Connect physics engine nuclear processes to cosmic evolution
+  - **Status:** COMPLETED - Integrated nuclear physics with stellar evolution
+  - **Implementation:** Added StellarEvolution component with real nuclear burning
+  - **Features:** Star formation uses IMF, stellar evolution based on nuclear fuel depletion
+  - **Scientific Accuracy:** Realistic stellar lifetimes, mass-dependent evolution, nuclear composition tracking
 
-- [ ] **HIGH PRIORITY** - Implement real stellar evolution based on nuclear burning
-  - **Current:** Placeholder star formation and evolution
-  - **Needed:** Mass-dependent main sequence evolution, giant branch, supernovae based on nuclear fuel depletion
-  - **Scientific Accuracy:** Foundation for realistic cosmic chemical evolution
+- [x] **HIGH PRIORITY** - Implement real stellar evolution based on nuclear burning
+  - **Status:** COMPLETED - Comprehensive stellar evolution system implemented
+  - **Implementation:** Full evolutionary phases from main sequence to stellar death
+  - **Features:** Mass-dependent lifetimes, realistic stellar death (WD/NS/BH), composition evolution
+  - **Scientific Accuracy:** Based on Kippenhahn & Weigert stellar structure theory
 
-- [ ] **MEDIUM PRIORITY** - Add supernova nucleosynthesis and enrichment
-  - **Current:** No mechanism for distributing fusion products to interstellar medium
-  - **Needed:** Core collapse supernovae, neutron star mergers, chemical enrichment of gas clouds
-  - **Implementation:** Explosion mechanics that distribute heavy elements
+- [x] **MEDIUM PRIORITY** - Add supernova nucleosynthesis and enrichment
+  - **Status:** COMPLETED - Implemented supernova nucleosynthesis and chemical enrichment
+  - **Implementation:** Supernova ejecta creation, r-process nucleosynthesis in explosive environment
+  - **Features:** Heavy element distribution to ISM, realistic ejecta velocities (~10,000 km/s)
+  - **Scientific Accuracy:** Foundation for galactic chemical evolution and heavy element abundance patterns
 
 - [ ] **HIGH PRIORITY** - Implement real universe statistics collection
   - **Current:** Uses basic SimulationStats with particle counts
@@ -284,6 +300,15 @@ This file tracks the stubs and TODO items found in the codebase.
 - **COMPLETED** - Scientifically accurate hydrogen physics with proper energy levels
 - **COMPLETED** - Borrow checker compliant implementation using update pattern
 - **COMPLETED** - Memory safe particle creation and removal
+- **COMPLETED** - Stellar nucleosynthesis implementation including:
+  - Complete proton-proton chain (pp-I, deuterium fusion, ³He fusion)
+  - CNO cycle reactions with proper catalysis
+  - Triple-alpha process for helium burning to carbon
+  - Alpha-carbon fusion to oxygen
+  - Advanced burning stages (carbon, neon, oxygen, silicon burning)
+  - Temperature-dependent reaction rates with Gamow peak suppression
+  - Realistic cross-sections and Q-values from nuclear data
+  - Proper stellar density and composition tracking
 
 ### ✅ Code Quality Improvements
 
@@ -291,3 +316,19 @@ This file tracks the stubs and TODO items found in the codebase.
 - **COMPLETED** - Proper error handling throughout implementation
 - **COMPLETED** - Clean separation of concerns between CLI and simulation
 - **COMPLETED** - Comprehensive TODO documentation with priorities
+
+## Newly Discovered TODOs (Session Jan 2025)
+
+### `cli/src/main.rs` - Diagnostics Accuracy Improvements
+
+- [ ] L??? : Use proper thermodynamic equations to calculate system pressure instead of ideal gas approximation (`P = u/3`)
+  - **Priority:** Medium
+  - **Complexity:** Medium
+  - **Dependencies:** `physics_engine::thermodynamics` for equation of state
+  - **Notes:** Current implementation approximates pressure directly from energy density; replace with calculation based on particle species, temperature, and volume.
+
+- [ ] L??? : Track and return real `interactions_per_step` metric in physics diagnostics
+  - **Priority:** Medium
+  - **Complexity:** Simple
+  - **Dependencies:** Add counter in `PhysicsEngine::step` to count interaction events
+  - **Notes:** Currently uses particle count as a rough proxy. Add interaction counter and expose through diagnostics JSON.

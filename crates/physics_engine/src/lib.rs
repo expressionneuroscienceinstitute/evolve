@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use rand::{Rng, thread_rng};
 use bevy_ecs::prelude::Component;
 
+use self::nuclear_physics::{Nucleus, StellarNucleosynthesis};
+
 pub mod constants;
 pub mod classical;
 pub mod electromagnetic;
@@ -140,6 +142,7 @@ pub struct PhysicsEngine {
     pub cross_sections: HashMap<(ParticleType, ParticleType), f64>,
     pub running_couplings: RunningCouplings,
     pub symmetry_breaking: SymmetryBreaking,
+    pub stellar_nucleosynthesis: StellarNucleosynthesis,
     pub time_step: f64,
     pub current_time: f64,
     pub temperature: f64,
@@ -312,6 +315,7 @@ impl PhysicsEngine {
             cross_sections: HashMap::new(),
             running_couplings: RunningCouplings::new(),
             symmetry_breaking: SymmetryBreaking::new(),
+            stellar_nucleosynthesis: StellarNucleosynthesis::new(),
             time_step,
             current_time: 0.0,
             temperature: 0.0,
@@ -768,8 +772,149 @@ impl PhysicsEngine {
         Ok(())
     }
     
-    /// Process nuclear fusion reactions
+    /// Process nuclear fusion reactions using stellar nucleosynthesis
     fn process_nuclear_fusion(&mut self) -> Result<()> {
+        // Create composition array from current nuclei
+        let mut composition = self.build_isotope_composition();
+        
+        // Calculate stellar density from nuclei
+        let density = self.calculate_stellar_density();
+        
+        // Process stellar nucleosynthesis
+        let energy_released = self.stellar_nucleosynthesis
+            .process_stellar_burning(self.temperature, density, &mut composition)?;
+        
+        // Update energy density with nuclear energy
+        self.energy_density += energy_released / self.volume;
+        
+        // Update nuclei from new composition
+        self.update_nuclei_from_composition(&composition)?;
+        
+        // Fall back to legacy fusion for compatibility
+        self.process_legacy_fusion()?;
+        
+        Ok(())
+    }
+    
+    /// Build isotope composition array from current nuclei
+    fn build_isotope_composition(&self) -> Vec<(u32, u32, f64)> {
+        let mut composition = Vec::new();
+        
+        // Common stellar isotopes with initial abundances
+        let stellar_isotopes = [
+            (1, 1, 0.0),   // ¹H (protons)
+            (1, 2, 0.0),   // ²H (deuterium)
+            (2, 3, 0.0),   // ³He
+            (2, 4, 0.0),   // ⁴He (alpha particles)
+            (6, 12, 0.0),  // ¹²C
+            (6, 13, 0.0),  // ¹³C
+            (7, 13, 0.0),  // ¹³N
+            (7, 14, 0.0),  // ¹⁴N
+            (7, 15, 0.0),  // ¹⁵N
+            (8, 15, 0.0),  // ¹⁵O
+            (8, 16, 0.0),  // ¹⁶O
+            (12, 24, 0.0), // ²⁴Mg
+            (26, 56, 0.0), // ⁵⁶Fe
+        ];
+        
+        // Initialize with stellar isotope template
+        for &(z, a, _) in &stellar_isotopes {
+            let abundance = self.count_isotope_abundance(z, a);
+            composition.push((z, a, abundance));
+        }
+        
+        composition
+    }
+    
+    /// Count abundance of specific isotope in current nuclei
+    fn count_isotope_abundance(&self, z: u32, a: u32) -> f64 {
+        let mut count = 0.0;
+        
+        for nucleus in &self.nuclei {
+            if nucleus.atomic_number == z && nucleus.mass_number == a {
+                count += 1.0;
+            }
+        }
+        
+        // Also count from fundamental particles
+        for particle in &self.particles {
+            match particle.particle_type {
+                ParticleType::Proton if z == 1 && a == 1 => count += 1.0,
+                ParticleType::Neutron if z == 0 && a == 1 => count += 1.0,
+                _ => {}
+            }
+        }
+        
+        count / self.particles.len().max(1) as f64 // Normalize by total particle count
+    }
+    
+    /// Calculate stellar density for nucleosynthesis
+    fn calculate_stellar_density(&self) -> f64 {
+        // Estimate density from nuclei and particles
+        let total_mass = self.nuclei.iter()
+            .map(|n| n.mass_number as f64 * 1.66e-27) // Atomic mass units to kg
+            .sum::<f64>() + 
+            self.particles.iter()
+            .map(|p| p.mass)
+            .sum::<f64>();
+        
+        total_mass / self.volume.max(1e-50) // Prevent division by zero
+    }
+    
+    /// Update nuclei from composition changes
+    fn update_nuclei_from_composition(&mut self, composition: &[(u32, u32, f64)]) -> Result<()> {
+        // For now, this is a simplified implementation
+        // In a full implementation, we would need to:
+        // 1. Calculate the difference between old and new composition
+        // 2. Remove consumed nuclei
+        // 3. Add newly created nuclei
+        // 4. Update nuclear properties
+        
+        for &(z, a, abundance) in composition {
+            if abundance > 0.0 && z > 0 && a > 0 {
+                // Create nuclei for isotopes with significant abundance
+                let target_count = (abundance * 1000.0) as usize; // Scale factor
+                let current_count = self.nuclei.iter()
+                    .filter(|n| n.atomic_number == z && n.mass_number == a)
+                    .count();
+                
+                // Add nuclei if we have too few
+                if target_count > current_count {
+                    let to_add = target_count - current_count;
+                    for _ in 0..to_add.min(10) { // Limit to prevent excessive creation
+                        self.create_nucleus(z, a)?;
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Create a new nucleus with given Z and A
+    fn create_nucleus(&mut self, z: u32, a: u32) -> Result<()> {
+        let nucleus = AtomicNucleus {
+            mass_number: a,
+            atomic_number: z,
+            protons: vec![],
+            neutrons: vec![],
+            binding_energy: nuclear_physics::Nucleus::new(z, a - z).binding_energy(),
+            nuclear_spin: Vector3::zeros(),
+            magnetic_moment: Vector3::zeros(),
+            electric_quadrupole_moment: 0.0,
+            nuclear_radius: 1.2e-15 * (a as f64).powf(1.0/3.0), // Fermi
+            shell_model_state: HashMap::new(),
+            position: Vector3::zeros(),
+            momentum: Vector3::zeros(),
+            excitation_energy: 0.0,
+        };
+        
+        self.nuclei.push(nucleus);
+        Ok(())
+    }
+    
+    /// Legacy fusion processing for backward compatibility
+    fn process_legacy_fusion(&mut self) -> Result<()> {
         let mut fusion_reactions = Vec::new();
         
         // Look for fusion-capable nuclei
@@ -1004,7 +1149,7 @@ impl PhysicsEngine {
             atomic_number: fragment1_z,
             protons: Vec::new(), // Simplified
             neutrons: Vec::new(), // Simplified
-            binding_energy: -8.0e-13 * fragment1_mass as f64, // Approximate
+            binding_energy: Nucleus::new(fragment1_z, fragment1_mass - fragment1_z).binding_energy() * 1.60218e-13,
             nuclear_spin: Vector3::zeros(),
             magnetic_moment: Vector3::zeros(),
             electric_quadrupole_moment: 0.0,
@@ -1020,7 +1165,7 @@ impl PhysicsEngine {
             atomic_number: fragment2_z,
             protons: Vec::new(),
             neutrons: Vec::new(),
-            binding_energy: -8.0e-13 * fragment2_mass as f64,
+            binding_energy: Nucleus::new(fragment2_z, fragment2_mass - fragment2_z).binding_energy() * 1.60218e-13,
             nuclear_spin: Vector3::zeros(),
             magnetic_moment: Vector3::zeros(),
             electric_quadrupole_moment: 0.0,
@@ -1130,7 +1275,7 @@ impl PhysicsEngine {
         
         // Q-value calculation (simplified)
         let binding_energy_reactants = n1.binding_energy + n2.binding_energy;
-        let binding_energy_product = -8.0e-13 * product_mass as f64; // Simplified
+        let binding_energy_product = Nucleus::new(product_z, product_mass - product_z).binding_energy() * 1.60218e-13;
         let q_value = binding_energy_product - binding_energy_reactants;
         
         Ok(FusionReaction {
@@ -1780,6 +1925,21 @@ pub struct EnvironmentProfile {
     pub energy_flux: f64,
     pub shelter_index: f64,
     pub hazard_rate: f64,
+}
+
+impl Default for EnvironmentProfile {
+    fn default() -> Self {
+        Self {
+            liquid_water: 0.0,
+            atmos_oxygen: 0.0,
+            atmos_pressure: 0.0,
+            temp_celsius: -273.15,
+            radiation: 0.0,
+            energy_flux: 0.0,
+            shelter_index: 0.0,
+            hazard_rate: 1.0,
+        }
+    }
 }
 
 impl EnvironmentProfile {

@@ -277,25 +277,20 @@
         }
         
         .connection-status {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            padding: 8px 15px;
-            border-radius: 20px;
-            font-size: 11px;
+            position: fixed;
+            top: 15px;
+            right: 250px;
+            padding: 5px 10px;
+            border-radius: 5px;
             font-weight: bold;
         }
-        
-        .connected {
-            background: rgba(0, 255, 0, 0.2);
-            border: 1px solid #00ff00;
+        .connection-status.connected {
             color: #00ff00;
+            background-color: rgba(0, 255, 0, 0.1);
         }
-        
-        .disconnected {
-            background: rgba(255, 0, 0, 0.2);
-            border: 1px solid #ff0000;
+        .connection-status.disconnected {
             color: #ff0000;
+            background-color: rgba(255, 0, 0, 0.1);
         }
         
         .timeline-scrubber {
@@ -370,6 +365,7 @@
     <div class="header">
         <h1>🧬 EVOLVE: Ultimate AI Evolution Simulation</h1>
         <div class="stats-bar">
+            <div id="connection-status" class="connection-status disconnected">🔴 Disconnected</div>
             <div class="stats-item">Universe Age: <span id="universe-age">0.0 Gyr</span></div>
             <div class="stats-item">Temperature: <span id="temperature">0 K</span></div>
             <div class="stats-item">Particles: <span id="particle-count" class="particle-count">0</span></div>
@@ -384,14 +380,14 @@
         <div class="control-section">
             <h3>🔭 View Modes</h3>
             <div class="view-buttons">
-                <button class="view-btn" onclick="setViewMode(0)">Particle Physics</button>
-                <button class="view-btn active" onclick="setViewMode(1)">AI Agents</button>
-                <button class="view-btn" onclick="setViewMode(2)">Lineage Trees</button>
-                <button class="view-btn" onclick="setViewMode(3)">Decision Tracking</button>
-                <button class="view-btn" onclick="setViewMode(4)">Consciousness</button>
-                <button class="view-btn" onclick="setViewMode(5)">Innovation Timeline</button>
-                <button class="view-btn" onclick="setViewMode(6)">Selection Pressures</button>
-                <button class="view-btn" onclick="setViewMode(7)">Quantum Fields</button>
+                <button class="view-btn">Particle Physics</button>
+                <button class="view-btn active">AI Agents</button>
+                <button class="view-btn">Lineage Trees</button>
+                <button class="view-btn">Decision Tracking</button>
+                <button class="view-btn">Consciousness</button>
+                <button class="view-btn">Innovation Timeline</button>
+                <button class="view-btn">Selection Pressures</button>
+                <button class="view-btn">Quantum Fields</button>
             </div>
         </div>
 
@@ -446,7 +442,7 @@
                 <label for="zoom-level">Zoom Level: <span id="zoom-value">1.0x</span></label>
                 <input type="range" id="zoom-level" class="slider" min="0.1" max="50" step="0.1" value="1">
             </div>
-            <button class="view-btn pulsing" onclick="resetView()">Reset View</button>
+            <button class="view-btn pulsing">Reset View</button>
         </div>
 
         <div class="control-section">
@@ -541,10 +537,6 @@
     <div class="canvas-container">
         <canvas id="simulation-canvas"></canvas>
         
-        <div class="connection-status" id="connection-status">
-            🔴 Disconnected
-        </div>
-        
         <div class="performance-indicator">
             <div>FPS: <span id="fps">0</span></div>
             <div>Render Time: <span id="render-time">0ms</span></div>
@@ -584,343 +576,6 @@
         </div>
     </div>
 
-    <script type="module">
-        let monitor = null;
-        let animationId = null;
-        let lastFrameTime = 0;
-        let frameCount = 0;
-
-        async function initializeSimulation() {
-            try {
-                // Wait for WASM module to be loaded by Trunk
-                await new Promise(resolve => {
-                    if (window.wasmBindings) {
-                        resolve();
-                    } else {
-                        window.addEventListener('TrunkApplicationStarted', resolve);
-                    }
-                });
-                console.log('WASM module loaded successfully');
-                
-                monitor = new window.wasmBindings.EvolutionMonitor('simulation-canvas');
-                console.log('Evolution monitor initialized');
-                
-                // Connect to simulation backend
-                const wsUrl = `ws://${window.location.hostname}:8080/ws`;
-                console.log('Attempting to connect to:', wsUrl);
-                try {
-                    monitor.connect(wsUrl);
-                    // Don't immediately assume success - let the WebSocket callbacks handle status
-                    updateConnectionStatus(false); // Start as disconnected
-                } catch (err) {
-                    console.error('WebSocket connection failed:', err);
-                    updateConnectionStatus(false);
-                }
-                
-                // Setup all event handlers
-                setupEventHandlers();
-                
-                startRenderLoop();
-                
-            } catch (error) {
-                console.error('Failed to initialize simulation:', error);
-                updateConnectionStatus(false);
-            }
-        }
-
-        function setupEventHandlers() {
-            // View mode buttons
-            document.querySelectorAll('.view-btn').forEach((btn, index) => {
-                btn.addEventListener('click', () => setViewMode(index));
-            });
-
-            // Particle filters
-            document.getElementById('show-quarks').addEventListener('change', updateParticleFilters);
-            document.getElementById('show-leptons').addEventListener('change', updateParticleFilters);
-            document.getElementById('show-bosons').addEventListener('change', updateParticleFilters);
-            document.getElementById('energy-threshold').addEventListener('input', updateParticleFilters);
-
-            // Visualization settings
-            document.getElementById('show-connections').addEventListener('change', updateVisualizationSettings);
-            document.getElementById('show-decisions').addEventListener('change', updateVisualizationSettings);
-            document.getElementById('show-innovations').addEventListener('change', updateVisualizationSettings);
-
-            // Simulation controls
-            document.getElementById('time-scale').addEventListener('input', updateSimulationSettings);
-            document.getElementById('zoom-level').addEventListener('input', updateSimulationSettings);
-
-            // Analytics settings
-            document.getElementById('show-metrics').addEventListener('change', updateAnalyticsSettings);
-            document.getElementById('auto-follow').addEventListener('change', updateAnalyticsSettings);
-            document.getElementById('highlight-consciousness').addEventListener('change', updateAnalyticsSettings);
-
-            // Timeline scrubber
-            document.getElementById('timeline-slider').addEventListener('input', updateTimelinePosition);
-
-            // Agent selection
-            if (document.getElementById('agent-select')) {
-                document.getElementById('agent-select').addEventListener('change', function(e) {
-                    if (monitor && e.target.value) {
-                        monitor.select_agent(e.target.value);
-                        updateSelectedAgentInfo(e.target.value);
-                    }
-                });
-            }
-
-            // Keyboard shortcuts
-            document.addEventListener('keydown', function(e) {
-                switch(e.key) {
-                    case '1': setViewMode(0); break;
-                    case '2': setViewMode(1); break;
-                    case '3': setViewMode(2); break;
-                    case '4': setViewMode(3); break;
-                    case '5': setViewMode(4); break;
-                    case '6': setViewMode(5); break;
-                    case '7': setViewMode(6); break;
-                    case '8': setViewMode(7); break;
-                    case 'r': resetView(); break;
-                    case ' ': e.preventDefault(); togglePause(); break;
-                }
-            });
-        }
-
-        function updateParticleFilters() {
-            if (!monitor) return;
-            
-            const showQuarks = document.getElementById('show-quarks').checked;
-            const showLeptons = document.getElementById('show-leptons').checked;
-            const showBosons = document.getElementById('show-bosons').checked;
-            const energyThreshold = parseFloat(document.getElementById('energy-threshold').value);
-            
-            monitor.set_energy_filter_min(energyThreshold);
-            
-            console.log('Particle filters updated:', { showQuarks, showLeptons, showBosons, energyThreshold });
-        }
-
-        function updateVisualizationSettings() {
-            if (!monitor) return;
-            
-            const showConnections = document.getElementById('show-connections').checked;
-            const showDecisions = document.getElementById('show-decisions').checked;
-            const showInnovations = document.getElementById('show-innovations').checked;
-            
-            console.log('Visualization settings updated:', { showConnections, showDecisions, showInnovations });
-        }
-
-        function updateSimulationSettings() {
-            if (!monitor) return;
-            
-            const timeScale = parseFloat(document.getElementById('time-scale').value);
-            const zoomLevel = parseFloat(document.getElementById('zoom-level').value);
-            
-            monitor.set_particle_size_scale(zoomLevel);
-            
-            console.log('Simulation settings updated:', { timeScale, zoomLevel });
-        }
-
-        function updateAnalyticsSettings() {
-            const showMetrics = document.getElementById('show-metrics').checked;
-            const autoFollow = document.getElementById('auto-follow').checked;
-            const highlightConsciousness = document.getElementById('highlight-consciousness').checked;
-            
-            console.log('Analytics settings updated:', { showMetrics, autoFollow, highlightConsciousness });
-        }
-
-        function updateTimelinePosition() {
-            const position = document.getElementById('timeline-slider').value;
-            console.log('Timeline position updated:', position);
-        }
-
-        function togglePause() {
-            console.log('Toggle pause/play');
-        }
-
-        function startRenderLoop() {
-            function render(timestamp) {
-                if (monitor) {
-                    try {
-                        monitor.render();
-                        updatePerformanceMetrics(timestamp);
-                        updateSimulationStats();
-                    } catch (error) {
-                        console.error('Render error:', error);
-                    }
-                }
-                animationId = requestAnimationFrame(render);
-            }
-            render(performance.now());
-        }
-
-        function updatePerformanceMetrics(timestamp) {
-            if (lastFrameTime === 0) {
-                lastFrameTime = timestamp;
-                return;
-            }
-            
-            const deltaTime = timestamp - lastFrameTime;
-            const fps = Math.round(1000 / deltaTime);
-            
-            document.getElementById('fps').textContent = fps;
-            document.getElementById('render-time').textContent = Math.round(deltaTime) + 'ms';
-            
-            frameCount++;
-            lastFrameTime = timestamp;
-        }
-
-        function updateConnectionStatus(connected) {
-            const statusElement = document.getElementById('connection-status');
-            if (connected) {
-                statusElement.textContent = '🟢 Connected';
-                statusElement.className = 'connection-status connected';
-            } else {
-                statusElement.textContent = '🔴 Disconnected';
-                statusElement.className = 'connection-status disconnected';
-            }
-            
-            // Debug logging
-            console.log('Connection status updated:', connected);
-        }
-
-        function updateSimulationStats() {
-            // Update connection status first
-            if (monitor) {
-                updateConnectionStatus(monitor.is_connected());
-            }
-            
-            // Update right panel with simulation data
-            if (monitor) {
-                try {
-                    const stateJson = monitor.get_simulation_state_json();
-                    const state = JSON.parse(stateJson);
-                    
-                    // Universe Status
-                    document.getElementById('current-tick').textContent = state.current_tick || 0;
-                    document.getElementById('cosmic-era').textContent = state.cosmic_era || 'Unknown';
-                    document.getElementById('energy-density').textContent = (state.energy_density || 0).toFixed(2) + ' J/m³';
-                    
-                    // Evolution Statistics
-                    document.getElementById('active-lineages').textContent = state.population_stats?.active_lineages || 0;
-                    document.getElementById('extinct-lineages').textContent = state.population_stats?.extinct_lineages || 0;
-                    document.getElementById('average-fitness').textContent = (state.population_stats?.average_fitness || 0).toFixed(2);
-                    document.getElementById('genetic-diversity').textContent = (state.population_stats?.genetic_diversity || 0).toFixed(2);
-                    document.getElementById('innovation-rate').textContent = (state.evolution_metrics?.innovation_rate || 0).toFixed(2) + '/tick';
-                    
-                    // System Performance
-                    document.getElementById('updates-per-second').textContent = (state.physics_metrics?.ups || 0).toFixed(1);
-                    document.getElementById('memory-usage').textContent = Math.round((performance.memory?.usedJSHeapSize || 0) / 1024 / 1024) + ' MB';
-                    document.getElementById('cpu-usage').textContent = '0%'; // Placeholder
-                    
-                    // Update innovations
-                    updateRecentInnovations(state.innovations || []);
-                } catch (error) {
-                    console.error('Error updating simulation stats:', error);
-                    // Set default values when there's an error
-                    setDefaultStats();
-                }
-            } else {
-                setDefaultStats();
-                updateConnectionStatus(false);
-            }
-        }
-
-        function setDefaultStats() {
-            document.getElementById('current-tick').textContent = '0';
-            document.getElementById('cosmic-era').textContent = 'Initializing...';
-            document.getElementById('energy-density').textContent = '0.0 J/m³';
-            document.getElementById('active-lineages').textContent = '0';
-            document.getElementById('extinct-lineages').textContent = '0';
-            document.getElementById('average-fitness').textContent = '0.0';
-            document.getElementById('genetic-diversity').textContent = '0.0';
-            document.getElementById('innovation-rate').textContent = '0.0/tick';
-            document.getElementById('updates-per-second').textContent = '0.0';
-            document.getElementById('memory-usage').textContent = '0 MB';
-            document.getElementById('cpu-usage').textContent = '0%';
-        }
-
-        function updateRecentInnovations(innovations) {
-            const container = document.getElementById('recent-innovations');
-            if (innovations.length === 0) {
-                container.innerHTML = '<p>No innovations yet</p>';
-            } else {
-                const recentInnovations = innovations.slice(-5); // Last 5 innovations
-                container.innerHTML = recentInnovations.map(innovation => 
-                    `<div class="innovation-item">
-                        <strong>${innovation.innovation_type || 'Unknown'}</strong>
-                        <br>Impact: ${(innovation.impact_score || 0).toFixed(2)}
-                        <br>Adoption: ${(innovation.adoption_rate || 0).toFixed(1)}%
-                    </div>`
-                ).join('');
-            }
-        }
-
-        function updateSelectedAgentInfo(agentId) {
-            const container = document.getElementById('agent-details');
-            if (monitor) {
-                try {
-                    const stateJson = monitor.get_simulation_state_json();
-                    const state = JSON.parse(stateJson);
-                    
-                    if (state.agents) {
-                        const agent = state.agents.find(a => a.id === agentId);
-                        if (agent) {
-                            container.innerHTML = `
-                                <div class="agent-info">
-                                    <strong>Agent ${agentId}</strong>
-                                    <br>Generation: ${agent.generation || 0}
-                                    <br>Fitness: ${(agent.fitness || 0).toFixed(2)}
-                                    <br>Energy: ${(agent.energy || 0).toFixed(2)}
-                                    <br>Consciousness: ${(agent.consciousness_level || 0).toFixed(2)}
-                                    <br>Tech Level: ${(agent.tech_level || 0).toFixed(2)}
-                                    <br>Sentience: ${(agent.sentience_level || 0).toFixed(2)}
-                                    <br>Innovations: ${agent.innovations_created ? agent.innovations_created.length : 0}
-                                </div>
-                            `;
-                        } else {
-                            container.innerHTML = '<p>Agent not found</p>';
-                        }
-                    } else {
-                        container.innerHTML = '<p>No agents available</p>';
-                    }
-                } catch (error) {
-                    console.error('Error updating selected agent info:', error);
-                    container.innerHTML = '<p>Error loading agent data</p>';
-                }
-            } else {
-                container.innerHTML = '<p>No agent selected</p>';
-            }
-        }
-
-        window.setViewMode = function(mode) {
-            if (monitor) {
-                monitor.set_view_mode(mode);
-                
-                // Update button states
-                document.querySelectorAll('.view-btn').forEach(btn => btn.classList.remove('active'));
-                document.querySelectorAll('.view-btn')[mode].classList.add('active');
-                
-                console.log('View mode changed to:', mode);
-            }
-        };
-
-        window.resetView = function() {
-            if (monitor) {
-                // Reset zoom and position
-                document.getElementById('zoom-level').value = 1;
-                document.getElementById('time-scale').value = 1;
-                updateSimulationSettings();
-                console.log('View reset');
-            }
-        };
-
-        // Initialize everything when page loads
-        window.addEventListener('load', initializeSimulation);
-
-        // Cleanup on page unload
-        window.addEventListener('beforeunload', function() {
-            if (animationId) {
-                cancelAnimationFrame(animationId);
-            }
-        });
-    </script>
+    <!-- The `run` function in `src/main.rs` is the entry point -->
 </body>
 </html>

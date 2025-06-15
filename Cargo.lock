@@ -543,6 +543,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1301,6 +1311,12 @@ dependencies = [
  "autocfg",
  "rawpointer",
 ]
+
+[[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "memchr"
@@ -2664,6 +2680,7 @@ dependencies = [
  "bevy_ecs",
  "bincode",
  "config",
+ "md5",
  "nalgebra",
  "physics_engine",
  "rand",
@@ -2762,6 +2779,7 @@ name = "viz_web"
 version = "0.1.0"
 dependencies = [
  "agent_evolution",
+ "console_error_panic_hook",
  "getrandom 0.3.3",
  "js-sys",
  "physics_engine",

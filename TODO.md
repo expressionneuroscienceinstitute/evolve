@@ -25,7 +25,7 @@ This file tracks the stubs and TODO items found in the codebase.
 ### `cli/src/main.rs`
 
 - [x] L294: Connect to running simulation via RPC
-- [ ] L354: Implement checkpoint loading
+- [x] L354: Implement checkpoint loading
 - [ ] L427: Send stop signal to running simulation
 - [ ] L436: Generate ASCII map from simulation data
 - [ ] L465: Query running simulation for planets

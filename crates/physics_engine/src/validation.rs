@@ -7,6 +7,7 @@ use nalgebra::Vector3;
 use crate::{PhysicsState, PhysicsConstants};
 
 /// Physics validation tolerance
+#[allow(dead_code)]
 const CONSERVATION_TOLERANCE: f64 = 1e-6;
 
 /// Validation error types

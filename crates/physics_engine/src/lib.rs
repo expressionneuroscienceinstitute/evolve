@@ -962,6 +962,7 @@ impl PhysicsEngine {
     fn update_atomic_physics(&mut self) -> Result<()> { Ok(()) }
     #[allow(dead_code)]
     fn update_molecular_dynamics(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
+    #[allow(dead_code)]
     fn process_phase_transitions(&mut self) -> Result<()> { Ok(()) }
     #[allow(dead_code)]
     fn update_emergent_properties(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }

@@ -62,7 +62,7 @@ pub struct AICore {
 
 impl AICore {
     /// Creates a new AI core, configured by the agent's genome.
-    pub fn from_genome(genome: &Genome) -> Self {
+    pub fn from_genome(_genome: &Genome) -> Self {
         // In a real implementation, the genome would define the neural network's architecture.
         // For now, we'll use fixed sizes.
         let input_size = 10;  // Example size

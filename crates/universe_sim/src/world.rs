@@ -467,7 +467,7 @@ impl World {
     fn generate_planetary_composition(&self, class: &PlanetClass, orbital_radius: f64) -> ElementTable {
         let mut composition = ElementTable::new();
         let au = 1.496e11;
-        let distance_au = orbital_radius / au;
+        let _distance_au = orbital_radius / au;
         
         match class {
             PlanetClass::E => {

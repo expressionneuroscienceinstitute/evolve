@@ -82,6 +82,7 @@ impl EmergenceMonitor {
     /// Calculate the entropy.
     /// This is a placeholder and would require a more complex statistical
     /// mechanics calculation.
+    #[allow(dead_code)]
     fn calculate_entropy(&self, _particles: &[PhysicsState]) -> Entropy {
         // A proper implementation would likely involve phase space volume, which is
         // very complex to calculate.

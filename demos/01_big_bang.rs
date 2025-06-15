@@ -29,14 +29,14 @@ fn main() -> Result<()> {
     println!();
     
     // Track interaction statistics
-    let mut prev_electron_count = 0;
-    let mut prev_positron_count = 0;
+    let mut _prev_electron_count = 0;
+    let mut _prev_positron_count = 0;
     
     // Count initial particles
     for particle in &engine.particles {
         match particle.particle_type {
-            ParticleType::Electron => prev_electron_count += 1,
-            ParticleType::Positron => prev_positron_count += 1,
+            ParticleType::Electron => _prev_electron_count += 1,
+            ParticleType::Positron => _prev_positron_count += 1,
             _ => {}
         }
     }
@@ -66,8 +66,8 @@ fn main() -> Result<()> {
             let electrons = counts.get(&ParticleType::Electron).copied().unwrap_or(0);
             let positrons = counts.get(&ParticleType::Positron).copied().unwrap_or(0);
             
-            prev_electron_count = electrons;
-            prev_positron_count = positrons;
+            _prev_electron_count = electrons;
+            _prev_positron_count = positrons;
             
             let quarks = counts.get(&ParticleType::Up).copied().unwrap_or(0)
                 + counts.get(&ParticleType::Down).copied().unwrap_or(0)

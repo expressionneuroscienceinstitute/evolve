@@ -15,6 +15,17 @@ pub struct Interaction {
     pub probability: f64,
 }
 
+impl Default for Interaction {
+    fn default() -> Self {
+        Self {
+            particle_indices: (0, 0),
+            interaction_type: InteractionType::ElasticScattering,
+            cross_section: 0.0,
+            probability: 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum InteractionType {
     ComptonScattering,

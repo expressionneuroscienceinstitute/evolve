@@ -585,7 +585,7 @@
     </div>
 
     <script type="module">
-        // WASM bindings will be available after TrunkApplicationStarted event
+        import init, { EvolutionMonitor } from './viz_web.js';
 
         let monitor = null;
         let animationId = null;
@@ -594,16 +594,8 @@
 
         async function initializeSimulation() {
             try {
-                // Wait for Trunk's WASM initialization
-                await new Promise((resolve) => {
-                    if (window.wasmBindings) {
-                        resolve();
-                    } else {
-                        addEventListener("TrunkApplicationStarted", resolve, { once: true });
-                    }
-                });
-                
-                const { EvolutionMonitor } = window.wasmBindings;
+                // Initialize WASM module
+                await init();
                 console.log('WASM module loaded successfully');
                 
                 monitor = new EvolutionMonitor('simulation-canvas');
@@ -613,9 +605,14 @@
                 const wsUrl = `ws://${window.location.hostname}:8080/ws`;
                 try {
                     monitor.connect(wsUrl);
+                    updateConnectionStatus(true);
                 } catch (err) {
                     console.error('WebSocket connection failed:', err);
+                    updateConnectionStatus(false);
                 }
+                
+                // Setup all event handlers
+                setupEventHandlers();
                 
                 startRenderLoop();
                 
@@ -625,12 +622,120 @@
             }
         }
 
+        function setupEventHandlers() {
+            // View mode buttons
+            document.querySelectorAll('.view-btn').forEach((btn, index) => {
+                btn.addEventListener('click', () => setViewMode(index));
+            });
+
+            // Particle filters
+            document.getElementById('show-quarks').addEventListener('change', updateParticleFilters);
+            document.getElementById('show-leptons').addEventListener('change', updateParticleFilters);
+            document.getElementById('show-bosons').addEventListener('change', updateParticleFilters);
+            document.getElementById('energy-threshold').addEventListener('input', updateParticleFilters);
+
+            // Visualization settings
+            document.getElementById('show-connections').addEventListener('change', updateVisualizationSettings);
+            document.getElementById('show-decisions').addEventListener('change', updateVisualizationSettings);
+            document.getElementById('show-innovations').addEventListener('change', updateVisualizationSettings);
+
+            // Simulation controls
+            document.getElementById('time-scale').addEventListener('input', updateSimulationSettings);
+            document.getElementById('zoom-level').addEventListener('input', updateSimulationSettings);
+
+            // Analytics settings
+            document.getElementById('show-metrics').addEventListener('change', updateAnalyticsSettings);
+            document.getElementById('auto-follow').addEventListener('change', updateAnalyticsSettings);
+            document.getElementById('highlight-consciousness').addEventListener('change', updateAnalyticsSettings);
+
+            // Timeline scrubber
+            document.getElementById('timeline-slider').addEventListener('input', updateTimelinePosition);
+
+            // Agent selection
+            if (document.getElementById('agent-select')) {
+                document.getElementById('agent-select').addEventListener('change', function(e) {
+                    if (monitor && e.target.value) {
+                        monitor.select_agent(e.target.value);
+                        updateSelectedAgentInfo(e.target.value);
+                    }
+                });
+            }
+
+            // Keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                switch(e.key) {
+                    case '1': setViewMode(0); break;
+                    case '2': setViewMode(1); break;
+                    case '3': setViewMode(2); break;
+                    case '4': setViewMode(3); break;
+                    case '5': setViewMode(4); break;
+                    case '6': setViewMode(5); break;
+                    case '7': setViewMode(6); break;
+                    case '8': setViewMode(7); break;
+                    case 'r': resetView(); break;
+                    case ' ': e.preventDefault(); togglePause(); break;
+                }
+            });
+        }
+
+        function updateParticleFilters() {
+            if (!monitor) return;
+            
+            const showQuarks = document.getElementById('show-quarks').checked;
+            const showLeptons = document.getElementById('show-leptons').checked;
+            const showBosons = document.getElementById('show-bosons').checked;
+            const energyThreshold = parseFloat(document.getElementById('energy-threshold').value);
+            
+            monitor.set_energy_filter_min(energyThreshold);
+            
+            console.log('Particle filters updated:', { showQuarks, showLeptons, showBosons, energyThreshold });
+        }
+
+        function updateVisualizationSettings() {
+            if (!monitor) return;
+            
+            const showConnections = document.getElementById('show-connections').checked;
+            const showDecisions = document.getElementById('show-decisions').checked;
+            const showInnovations = document.getElementById('show-innovations').checked;
+            
+            console.log('Visualization settings updated:', { showConnections, showDecisions, showInnovations });
+        }
+
+        function updateSimulationSettings() {
+            if (!monitor) return;
+            
+            const timeScale = parseFloat(document.getElementById('time-scale').value);
+            const zoomLevel = parseFloat(document.getElementById('zoom-level').value);
+            
+            monitor.set_particle_size_scale(zoomLevel);
+            
+            console.log('Simulation settings updated:', { timeScale, zoomLevel });
+        }
+
+        function updateAnalyticsSettings() {
+            const showMetrics = document.getElementById('show-metrics').checked;
+            const autoFollow = document.getElementById('auto-follow').checked;
+            const highlightConsciousness = document.getElementById('highlight-consciousness').checked;
+            
+            console.log('Analytics settings updated:', { showMetrics, autoFollow, highlightConsciousness });
+        }
+
+        function updateTimelinePosition() {
+            const position = document.getElementById('timeline-slider').value;
+            console.log('Timeline position updated:', position);
+        }
+
+        function togglePause() {
+            console.log('Toggle pause/play');
+        }
+
         function startRenderLoop() {
             function render(timestamp) {
                 if (monitor) {
                     try {
                         monitor.render();
                         updatePerformanceMetrics(timestamp);
+                        updateSimulationStats();
                     } catch (error) {
                         console.error('Render error:', error);
                     }
@@ -653,11 +758,6 @@
             document.getElementById('render-time').textContent = Math.round(deltaTime) + 'ms';
             
             frameCount++;
-            if (frameCount % 60 === 0) {
-                // Update other metrics every 60 frames
-                updateSimulationStats();
-            }
-            
             lastFrameTime = timestamp;
         }
 
@@ -673,15 +773,108 @@
         }
 
         function updateSimulationStats() {
-            if (monitor && monitor.simulation_state) {
-                const state = monitor.simulation_state;
-                document.getElementById('universe-age').textContent = state.universe_age_gyr.toFixed(2) + ' Gyr';
-                document.getElementById('temperature').textContent = state.temperature.toFixed(1) + ' K';
-                document.getElementById('particle-count').textContent = state.particle_count.toLocaleString();
-                document.getElementById('agent-count').textContent = state.agents.length.toLocaleString();
-                document.getElementById('consciousness-level').textContent = 
-                    ((state.agents.filter(a => a.consciousness_level > 0.5).length / state.agents.length) * 100).toFixed(1) + '%';
-                document.getElementById('ups').textContent = state.ups.toFixed(1);
+            // Update right panel with simulation data
+            if (monitor) {
+                try {
+                    const stateJson = monitor.get_simulation_state_json();
+                    const state = JSON.parse(stateJson);
+                    
+                    // Universe Status
+                    document.getElementById('current-tick').textContent = state.current_tick || 0;
+                    document.getElementById('cosmic-era').textContent = state.cosmic_era || 'Unknown';
+                    document.getElementById('energy-density').textContent = (state.energy_density || 0).toFixed(2) + ' J/m³';
+                    
+                    // Evolution Statistics
+                    document.getElementById('active-lineages').textContent = state.population_stats?.active_lineages || 0;
+                    document.getElementById('extinct-lineages').textContent = state.population_stats?.extinct_lineages || 0;
+                    document.getElementById('average-fitness').textContent = (state.population_stats?.average_fitness || 0).toFixed(2);
+                    document.getElementById('genetic-diversity').textContent = (state.population_stats?.genetic_diversity || 0).toFixed(2);
+                    document.getElementById('innovation-rate').textContent = (state.evolution_metrics?.innovation_rate || 0).toFixed(2) + '/tick';
+                    
+                    // System Performance
+                    document.getElementById('updates-per-second').textContent = (state.physics_metrics?.ups || 0).toFixed(1);
+                    document.getElementById('memory-usage').textContent = Math.round((performance.memory?.usedJSHeapSize || 0) / 1024 / 1024) + ' MB';
+                    document.getElementById('cpu-usage').textContent = '0%'; // Placeholder
+                    
+                    // Update connection status
+                    updateConnectionStatus(monitor.is_connected());
+                    
+                    // Update innovations
+                    updateRecentInnovations(state.innovations || []);
+                } catch (error) {
+                    console.error('Error updating simulation stats:', error);
+                    // Set default values when there's an error
+                    setDefaultStats();
+                }
+            } else {
+                setDefaultStats();
+            }
+        }
+
+        function setDefaultStats() {
+            document.getElementById('current-tick').textContent = '0';
+            document.getElementById('cosmic-era').textContent = 'Initializing...';
+            document.getElementById('energy-density').textContent = '0.0 J/m³';
+            document.getElementById('active-lineages').textContent = '0';
+            document.getElementById('extinct-lineages').textContent = '0';
+            document.getElementById('average-fitness').textContent = '0.0';
+            document.getElementById('genetic-diversity').textContent = '0.0';
+            document.getElementById('innovation-rate').textContent = '0.0/tick';
+            document.getElementById('updates-per-second').textContent = '0.0';
+            document.getElementById('memory-usage').textContent = '0 MB';
+            document.getElementById('cpu-usage').textContent = '0%';
+        }
+
+        function updateRecentInnovations(innovations) {
+            const container = document.getElementById('recent-innovations');
+            if (innovations.length === 0) {
+                container.innerHTML = '<p>No innovations yet</p>';
+            } else {
+                const recentInnovations = innovations.slice(-5); // Last 5 innovations
+                container.innerHTML = recentInnovations.map(innovation => 
+                    `<div class="innovation-item">
+                        <strong>${innovation.innovation_type || 'Unknown'}</strong>
+                        <br>Impact: ${(innovation.impact_score || 0).toFixed(2)}
+                        <br>Adoption: ${(innovation.adoption_rate || 0).toFixed(1)}%
+                    </div>`
+                ).join('');
+            }
+        }
+
+        function updateSelectedAgentInfo(agentId) {
+            const container = document.getElementById('agent-details');
+            if (monitor) {
+                try {
+                    const stateJson = monitor.get_simulation_state_json();
+                    const state = JSON.parse(stateJson);
+                    
+                    if (state.agents) {
+                        const agent = state.agents.find(a => a.id === agentId);
+                        if (agent) {
+                            container.innerHTML = `
+                                <div class="agent-info">
+                                    <strong>Agent ${agentId}</strong>
+                                    <br>Generation: ${agent.generation || 0}
+                                    <br>Fitness: ${(agent.fitness || 0).toFixed(2)}
+                                    <br>Energy: ${(agent.energy || 0).toFixed(2)}
+                                    <br>Consciousness: ${(agent.consciousness_level || 0).toFixed(2)}
+                                    <br>Tech Level: ${(agent.tech_level || 0).toFixed(2)}
+                                    <br>Sentience: ${(agent.sentience_level || 0).toFixed(2)}
+                                    <br>Innovations: ${agent.innovations_created ? agent.innovations_created.length : 0}
+                                </div>
+                            `;
+                        } else {
+                            container.innerHTML = '<p>Agent not found</p>';
+                        }
+                    } else {
+                        container.innerHTML = '<p>No agents available</p>';
+                    }
+                } catch (error) {
+                    console.error('Error updating selected agent info:', error);
+                    container.innerHTML = '<p>Error loading agent data</p>';
+                }
+            } else {
+                container.innerHTML = '<p>No agent selected</p>';
             }
         }
 
@@ -692,6 +885,8 @@
                 // Update button states
                 document.querySelectorAll('.view-btn').forEach(btn => btn.classList.remove('active'));
                 document.querySelectorAll('.view-btn')[mode].classList.add('active');
+                
+                console.log('View mode changed to:', mode);
             }
         };
 
@@ -700,43 +895,10 @@
                 // Reset zoom and position
                 document.getElementById('zoom-level').value = 1;
                 document.getElementById('time-scale').value = 1;
-                updateSliderValues();
+                updateSimulationSettings();
+                console.log('View reset');
             }
         };
-
-        function updateSliderValues() {
-            const timeScale = document.getElementById('time-scale').value;
-            const zoom = document.getElementById('zoom-level').value;
-            
-            document.getElementById('time-scale-value').textContent = timeScale + 'x';
-            document.getElementById('zoom-value').textContent = zoom + 'x';
-        }
-
-        // Event listeners
-        document.getElementById('time-scale').addEventListener('input', updateSliderValues);
-        document.getElementById('zoom-level').addEventListener('input', updateSliderValues);
-
-        document.getElementById('agent-select').addEventListener('change', function(e) {
-            if (monitor && e.target.value) {
-                monitor.select_agent(e.target.value);
-            }
-        });
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', function(e) {
-            switch(e.key) {
-                case '1': setViewMode(0); break;
-                case '2': setViewMode(1); break;
-                case '3': setViewMode(2); break;
-                case '4': setViewMode(3); break;
-                case '5': setViewMode(4); break;
-                case '6': setViewMode(5); break;
-                case '7': setViewMode(6); break;
-                case '8': setViewMode(7); break;
-                case 'r': resetView(); break;
-                case ' ': e.preventDefault(); /* pause/play */ break;
-            }
-        });
 
         // Initialize everything when page loads
         window.addEventListener('load', initializeSimulation);

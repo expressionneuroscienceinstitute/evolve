@@ -376,8 +376,16 @@ impl EvolutionMonitor {
         let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
             if let Ok(text) = e.data().dyn_into::<JsString>() {
                 let data_str = text.as_string().unwrap_or_default();
-                console_log!("Received WebSocket message: {}", data_str);
-                // TODO: Parse and update simulation state
+                console_log!("Received WebSocket message ({} chars)", data_str.len());
+                
+                // Store to a global JS variable so the render loop can pick it up on the next frame
+                if let Some(win) = web_sys::window() {
+                    let _ = js_sys::Reflect::set(
+                        &win,
+                        &JsValue::from_str("__simulation_data"),
+                        &JsValue::from_str(&data_str),
+                    );
+                }
             } else {
                 let message_type = match e.data().dyn_into::<ArrayBuffer>() {
                     Ok(buffer) => format!("binary (size: {} bytes)", buffer.byte_length()),
@@ -431,6 +439,9 @@ impl EvolutionMonitor {
     /// Main rendering loop
     #[wasm_bindgen]
     pub fn render(&mut self) -> Result<(), JsValue> {
+        // Check for new simulation data from WebSocket
+        self.update_simulation_state()?;
+        
         // Clear canvas
         self.context.clear_rect(0.0, 0.0, 
             self.canvas.width() as f64, 
@@ -454,6 +465,34 @@ impl EvolutionMonitor {
         Ok(())
     }
     
+    /// Check for and process new simulation data from WebSocket
+    fn update_simulation_state(&mut self) -> Result<(), JsValue> {
+        if let Some(win) = web_sys::window() {
+            if let Ok(data_js) = js_sys::Reflect::get(&win, &JsValue::from_str("__simulation_data")) {
+                if !data_js.is_null() && !data_js.is_undefined() {
+                    if let Some(data_str) = data_js.as_string() {
+                        // Clear the property to avoid reprocessing
+                        let _ = js_sys::Reflect::set(&win, &JsValue::from_str("__simulation_data"), &JsValue::NULL);
+                        
+                        // Parse and update simulation state
+                        match serde_json::from_str::<SimulationState>(&data_str) {
+                            Ok(new_state) => {
+                                self.simulation_state = new_state;
+                                console_log!("Updated simulation state - {} agents, {} particles", 
+                                            self.simulation_state.agents.len(),
+                                            self.simulation_state.particles.len());
+                            }
+                            Err(err) => {
+                                console_log!("Failed to parse simulation state: {}", err);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    
     /// Render fundamental particle physics visualization
     fn render_particle_physics(&mut self) -> Result<(), JsValue> {
         console_log!("Rendering particle physics - {} particles", 
@@ -463,9 +502,8 @@ impl EvolutionMonitor {
         for particle in self.simulation_state.particles.clone() {
             if particle.energy < self.energy_filter_min { continue; }
             let (r, g, b, a) = self.get_particle_color(&particle.particle_type);
-            self.context.set_fill_style(&JsValue::from_str(&format!(
-                "rgba({}, {}, {}, {})", r, g, b, a
-            )));
+            let color_str = format!("rgba({}, {}, {}, {})", r, g, b, a);
+            self.context.set_fill_style(&color_str.into());
             
             // Map 3D position to 2D screen coordinates
             let (x, y) = self.map_3d_to_2d(particle.position);
@@ -504,13 +542,14 @@ impl EvolutionMonitor {
             
             // Agent color based on evolution level
             let color = self.get_agent_color(&agent);
-            self.context.set_fill_style(&JsValue::from_str(&format!(
+            let color_str = format!(
                 "rgba({}, {}, {}, {})", 
                 (color[0] * 255.0) as u8,
                 (color[1] * 255.0) as u8, 
                 (color[2] * 255.0) as u8,
                 color[3]
-            )));
+            );
+            self.context.set_fill_style(&color_str.into());
             
             // Draw agent
             self.context.begin_path();
@@ -554,7 +593,7 @@ impl EvolutionMonitor {
         for (lineage_id, lineage) in self.simulation_state.lineages.clone() {
             // Draw lineage header
             self.context.set_font("16px Arial");
-            self.context.set_fill_style(&JsValue::from_str("white"));
+            self.context.set_fill_style(&"white".into());
             self.context.fill_text(&format!(
                 "Lineage {} - Gen {} - {} living", 
                 lineage_id.to_string()[..8].to_string(),
@@ -599,11 +638,11 @@ impl EvolutionMonitor {
             
             // Draw decision type label
             self.context.set_font("10px Arial");
-            self.context.set_fill_style(&JsValue::from_str("white"));
+            self.context.set_fill_style(&"white".into());
             self.context.fill_text(&decision.decision_type, x - 20.0, y - 10.0)?;
             
             // Draw impact line
-            self.context.set_stroke_style(&JsValue::from_str(color));
+            self.context.set_stroke_style(&JsValue::from_str("rgba(0,255,255,0.8)"));
             self.context.set_line_width(2.0);
             self.context.begin_path();
             self.context.move_to(x, y_base);
@@ -658,7 +697,7 @@ impl EvolutionMonitor {
         let timeline_width = self.canvas.width() as f64 - 100.0;
         
         // Draw timeline base
-        self.context.set_stroke_style(&JsValue::from_str("white"));
+        self.context.set_stroke_style(&"white".into());
         self.context.set_line_width(2.0);
         self.context.begin_path();
         self.context.move_to(timeline_start, timeline_y);
@@ -672,14 +711,14 @@ impl EvolutionMonitor {
             let impact_height = innovation.impact_score * 50.0;
             
             // Innovation marker
-            self.context.set_fill_style(&JsValue::from_str("cyan"));
+            self.context.set_fill_style(&"cyan".into());
             self.context.begin_path();
             self.context.arc(x, timeline_y - impact_height, 4.0, 0.0, 2.0 * std::f64::consts::PI)?;
             self.context.fill();
             
             // Innovation label
             self.context.set_font("8px Arial");
-            self.context.set_fill_style(&JsValue::from_str("white"));
+            self.context.set_fill_style(&"white".into());
             self.context.fill_text(&innovation.innovation_type, x - 15.0, timeline_y - impact_height - 8.0)?;
         }
         
@@ -747,6 +786,21 @@ impl EvolutionMonitor {
         }
     }
     
+    /// Get the current simulation state as JSON for JavaScript access
+    #[wasm_bindgen]
+    pub fn get_simulation_state_json(&self) -> String {
+        match serde_json::to_string(&self.simulation_state) {
+            Ok(json) => json,
+            Err(_) => "{}".to_string(),
+        }
+    }
+    
+    /// Check if the WebSocket is connected
+    #[wasm_bindgen]
+    pub fn is_connected(&self) -> bool {
+        self.connected
+    }
+    
     // Placeholder implementations for complex rendering methods
     fn get_particle_size(&self, mass: f64) -> f64 { 2.0 + (mass / 1e-27).log10().max(0.0) }
     fn draw_particle_trail(&mut self, _particle: &ParticleVisualization) -> Result<(), JsValue> { Ok(()) }
@@ -776,12 +830,12 @@ impl EvolutionMonitor {
     }
 
     fn set_fill_style(&self, color: &str) -> Result<(), JsValue> {
-        self.context.set_fill_style(&JsValue::from_str(color));
+        self.context.set_fill_style(&color.into());
         Ok(())
     }
 
     fn set_stroke_style(&self, color: &str) -> Result<(), JsValue> {
-        self.context.set_stroke_style(&JsValue::from_str(color));
+        self.context.set_stroke_style(&color.into());
         Ok(())
     }
 
@@ -858,7 +912,7 @@ impl EvolutionMonitor {
             self.context.line_to(px, py);
         }
         
-        self.set_stroke_style(&format!("rgba(0,255,255,0.8)"))?;
+        self.set_stroke_style("rgba(0,255,255,0.8)")?;
         self.context.stroke();
         
         // Draw axes

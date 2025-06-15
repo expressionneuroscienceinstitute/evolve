@@ -35,7 +35,7 @@ pub enum InteractionType {
 /// Total cross-section in m²
 pub fn klein_nishina_cross_section_joules(photon_energy: f64, electron_mass_energy: f64) -> f64 {
     let r_e: f64 = 2.8179403227e-15; // classical electron radius (m)
-    let sigma_thomson = 8.0 * std::f64::consts::PI / 3.0 * r_e.powi(2);
+    let _sigma_thomson = 8.0 * std::f64::consts::PI / 3.0 * r_e.powi(2);
     
     let epsilon = photon_energy / electron_mass_energy;
     
@@ -112,7 +112,7 @@ pub fn scatter_compton(
     let final_photon_energy = initial_photon_energy / (1.0 + epsilon * (1.0 - cos_theta));
     
     // Energy transferred to electron
-    let energy_transfer = initial_photon_energy - final_photon_energy;
+    let _energy_transfer = initial_photon_energy - final_photon_energy;
     
     // Update photon
     photon.energy = final_photon_energy;
@@ -204,7 +204,7 @@ pub fn pair_produce(
     let positron_momentum_mag = (positron_energy.powi(2) - electron_mass_energy.powi(2)).sqrt() / SPEED_OF_LIGHT;
     
     // Opening angle from momentum conservation
-    let cos_opening = (photon.energy.powi(2) - electron_energy.powi(2) - positron_energy.powi(2)) 
+    let _cos_opening = (photon.energy.powi(2) - electron_energy.powi(2) - positron_energy.powi(2)) 
         / (2.0 * electron_momentum_mag * positron_momentum_mag * SPEED_OF_LIGHT.powi(2));
     
     // Generate random direction for electron
@@ -223,7 +223,7 @@ pub fn pair_produce(
         - electron_dir * electron_momentum_mag).normalize();
     
     // Create particles
-    let mut electron = FundamentalParticle {
+    let electron = FundamentalParticle {
         particle_type: ParticleType::Electron,
         position: photon.position,
         momentum: electron_dir * electron_momentum_mag,
@@ -483,7 +483,7 @@ pub fn neutrino_e_scattering_complete(flavour: u8, e_nu_gev: f64, is_antineutrin
     let g_a = current.axial_part;
     
     // Kinematic variables
-    let s = 2.0 * m_e * e_nu_gev; // Mandelstam s
+    let _s = 2.0 * m_e * e_nu_gev; // Mandelstam s
     let y_max = 1.0; // Maximum inelasticity for elastic scattering
     
     // Differential cross-section integrated over recoil energy
@@ -531,7 +531,10 @@ pub fn sample_nu_e_scattering(
     
     // Final momenta magnitudes
     let nu_momentum_mag = nu_energy_final; // massless
-    let electron_momentum_mag = (electron_energy_final.powi(2) - m_e.powi(2)).sqrt();
+    let _electron_momentum_mag = (electron_energy_final.powi(2) - m_e.powi(2)).sqrt();
+    
+    // Simplified kinematics for now
+    let final_electron_momentum = Vector3::new(1.0, 0.0, 0.0);
     
     // Scattered neutrino direction
     let nu_dir_initial = nu_momentum.normalize();
@@ -577,17 +580,17 @@ pub fn bethe_heitler_pair_production(energy_gev: f64, z: u32) -> f64 {
 /// energy_gev – photon energy in GeV
 pub fn klein_nishina_cross_section(energy_gev: f64) -> f64 {
     let r_e: f64 = 2.8179403227e-15; // m
-    let sigma_thomson = 8.0 * std::f64::consts::PI / 3.0 * r_e.powi(2);
+    let _sigma_thomson = 8.0 * std::f64::consts::PI / 3.0 * r_e.powi(2);
 
     let epsilon = energy_gev / 0.000511; // epsilon = E / (m_e c^2)  (m_e c^2 = 0.511 MeV)
 
     // Avoid division by zero for very low energy
     if epsilon == 0.0 {
-        return sigma_thomson;
+        return _sigma_thomson;
     }
 
     let term1 = (1.0 + epsilon) / epsilon.powi(2) * ((2.0 * (1.0 + epsilon)) / (1.0 + 2.0 * epsilon) - (1.0 / epsilon) * epsilon.ln());
     let term2 = (1.0 / (2.0 * epsilon)) * ((1.0 + 3.0 * epsilon) / (1.0 + 2.0 * epsilon).powi(2));
 
-    sigma_thomson * (term1 + term2)
+    _sigma_thomson * (term1 + term2)
 }

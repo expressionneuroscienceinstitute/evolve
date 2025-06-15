@@ -108,7 +108,7 @@ impl ThermoSolver {
     }
 
     /// Calculate heat capacity
-    pub fn heat_capacity(&self, state: &PhysicsState) -> f64 {
+    pub fn heat_capacity(&self, _state: &PhysicsState) -> f64 {
         // For monatomic gas: C_v = (3/2)R
         1.5 * self.gas_constant
     }

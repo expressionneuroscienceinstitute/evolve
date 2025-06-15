@@ -152,7 +152,7 @@ impl GeodynamicsSolver {
     }
 
     /// Update tectonic plate motions
-    fn update_plate_tectonics(&mut self, constants: &PhysicsConstants) -> Result<()> {
+    fn update_plate_tectonics(&mut self, _constants: &PhysicsConstants) -> Result<()> {
         let dt = 1e6 * 365.25 * 24.0 * 3600.0; // 1 Ma timestep
         
         for plate in &mut self.plates {
@@ -195,7 +195,7 @@ impl GeodynamicsSolver {
     }
 
     /// Apply geological forces to surface particles
-    fn apply_geological_forces(&self, states: &mut [PhysicsState], constants: &PhysicsConstants) -> Result<()> {
+    fn apply_geological_forces(&self, states: &mut [PhysicsState], _constants: &PhysicsConstants) -> Result<()> {
         for state in states.iter_mut() {
             // Only apply to particles near surface
             let surface_height = 6.371e6; // Earth radius
@@ -236,7 +236,7 @@ impl GeodynamicsSolver {
         
         for i in 0..self.plates.len() {
             for j in (i+1)..self.plates.len() {
-                let plate_distance = (self.plates[i].center_position - self.plates[j].center_position).magnitude();
+                let _plate_distance = (self.plates[i].center_position - self.plates[j].center_position).magnitude();
                 let point_to_boundary = (position - 0.5 * (self.plates[i].center_position + self.plates[j].center_position)).magnitude();
                 min_boundary_distance = min_boundary_distance.min(point_to_boundary);
             }

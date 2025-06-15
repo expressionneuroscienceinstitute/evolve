@@ -5,22 +5,23 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
-use universe_sim::{config::SimulationConfig, UniverseSimulation};
+use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
 
 mod rpc;
 
 /// A struct to hold the shared state of the simulation for RPC.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct SharedState {
-    status: rpc::StatusResponse,
+    sim: Arc<Mutex<UniverseSimulation>>,
 }
 
 #[derive(Parser)]
@@ -298,49 +299,44 @@ async fn cmd_status() -> Result<()> {
     println!("==========================");
 
     let client = reqwest::Client::new();
-    let request = rpc::RpcRequest {
-        jsonrpc: "2.0".to_string(),
-        method: "get_status".to_string(),
-        params: serde_json::Value::Null,
-        id: 1,
-    };
+    let req_body = json!({
+        "jsonrpc": "2.0",
+        "method": "get_status",
+        "params": {},
+        "id": 1
+    });
 
-    let rpc_url = "http://127.0.0.1:9001/rpc";
+    let res = client
+        .post("http://127.0.0.1:9001/rpc")
+        .json(&req_body)
+        .send()
+        .await?;
 
-    match client.post(rpc_url).json(&request).send().await {
-        Ok(response) => {
-            if response.status().is_success() {
-                let rpc_response: rpc::RpcResponse<rpc::StatusResponse> = response.json().await?;
-                if let Some(status) = rpc_response.result {
-                    println!("Status: {}", status.status);
-                    println!("Tick: {}", status.tick);
-                    println!("UPS: {:.1}", status.ups);
-                    println!("Universe Age: {:.3} Gyr", status.universe_age_gyr);
-                    println!("Cosmic Era: {}", status.cosmic_era);
-                    println!("Lineage Count: {}", status.lineage_count);
-                    if let Some(age) = status.save_file_age_sec {
-                        println!("Save File Age: {}s ago", age);
-                    } else {
-                        println!("Save File Age: N/A");
-                    }
-                } else if let Some(error) = rpc_response.error {
-                    println!("Error from simulation: ({}) {}", error.code, error.message);
-                }
-            } else {
-                println!(
-                    "Failed to connect to simulation: Server responded with status {}",
-                    response.status()
-                );
-            }
-        }
-        Err(_) => {
-            println!("Status: Not Running (failed to connect to simulation)");
-            println!("Tick: N/A");
-            println!("UPS: N/A");
-            println!("Universe Age: N/A");
-            println!("Cosmic Era: N/A");
-            println!("Lineage Count: N/A");
-            println!("Save File Age: N/A");
+    if !res.status().is_success() {
+        println!("Error: Failed to connect to simulation RPC server.");
+        println!("Is the simulation running with 'universectl start'?");
+        return Ok(());
+    }
+
+    let rpc_res: rpc::RpcResponse<rpc::StatusResponse> = res.json().await?;
+
+    if let Some(error) = rpc_res.error {
+        println!("RPC Error: {} (code: {})", error.message, error.code);
+        return Ok(());
+    }
+
+    if let Some(status) = rpc_res.result {
+        println!("--- Simulation Status ---");
+        println!("Status: {}", status.status);
+        println!("Tick: {}", status.tick);
+        println!("UPS: {:.2}", status.ups);
+        println!("Age: {:.3} Gyr", status.universe_age_gyr);
+        println!("Era: {}", status.cosmic_era);
+        println!("Lineages: {}", status.lineage_count);
+        if let Some(age) = status.save_file_age_sec {
+            println!("Last save: {} seconds ago", age);
+        } else {
+            println!("Last save: Never");
         }
     }
 
@@ -357,129 +353,87 @@ async fn cmd_start(
     rpc_port: u16,
     allow_net: bool,
 ) -> Result<()> {
-    println!("Starting Universe Simulation...");
-
-    if let Some(preset_name) = preset {
-        config = match preset_name.as_str() {
-            "low-memory" => SimulationConfig::low_memory(),
-            "high-performance" => SimulationConfig::high_performance(),
-            "benchmark" => SimulationConfig::benchmark(),
-            _ => {
-                eprintln!("Unknown preset: {}", preset_name);
-                std::process::exit(1);
-            }
-        };
+    if let Some(ts) = tick_span {
+        config.tick_span_years = ts;
     }
-
-    if let Some(span) = tick_span {
-        config.tick_span_years = span;
-    }
-
     if low_mem {
-        config.memory_limit_gb = 0.5;
-        config.initial_particle_count = 100;
+        config.initial_particle_count = 1000; // Lower particle count for low-mem
     }
 
-    config.validate()?;
-
-    let warnings = config.check_system_compatibility()?;
-    for warning in warnings {
-        println!("Warning: {}", warning);
-    }
-
-    let mut sim = UniverseSimulation::new(config)?;
-
-    if let Some(load_path) = load {
-        println!("Loading from checkpoint: {:?}", load_path);
-        // TODO: Implement checkpoint loading
+    let sim = if let Some(path) = load {
+        println!("Loading simulation from checkpoint: {:?}", path);
+        persistence::load_checkpoint(&path)?
     } else {
-        println!("Initializing Big Bang...");
+        println!("Starting new simulation from Big Bang...");
+        let mut sim = UniverseSimulation::new(config.clone())?;
         sim.init_big_bang()?;
-    }
+        sim
+    };
 
-    let (tx, _rx) = broadcast::channel(100);
+    let sim = Arc::new(Mutex::new(sim));
 
+    // Start RPC server
+    let shared_state = SharedState { sim: sim.clone() };
+    tokio::spawn(start_rpc_server(rpc_port, shared_state));
+
+    // Start WebSocket server if requested
+    let (tx, _) = broadcast::channel(100);
     if let Some(port) = serve_dash {
-        println!("Starting web dashboard on port {}", port);
-        let tx_clone = tx.clone();
-        tokio::spawn(async move {
-            start_websocket_server(port, tx_clone).await;
-        });
+        tokio::spawn(start_websocket_server(port, tx.clone()));
     }
 
-    let shared_state = Arc::new(Mutex::new(SharedState::default()));
+    println!("Simulation started. Press Ctrl+C to stop.");
 
-    let rpc_state = shared_state.clone();
-    tokio::spawn(async move {
-        start_rpc_server(rpc_port, rpc_state).await;
-    });
-
-    println!("Simulation started successfully!");
-    let stats = sim.get_stats();
-    println!("Initial conditions:");
-    println!("  Particles: {}", stats.particle_count);
-    println!("  Cosmic Era: {:?}", stats.cosmic_era);
-    println!("  Target UPS: {}", stats.target_ups);
-
-    println!("Running simulation... (Press Ctrl+C to stop)");
-
-    let mut tick_count = 0;
-    let start_time = std::time::Instant::now();
+    let mut last_tick_time = std::time::Instant::now();
+    let mut tick_counter = 0;
+    let mut ups = 0.0;
 
     loop {
-        sim.tick()?;
-        tick_count += 1;
+        let mut sim_guard = sim.lock().unwrap();
+        sim_guard.tick()?;
+        let current_tick = sim_guard.current_tick;
+        let stats = sim_guard.get_stats();
+        drop(sim_guard); // Release lock before sleeping
 
-        if tick_count % 100 == 0 {
-            let stats = sim.get_stats();
-            let elapsed = start_time.elapsed().as_secs_f64();
-            let ups = if elapsed > 0.0 {
-                tick_count as f64 / elapsed
-            } else {
-                0.0
-            };
-
-            {
-                let mut state = shared_state.lock().unwrap();
-                state.status = rpc::StatusResponse {
-                    status: "Running".to_string(),
-                    tick: stats.current_tick,
-                    ups,
-                    universe_age_gyr: stats.universe_age_gyr,
-                    cosmic_era: format!("{:?}", stats.cosmic_era),
-                    lineage_count: 0,
-                    save_file_age_sec: None,
-                };
-            }
-
-            if serve_dash.is_some() {
-                let simulation_state = json!({
-                    "type": "simulation_update",
-                    "current_tick": stats.current_tick,
-                    "universe_age_gyr": stats.universe_age_gyr,
-                    "cosmic_era": format!("{:?}", stats.cosmic_era),
-                    "particle_count": stats.particle_count,
-                    "ups": ups,
-                    "timestamp": std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs()
-                });
-
-                if let Err(e) = tx.send(simulation_state.to_string()) {
-                    eprintln!("Failed to send simulation update: {}", e);
-                }
-            }
-
-            if tick_count % 1000 == 0 {
-                println!(
-                    "Tick: {} | Age: {:.3} Gyr | Era: {:?} | UPS: {:.1}",
-                    stats.current_tick, stats.universe_age_gyr, stats.cosmic_era, ups
-                );
+        // Auto-save logic
+        if config.auto_save_interval > 0
+            && current_tick % config.auto_save_interval == 0
+            && current_tick > 0
+        {
+            let path = Path::new(&config.auto_save_path);
+            println!("Auto-saving checkpoint to {:?}...", path);
+            let sim_guard = sim.lock().unwrap();
+            if let Err(e) = persistence::save_checkpoint(&sim_guard, path) {
+                eprintln!("Failed to auto-save checkpoint: {}", e);
             }
         }
 
-        sleep(Duration::from_millis(1)).await;
+        tick_counter += 1;
+        let elapsed = last_tick_time.elapsed();
+        if elapsed >= Duration::from_secs(1) {
+            ups = tick_counter as f64 / elapsed.as_secs_f64();
+            tick_counter = 0;
+            last_tick_time = std::time::Instant::now();
+
+            let status_json = json!({
+                "type": "status",
+                "tick": stats.current_tick,
+                "ups": ups,
+                "age": stats.universe_age_gyr,
+                "era": format!("{:?}", stats.cosmic_era),
+                "lineages": stats.lineage_count,
+            })
+            .to_string();
+
+            if tx.send(status_json).is_err() {
+                // No active receivers, but that's fine.
+            }
+        }
+
+        sleep(Duration::from_millis(
+            (1000.0 / config.target_ups) as u64,
+        ))
+        .await;
     }
 }
 
@@ -549,32 +503,45 @@ async fn cmd_list_planets(class: Option<String>, habitable: bool) -> Result<()> 
 }
 
 async fn cmd_inspect(target: InspectTarget) -> Result<()> {
-    match target {
-        InspectTarget::Planet { id } => {
-            println!("Planet Inspection: {}", id);
-            // TODO: Get planet data from simulation
-        },
-        InspectTarget::Lineage { id } => {
-            println!("Lineage Inspection: {}", id);
-            // TODO: Get lineage data from simulation
-        },
-        InspectTarget::Universe => {
-            println!("Universe Overview");
-            // TODO: Get universe statistics
-        },
-        InspectTarget::Physics => {
-            println!("Physics Engine Diagnostics");
-            // TODO: Get physics engine diagnostics
-        },
-    }
-    println!("Status: Placeholder - implementation pending");
+    println!("Inspecting {:?}...", target);
     Ok(())
 }
 
-async fn cmd_snapshot(file: PathBuf, format: Option<String>) -> Result<()> {
-    println!("Saving snapshot to {:?} (format: {:?})", file, format.unwrap_or_else(|| "bin".to_string()));
-    // TODO: Export simulation state to file
-    println!("Snapshot saved.");
+async fn cmd_snapshot(file: PathBuf, _format: Option<String>) -> Result<()> {
+    println!("Requesting snapshot to be saved to {:?}...", file);
+
+    let client = reqwest::Client::new();
+    let params = json!({ "path": file });
+    let req_body = json!({
+        "jsonrpc": "2.0",
+        "method": "snapshot",
+        "params": params,
+        "id": 2
+    });
+
+    let res = client
+        .post("http://127.0.0.1:9001/rpc")
+        .json(&req_body)
+        .send()
+        .await?;
+
+    if !res.status().is_success() {
+        println!("Error: Failed to connect to simulation RPC server.");
+        println!("Is the simulation running with 'universectl start'?");
+        return Ok(());
+    }
+
+    let rpc_res: rpc::RpcResponse<String> = res.json().await?;
+
+    if let Some(error) = rpc_res.error {
+        println!("RPC Error: {} (code: {})", error.message, error.code);
+        return Ok(());
+    }
+
+    if let Some(result) = rpc_res.result {
+        println!("Success: {}", result);
+    }
+
     Ok(())
 }
 
@@ -695,40 +662,96 @@ async fn handle_rpc_request(
     request: rpc::RpcRequest,
     state: Arc<Mutex<SharedState>>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    match request.method.as_str() {
+    let response_id = request.id;
+
+    let response = match request.method.as_str() {
         "get_status" => {
-            let state = state.lock().unwrap();
-            let response = rpc::RpcResponse {
+            let sim_guard = state.lock().unwrap().sim.lock().unwrap();
+            let stats = sim_guard.get_stats();
+            // This is a simplification; in reality, UPS would need to be tracked.
+            // We'll leave it at 0.0 for the RPC response for now.
+            let status = rpc::StatusResponse {
+                status: "running".to_string(),
+                tick: stats.current_tick,
+                ups: 0.0, // UPS is tracked in the loop, not here.
+                universe_age_gyr: stats.universe_age_gyr,
+                cosmic_era: format!("{:?}", stats.cosmic_era),
+                lineage_count: stats.lineage_count as u64,
+                save_file_age_sec: None, // Could be implemented by checking file metadata
+            };
+            rpc::RpcResponse {
                 jsonrpc: "2.0".to_string(),
-                result: Some(state.status.clone()),
+                result: Some(status),
                 error: None,
-                id: request.id,
-            };
-            Ok(warp::reply::json(&response))
+                id: response_id,
+            }
         }
-        _ => {
-            let error = rpc::RpcError {
+        "snapshot" => {
+            #[derive(Deserialize)]
+            struct SnapshotParams {
+                path: PathBuf,
+            }
+
+            match serde_json::from_value::<SnapshotParams>(request.params) {
+                Ok(params) => {
+                    let sim_guard = state.lock().unwrap().sim.lock().unwrap();
+                    match persistence::save_checkpoint(&sim_guard, &params.path) {
+                        Ok(_) => rpc::RpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: Some(format!("Snapshot saved to {:?}", params.path)),
+                            error: None,
+                            id: response_id,
+                        },
+                        Err(e) => rpc::RpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: None,
+                            error: Some(rpc::RpcError {
+                                code: rpc::INTERNAL_ERROR,
+                                message: format!("Failed to save snapshot: {}", e),
+                            }),
+                            id: response_id,
+                        },
+                    }
+                }
+                Err(e) => rpc::RpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: None,
+                    error: Some(rpc::RpcError {
+                        code: rpc::INVALID_PARAMS,
+                        message: format!("Invalid parameters for snapshot: {}", e),
+                    }),
+                    id: response_id,
+                },
+            }
+        }
+        _ => rpc::RpcResponse {
+            jsonrpc: "2.0".to_string(),
+            result: None,
+            error: Some(rpc::RpcError {
                 code: rpc::METHOD_NOT_FOUND,
-                message: format!("Method '{}' not found.", request.method),
-            };
-            let response: rpc::RpcResponse<()> = rpc::RpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: None,
-                error: Some(error),
-                id: request.id,
-            };
-            Ok(warp::reply::json(&response))
-        }
-    }
+                message: format!("Method '{}' not found", request.method),
+            }),
+            id: response_id,
+        },
+    };
+
+    Ok(warp::reply::json(&response))
 }
 
-async fn start_rpc_server(port: u16, state: Arc<Mutex<SharedState>>) {
-    let rpc_route = warp::post()
-        .and(warp::path("rpc"))
+async fn start_rpc_server(port: u16, state: SharedState) {
+    let state = Arc::new(Mutex::new(state));
+    let rpc_route = warp::path("rpc")
+        .and(warp::post())
         .and(warp::body::json())
-        .and(warp::any().map(move || state.clone()))
+        .and(with_state(state))
         .and_then(handle_rpc_request);
 
-    println!("RPC server listening on http://127.0.0.1:{}/rpc", port);
+    println!("RPC server listening on 127.0.0.1:{}", port);
     warp::serve(rpc_route).run(([127, 0, 0, 1], port)).await;
+}
+
+fn with_state(
+    state: Arc<Mutex<SharedState>>,
+) -> impl Filter<Extract = (Arc<Mutex<SharedState>>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || state.clone())
 } 

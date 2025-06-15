@@ -3,26 +3,52 @@
 //! This module provides structures and functions for modeling atoms, including their
 //! electronic structure, ionization, and interaction with photons.
 
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
+use nalgebra::Vector3;
+use rand::Rng;
+
+use crate::constants::RYDBERG_CONSTANT;
+use crate::{Electron, FundamentalParticle};
 use crate::nuclear_physics::Nucleus;
 
 /// Represents an electron shell in an atom.
 /// This is a simplified model based on principal quantum numbers.
 #[derive(Debug, Clone)]
 pub struct ElectronShell {
-    pub quantum_number: u32, // n
-    pub electrons: u32,
+    /// The principal quantum number (n=1, 2, 3...).
+    pub quantum_number: u32,
+    /// The electrons currently in this shell.
+    pub electrons: Vec<Electron>,
+    /// The energy level of this shell in electron-volts (eV).
+    pub energy_level: f64,
 }
 
 impl ElectronShell {
-    /// The maximum number of electrons a shell can hold (2n^2).
-    pub fn capacity(&self) -> u32 {
-        2 * self.quantum_number.pow(2)
+    /// Creates a new electron shell.
+    pub fn new(quantum_number: u32, atomic_number: u32) -> Self {
+        // Bohr model energy levels for hydrogen-like atoms: E = -13.6 * Z^2 / n^2
+        let energy_level = -RYDBERG_CONSTANT * (atomic_number as f64).powi(2)
+            / (quantum_number as f64).powi(2);
+        ElectronShell {
+            quantum_number,
+            electrons: Vec::new(),
+            energy_level,
+        }
     }
 
-    /// Checks if the shell is full.
-    pub fn is_full(&self) -> bool {
-        self.electrons >= self.capacity()
+    /// The maximum number of electrons a shell can hold (2n^2).
+    pub fn capacity(&self) -> usize {
+        2 * (self.quantum_number as usize).pow(2)
+    }
+
+    /// Adds an electron to the shell if there is capacity.
+    pub fn add_electron(&mut self, electron: Electron) -> Result<()> {
+        if self.electrons.len() < self.capacity() {
+            self.electrons.push(electron);
+            Ok(())
+        } else {
+            Err(anyhow!("Electron shell is full."))
+        }
     }
 }
 
@@ -41,10 +67,10 @@ impl Atom {
         let mut n = 1;
 
         while remaining_electrons > 0 {
-            let mut shell = ElectronShell { quantum_number: n, electrons: 0 };
+            let mut shell = ElectronShell { quantum_number: n, electrons: Vec::new(), energy_level: 0.0 };
             let capacity = shell.capacity();
-            let electrons_to_add = remaining_electrons.min(capacity);
-            shell.electrons = electrons_to_add;
+            let electrons_to_add = remaining_electrons.min(capacity as u32);
+            shell.electrons = (0..electrons_to_add).map(|_| Electron::new(n as f64)).collect();
             atom.shells.push(shell);
             remaining_electrons -= electrons_to_add;
             n += 1;
@@ -54,7 +80,7 @@ impl Atom {
 
     /// Calculates the charge of the atom (ion charge).
     pub fn charge(&self) -> i32 {
-        let total_electrons: u32 = self.shells.iter().map(|s| s.electrons).sum();
+        let total_electrons: u32 = self.shells.iter().map(|s| s.electrons.len() as u32).sum();
         self.nucleus.protons as i32 - total_electrons as i32
     }
 
@@ -63,42 +89,90 @@ impl Atom {
     /// Returns the energy required for ionization (a positive value).
     pub fn ionize(&mut self) -> Result<f64> {
         if let Some(outer_shell) = self.shells.last_mut() {
-            if outer_shell.electrons > 0 {
-                outer_shell.electrons -= 1;
-                // Simplified ionization energy calculation (placeholder).
-                // A real calculation would be much more complex (e.g., using Hartree-Fock).
-                let energy = 13.6 * (self.nucleus.protons as f64).powi(2) / (outer_shell.quantum_number as f64).powi(2);
+            if !outer_shell.electrons.is_empty() {
+                let energy = outer_shell.energy_level;
+                outer_shell.electrons.pop();
                 return Ok(energy);
             }
         }
-        Err(anyhow::anyhow!("Atom has no electrons to ionize."))
+        Err(anyhow!("Atom has no electrons to ionize."))
     }
 
     /// Simulates spectral emission when an electron transitions to a lower energy level.
     /// Returns the energy of the emitted photon.
     pub fn spectral_emission(&mut self, from_shell_n: u32, to_shell_n: u32) -> Result<f64> {
         if from_shell_n <= to_shell_n {
-            return Err(anyhow::anyhow!("Electron must transition to a lower energy shell."));
+            return Err(anyhow!("Electron must transition to a lower energy shell."));
         }
 
         let from_shell = self.shells.get_mut((from_shell_n - 1) as usize);
         let to_shell = self.shells.get_mut((to_shell_n - 1) as usize);
 
         if let (Some(from), Some(to)) = (from_shell, to_shell) {
-            if from.electrons > 0 && !to.is_full() {
-                from.electrons -= 1;
-                to.electrons += 1;
-
-                // Rydberg formula for energy of emitted photon (for hydrogen-like atoms).
-                const RYDBERG_CONSTANT: f64 = 13.6; // eV
-                let z = self.nucleus.protons as f64;
-                let n1 = to_shell_n as f64;
-                let n2 = from_shell_n as f64;
-                let energy = RYDBERG_CONSTANT * z.powi(2) * (1.0 / n1.powi(2) - 1.0 / n2.powi(2));
+            if !from.electrons.is_empty() && !to.is_full() {
+                let energy = to.energy_level - from.energy_level;
+                let electron = from.electrons.pop().ok_or_else(|| anyhow!("Electron not found in from_shell"))?;
+                to.electrons.push(electron);
                 return Ok(energy);
             }
         }
-        Err(anyhow::anyhow!("Invalid shell transition for spectral emission."))
+        Err(anyhow!("Invalid shell transition for spectral emission."))
+    }
+
+    /// This simulates the photoelectric effect or electron capture.
+    pub fn transition_electron(
+        &mut self,
+        electron_index: usize,
+        from_shell_n: u32,
+        to_shell_n: u32,
+    ) -> Result<()> {
+        if from_shell_n == to_shell_n {
+            return Ok(()); // No transition
+        }
+
+        if from_shell_n > self.shells.len() as u32 || to_shell_n > self.shells.len() as u32 {
+            bail!("Shell index out of bounds");
+        }
+
+        let (from_idx, to_idx) = (
+            (from_shell_n - 1) as usize,
+            (to_shell_n - 1) as usize,
+        );
+
+        if from_idx >= self.shells.len() || to_idx >= self.shells.len() {
+            bail!("Shell index out of bounds");
+        }
+        
+        // Use split_at_mut to safely get two mutable references
+        let (shells1, shells2) = self.shells.split_at_mut(from_idx.max(to_idx));
+        let (from_shell, to_shell) = if from_idx < to_idx {
+            (&mut shells1[from_idx], &mut shells2[0])
+        } else {
+            (&mut shells2[0], &mut shells1[to_idx])
+        };
+
+        let _electron = from_shell
+            .electrons
+            .get(electron_index)
+            .ok_or_else(|| anyhow!("Electron index out of bounds in from_shell"))?;
+
+        let energy_diff = to_shell.energy_level - from_shell.energy_level;
+
+        if to_shell.electrons.len() >= to_shell.capacity() {
+            bail!("Target shell is full");
+        }
+
+        // TODO: Emit or absorb photon with energy_diff
+
+        let electron = from_shell.electrons.remove(electron_index);
+        to_shell.electrons.push(electron);
+
+        println!(
+            "Electron transitioned from n={} to n={}, energy change: {}",
+            from_shell_n, to_shell_n, energy_diff
+        );
+
+        Ok(())
     }
 }
 

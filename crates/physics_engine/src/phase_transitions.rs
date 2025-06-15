@@ -32,10 +32,8 @@ impl PhaseTransitionModel {
         PhaseTransitionModel { triple_point, critical_point }
     }
 
-    /// Determines the current phase of a substance given its temperature and pressure.
-    /// This is a simplified logic and does not account for the complexities of
-    /// real phase diagrams (e.g., sublimation/deposition curves).
-    pub fn get_phase(&self, temperature: Temperature, pressure: Pressure) -> Phase {
+    /// Determines the phase of a substance based on temperature and pressure.
+    pub fn determine_phase(&self, temperature: &Temperature, pressure: &Pressure) -> Phase {
         let temp = temperature.as_kelvin();
         let pres = pressure.as_pascals();
         
@@ -71,11 +69,21 @@ impl PhaseTransitionModel {
             }
         }
     }
+
+    /// Notifies about a phase transition event.
+    fn log_phase_transition(&self, phase: &Phase, temp: &Temperature, pres: &Pressure) {
+        println!(
+            "Phase transition to {:?}. Conditions: {:.2} K, {:.2} Pa.",
+            phase,
+            temp.as_kelvin(),
+            pres.as_pascals()
+        );
+    }
 }
 
 /// Evaluates and reports the phase of a system.
 pub fn evaluate_phase_transitions(model: &PhaseTransitionModel, temp: Temperature, pres: Pressure) -> Result<Phase> {
-    let phase = model.get_phase(temp, pres);
-    log::info!("System is in {:?} phase at {:.2} K and {:.2} Pa.", phase, temp.as_kelvin(), pres.as_pascals());
+    let phase = model.determine_phase(&temp, &pres);
+    model.log_phase_transition(&phase, &temp, &pres);
     Ok(phase)
 }

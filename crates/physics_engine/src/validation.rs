@@ -205,7 +205,7 @@ pub fn check_nucleosynthesis_window(states: &[PhysicsState], constants: &Physics
         if mass_solar > constants.supernova_threshold {
             // Massive star that could undergo core collapse
             let core_temp_threshold = 5e9; // 5 billion K
-            let density_threshold = 1e15; // kg/m³ (rough nuclear density)
+            let _density_threshold = 1e15; // kg/m³ (rough nuclear density)
             
             if state.temperature > core_temp_threshold {
                 // Conditions for heavy element production exist

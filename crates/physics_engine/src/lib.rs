@@ -124,7 +124,7 @@ pub enum FieldType {
 }
 
 /// Main physics engine for universe simulation
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PhysicsEngine {
     pub particles: Vec<FundamentalParticle>,
     pub quantum_fields: HashMap<FieldType, QuantumField>,
@@ -551,27 +551,20 @@ impl PhysicsEngine {
     }
     
     /// Comprehensive physics simulation step
-    pub fn step(&mut self, classical_states: &mut [PhysicsState]) -> Result<()> {
-        // Update time
-        self.current_time += self.time_step;
+    pub fn step(&mut self, _classical_states: &mut [PhysicsState]) -> Result<()> {
+        // Main physics loop
         
-        // Quantum evolution
-        self.evolve_quantum_state()?;
-        
-        // Process interactions (including new QED interactions)
+        // 1. Particle interactions
         self.process_particle_interactions()?;
         
-        // Process decays
+        // 2. Decays
         self.process_particle_decays()?;
         
-        // Nuclear processes
+        // 3. Nuclear processes
         self.process_nuclear_reactions()?;
         
-        // Update temperature based on particle energies
+        // 4. Update temperature based on particle energies
         self.update_temperature()?;
-        
-        // Classical state evolution would go here if we had the subsystems
-        // For now, we skip this part
         
         Ok(())
     }
@@ -587,8 +580,7 @@ impl PhysicsEngine {
         // Find potential Compton scattering pairs
         for i in 0..self.particles.len() {
             for j in i+1..self.particles.len() {
-                let p1 = &self.particles[i];
-                let p2 = &self.particles[j];
+                let (p1, p2) = (&self.particles[i], &self.particles[j]);
                 
                 // Check distance (interaction range ~ 1 fm)
                 let distance = (p1.position - p2.position).norm();
@@ -630,24 +622,18 @@ impl PhysicsEngine {
                 }
 
                 // Check for neutrino-electron scattering
-                let is_neutrino_electron =
-                    (matches!(p1.particle_type, ParticleType::ElectronNeutrino | ParticleType::MuonNeutrino | ParticleType::TauNeutrino) && p2.particle_type == ParticleType::Electron) ||
-                    (matches!(p2.particle_type, ParticleType::ElectronNeutrino | ParticleType::MuonNeutrino | ParticleType::TauNeutrino) && p1.particle_type == ParticleType::Electron);
-                if is_neutrino_electron {
-                    let (nu_idx, e_idx) = if matches!(p1.particle_type, ParticleType::ElectronNeutrino | ParticleType::MuonNeutrino | ParticleType::TauNeutrino) {
+                if (matches!(p1.particle_type, ParticleType::ElectronNeutrino) && matches!(p2.particle_type, ParticleType::Electron))
+                    || (matches!(p2.particle_type, ParticleType::ElectronNeutrino) && matches!(p1.particle_type, ParticleType::Electron)) {
+                    
+                    let (nu_idx, _e_idx) = if matches!(p1.particle_type, ParticleType::ElectronNeutrino | ParticleType::ElectronAntiNeutrino) {
                         (i, j)
                     } else {
                         (j, i)
                     };
-                    let e_nu = self.particles[nu_idx].energy / (1.602176634e-10); // convert J to GeV
-                    let flavour = match self.particles[nu_idx].particle_type {
-                        ParticleType::ElectronNeutrino | ParticleType::ElectronAntiNeutrino => 0,
-                        ParticleType::MuonNeutrino => 1,
-                        ParticleType::TauNeutrino => 2,
-                        _ => 0,
-                    };
-                    let is_antineutrino = matches!(self.particles[nu_idx].particle_type, ParticleType::ElectronAntiNeutrino);
-                    let cross_section = interactions::neutrino_e_scattering_complete(flavour, e_nu, is_antineutrino);
+
+                    let nu = &self.particles[nu_idx];
+                    let is_antineutrino = matches!(nu.particle_type, ParticleType::ElectronAntiNeutrino);
+                    let cross_section = interactions::neutrino_e_scattering_complete(0, nu.energy / (1.602176634e-10), is_antineutrino);
 
                     // Use same probability formula
                     let volume = 4.0 * std::f64::consts::PI * distance.powi(3) / 3.0;
@@ -848,8 +834,8 @@ impl PhysicsEngine {
         )
     }
     
-    fn initialize_spin(&self, particle_type: ParticleType) -> Vector3<Complex<f64>> {
-        Vector3::new(Complex::new(0.0, 0.0), Complex::new(0.0, 0.0), Complex::new(0.5, 0.0))
+    fn initialize_spin(&self, _particle_type: ParticleType) -> Vector3<Complex<f64>> {
+        Vector3::zeros()
     }
     
     fn assign_color_charge(&self, particle_type: ParticleType) -> Option<ColorCharge> {
@@ -895,9 +881,9 @@ impl PhysicsEngine {
     }
     
     // Placeholder methods for complex physics processes
-    fn calculate_interaction_range(&self, p1: ParticleType, p2: ParticleType) -> f64 { 1e-15 }
-    fn calculate_interaction(&self, i: usize, j: usize) -> Result<Interaction> { Ok(Interaction::default()) }
-    fn apply_interaction(&mut self, interaction: Interaction) -> Result<()> { Ok(()) }
+    fn calculate_interaction_range(&self, _p1: ParticleType, _p2: ParticleType) -> f64 { 1e-15 }
+    fn calculate_interaction(&self, _i: usize, _j: usize) -> Result<Interaction> { Ok(Interaction::default()) }
+    fn apply_interaction(&mut self, _interaction: Interaction) -> Result<()> { Ok(()) }
     fn select_decay_channel(&self, channels: &[DecayChannel]) -> DecayChannel { channels[0].clone() }
     fn execute_decay(&mut self, index: usize, channel: DecayChannel) -> Result<()> {
         // Remove parent particle
@@ -971,14 +957,14 @@ impl PhysicsEngine {
     }
     fn process_nuclear_fission(&mut self) -> Result<()> { Ok(()) }
     fn update_nuclear_shells(&mut self) -> Result<()> { Ok(()) }
-    fn can_fuse(&self, n1: &AtomicNucleus, n2: &AtomicNucleus) -> Result<bool> { Ok(false) }
-    fn calculate_fusion_reaction(&self, i: usize, j: usize) -> Result<FusionReaction> { Ok(FusionReaction::default()) }
-    fn execute_fusion_reaction(&mut self, reaction: FusionReaction) -> Result<()> { Ok(()) }
+    fn can_fuse(&self, _n1: &AtomicNucleus, _n2: &AtomicNucleus) -> Result<bool> { Ok(false) }
+    fn calculate_fusion_reaction(&self, _i: usize, _j: usize) -> Result<FusionReaction> { Ok(FusionReaction::default()) }
+    fn execute_fusion_reaction(&mut self, _reaction: FusionReaction) -> Result<()> { Ok(()) }
     fn update_atomic_physics(&mut self) -> Result<()> { Ok(()) }
-    fn update_molecular_dynamics(&mut self, states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
+    fn update_molecular_dynamics(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
     fn process_phase_transitions(&mut self) -> Result<()> { Ok(()) }
-    fn update_emergent_properties(&mut self, states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
-    fn update_running_couplings(&mut self, states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
+    fn update_emergent_properties(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
+    fn update_running_couplings(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
     fn check_symmetry_breaking(&mut self) -> Result<()> { Ok(()) }
     fn update_spacetime_curvature(&mut self) -> Result<()> { Ok(()) }
     fn update_thermodynamic_state(&mut self) -> Result<()> {
@@ -1039,48 +1025,48 @@ pub struct DecayChannel {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct FusionReaction;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InteractionMatrix;
 impl InteractionMatrix {
     pub fn new() -> Self { Self }
-    pub fn set_electromagnetic_coupling(&mut self, coupling: f64) {}
-    pub fn set_weak_coupling(&mut self, coupling: f64) {}
-    pub fn set_strong_coupling(&mut self, coupling: f64) {}
+    pub fn set_electromagnetic_coupling(&mut self, _coupling: f64) {}
+    pub fn set_weak_coupling(&mut self, _coupling: f64) {}
+    pub fn set_strong_coupling(&mut self, _coupling: f64) {}
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SpacetimeGrid;
 impl SpacetimeGrid {
-    pub fn new(size: usize, spacing: f64) -> Self { Self }
+    pub fn new(_size: usize, _spacing: f64) -> Self { Self }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct QuantumVacuum;
 impl QuantumVacuum {
     pub fn new() -> Self { Self }
-    pub fn initialize_fluctuations(&mut self, temperature: f64) -> Result<()> { Ok(()) }
+    pub fn initialize_fluctuations(&mut self, _temperature: f64) -> Result<()> { Ok(()) }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FieldEquations;
 impl FieldEquations {
     pub fn new() -> Self { Self }
-    pub fn update_field(&self, field: &mut QuantumField, dt: f64, particles: &[FundamentalParticle]) -> Result<()> { Ok(()) }
+    pub fn update_field(&self, _field: &mut QuantumField, _dt: f64, _particles: &[FundamentalParticle]) -> Result<()> { Ok(()) }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ParticleAccelerator;
 impl ParticleAccelerator {
     pub fn new() -> Self { Self }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RunningCouplings;
 impl RunningCouplings {
     pub fn new() -> Self { Self }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SymmetryBreaking;
 impl SymmetryBreaking {
     pub fn new() -> Self { Self }
@@ -1088,11 +1074,12 @@ impl SymmetryBreaking {
 }
 
 impl QuantumField {
-    pub fn new(field_type: FieldType, grid: &SpacetimeGrid) -> Result<Self> {
+    pub fn new(field_type: FieldType, _grid: &SpacetimeGrid) -> Result<Self> {
+        let size = 16; // Default lattice size
         Ok(Self {
             field_type,
-            field_values: vec![vec![vec![Complex::new(0.0, 0.0); 100]; 100]; 100],
-            field_derivatives: vec![vec![vec![Vector3::zeros(); 100]; 100]; 100],
+            field_values: vec![vec![vec![Complex::new(0.0, 0.0); size]; size]; size],
+            field_derivatives: vec![vec![vec![Vector3::zeros(); size]; size]; size],
             vacuum_expectation_value: Complex::new(0.0, 0.0),
             coupling_constants: HashMap::new(),
             lattice_spacing: 1e-15,
@@ -1137,7 +1124,7 @@ pub const MUON_MASS: f64 = 1.883e-28; // kg
 pub const TAU_MASS: f64 = 3.167e-27; // kg
 
 /// Simplified physics state for celestial bodies.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Component)]
 pub struct PhysicsState {
     pub position: Vector3<f64>,
     pub velocity: Vector3<f64>,

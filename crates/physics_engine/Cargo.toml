@@ -8,6 +8,7 @@ nalgebra = { workspace = true }
 ndarray = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+rand_distr = { workspace = true }
 serde = { workspace = true }
 serde_arrays = { workspace = true }
 anyhow = { workspace = true }

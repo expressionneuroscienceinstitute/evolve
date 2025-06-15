@@ -6,60 +6,33 @@
 //! arise from their statistical mechanics.
 
 use anyhow::Result;
-use nalgebra::Vector3;
-use crate::particles::Particle;
 
-/// Represents the temperature of a system, an emergent property related to the
-/// average kinetic energy of its constituent particles.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct Temperature(f64); // In Kelvin
+use crate::PhysicsState;
+// use crate::particles::Particle;
+
+/// Represents temperature in Kelvin.
+#[derive(Debug, Default)]
+pub struct Temperature(pub f64);
 
 impl Temperature {
-    /// Calculates the temperature of a collection of particles.
-    /// T = (2/3k) * <E_k>, where <E_k> is the average kinetic energy and k is Boltzmann's constant.
-    pub fn from_particles(particles: &[&Particle]) -> Self {
-        if particles.is_empty() {
-            return Temperature(0.0);
-        }
-
-        // Using a mock Boltzmann constant for simulation purposes.
-        const BOLTZMANN_CONSTANT: f64 = 1.380649e-23;
-
-        let total_kinetic_energy: f64 = particles.iter()
-            .map(|p| 0.5 * p.mass * p.velocity.magnitude_squared())
-            .sum();
-        
-        let avg_kinetic_energy = total_kinetic_energy / particles.len() as f64;
-        let temperature = (2.0 / (3.0 * BOLTZMANN_CONSTANT)) * avg_kinetic_energy;
-        Temperature(temperature)
-    }
-
     pub fn as_kelvin(&self) -> f64 {
         self.0
     }
 }
 
-/// Represents the pressure of a system, an emergent property related to the
-/// force exerted by particles on a surface.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct Pressure(f64); // In Pascals
+/// Represents pressure in Pascals.
+#[derive(Debug, Default)]
+pub struct Pressure(pub f64);
 
 impl Pressure {
-    /// Calculates pressure using the ideal gas law: P = (NkT) / V.
-    /// This is a simplification and assumes the system behaves like an ideal gas.
-    pub fn from_state(num_particles: usize, temperature: Temperature, volume: f64) -> Self {
-        if volume <= 0.0 {
-            return Pressure(0.0);
-        }
-        const BOLTZMANN_CONSTANT: f64 = 1.380649e-23;
-        let pressure = (num_particles as f64 * BOLTZMANN_CONSTANT * temperature.as_kelvin()) / volume;
-        Pressure(pressure)
-    }
-
     pub fn as_pascals(&self) -> f64 {
         self.0
     }
 }
+
+/// Represents entropy in Joules per Kelvin.
+#[derive(Debug, Default)]
+pub struct Entropy(pub f64);
 
 /// Monitors and calculates emergent properties of the system.
 #[derive(Debug, Default)]
@@ -69,18 +42,53 @@ pub struct EmergenceMonitor {
 }
 
 impl EmergenceMonitor {
+    /// Creates a new EmergenceMonitor.
     pub fn new() -> Self {
-        EmergenceMonitor {
-            temperature: Temperature(0.0),
-            pressure: Pressure(0.0),
-        }
+        Self::default()
     }
 
-    /// Updates all emergent properties based on the current state of the particle system.
-    pub fn update(&mut self, particles: &[&Particle], volume: f64) {
-        self.temperature = Temperature::from_particles(particles);
-        self.pressure = Pressure::from_state(particles.len(), self.temperature, volume);
+    /// Update all emergent properties from the states of the particles.
+    pub fn update(&mut self, _states: &[PhysicsState]) -> Result<()> {
+        // self.temperature = self.calculate_temperature(particles);
+        // self.pressure = self.calculate_pressure(particles);
+        // self.entropy = self.calculate_entropy(particles);
+        Ok(())
     }
+
+    /*
+    /// Calculate the temperature from the kinetic energy of the particles.
+    fn calculate_temperature(&self, particles: &[Particle]) -> Temperature {
+        let total_kinetic_energy: f64 = particles
+            .iter()
+            .map(|p| 0.5 * p.mass * p.velocity.norm_squared())
+            .sum();
+        let temperature =
+            (2.0 / 3.0) * total_kinetic_energy / (particles.len() as f64 * BOLTZMANN_CONSTANT);
+        Temperature(temperature)
+    }
+
+    /// Calculate the pressure using the virial theorem.
+    fn calculate_pressure(&self, particles: &[Particle]) -> Pressure {
+        let kinetic_energy: f64 = particles
+            .iter()
+            .map(|p| 0.5 * p.mass * p.velocity.norm_squared())
+            .sum();
+
+        // This is a simplified calculation. A full implementation would need to
+        // consider intermolecular forces.
+        let pressure = (2.0 / 3.0) * kinetic_energy;
+        Pressure(pressure)
+    }
+
+    /// Calculate the entropy.
+    /// This is a placeholder and would require a more complex statistical
+    /// mechanics calculation.
+    fn calculate_entropy(&self, _particles: &[Particle]) -> Entropy {
+        // A proper implementation would likely involve phase space volume, which is
+        // very complex to calculate.
+        Entropy(0.0)
+    }
+    */
 }
 
 /// Main function to update and log emergent properties.

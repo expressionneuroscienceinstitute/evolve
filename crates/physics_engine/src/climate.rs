@@ -144,7 +144,7 @@ impl ClimateSolver {
     }
 
     /// Update global energy balance
-    fn update_energy_balance(&mut self, constants: &PhysicsConstants) -> Result<()> {
+    fn update_energy_balance(&mut self, _constants: &PhysicsConstants) -> Result<()> {
         // Incoming solar radiation
         let solar_area = std::f64::consts::PI * self.earth_radius * self.earth_radius;
         let incoming_solar = self.climate_state.solar_constant * solar_area * (1.0 - self.climate_state.albedo);
@@ -227,7 +227,7 @@ impl ClimateSolver {
     }
 
     /// Update ocean circulation and mixing
-    fn update_ocean_circulation(&mut self, constants: &PhysicsConstants) -> Result<()> {
+    fn update_ocean_circulation(&mut self, _constants: &PhysicsConstants) -> Result<()> {
         let dt = 1.0; // 1 second timestep
         
         // Thermohaline circulation between boxes

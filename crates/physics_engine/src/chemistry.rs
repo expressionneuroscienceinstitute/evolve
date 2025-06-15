@@ -140,7 +140,7 @@ impl ChemistrySolver {
     }
 
     /// Calculate reaction rates using Arrhenius equation
-    fn calculate_reaction_rates(&self, states: &[PhysicsState], constants: &PhysicsConstants) 
+    fn calculate_reaction_rates(&self, states: &[PhysicsState], _constants: &PhysicsConstants) 
         -> Result<Vec<f64>> 
     {
         let mut rates = Vec::new();

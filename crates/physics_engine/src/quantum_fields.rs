@@ -6,61 +6,72 @@
 
 use anyhow::Result;
 use ndarray::{Array, Ix3};
-use rand::distributions::{Distribution, Normal};
+use rand::Rng;
 use rand::thread_rng;
+use rand_distr::{Distribution, Normal};
 
 /// Represents a scalar quantum field on a 3D lattice.
-/// The field is defined by its values at each point in the discrete space.
 #[derive(Debug, Clone)]
-pub struct QuantumFieldLattice {
-    /// The physical distance between lattice points (in meters).
-    pub lattice_spacing: f64,
-    /// The field values at each lattice point.
+pub struct QuantumField {
+    /// The values of the field at each lattice point.
     pub field: Array<f64, Ix3>,
+    /// The spacing between lattice points.
+    pub lattice_spacing: f64,
 }
 
-impl QuantumFieldLattice {
-    /// Creates a new quantum field lattice of given dimensions.
-    ///
-    /// # Arguments
-    /// * `dimensions` - A tuple `(nx, ny, nz)` representing the number of points in each spatial dimension.
-    /// * `lattice_spacing` - The physical distance between lattice points.
-    pub fn new(dimensions: (usize, usize, usize), lattice_spacing: f64) -> Self {
-        QuantumFieldLattice {
+impl QuantumField {
+    /// Creates a new quantum field initialized to a vacuum state.
+    pub fn new(size: (usize, usize, usize), lattice_spacing: f64) -> Self {
+        QuantumField {
+            field: Array::zeros(size),
             lattice_spacing,
-            field: Array::zeros(dimensions),
         }
     }
 
-    /// Initializes the field with quantum vacuum fluctuations.
-    /// These are modeled as random values drawn from a Gaussian distribution,
-    /// representing the ground state energy of the field.
+    /// Initializes the field to a random state, simulating vacuum fluctuations.
     pub fn initialize_vacuum_fluctuations(&mut self) {
         let mut rng = thread_rng();
         // The standard deviation of the fluctuations is related to the energy scale.
         // This is a simplified model.
-        let dist = Normal::new(0.0, 1.0);
+        let dist = Normal::new(0.0, 1.0).unwrap();
         for val in self.field.iter_mut() {
             *val = dist.sample(&mut rng);
         }
     }
 
-    /// Evolves the field by one time step.
-    /// This is a placeholder for a more complex update rule, such as one derived
-    /// from a discretized field Lagrangian (e.g., using the leapfrog method).
-    pub fn evolve(&mut self, _dt: f64) {
-        // In a real simulation, this would involve calculating the field's
-        // conjugate momentum and updating both according to the equations of motion.
+    /// Evolves the field over a single time step using a simplified wave equation.
+    pub fn evolve(&mut self, _time_step: f64) {
+        // A proper implementation would solve the Klein-Gordon equation.
         // For now, we'll just add some small random noise to simulate evolution.
         let mut rng = thread_rng();
-        let dist = Normal::new(0.0, 0.1); // Small perturbations
+        let dist = Normal::new(0.0, 0.1).unwrap(); // Small perturbations
         self.field.mapv_inplace(|v| v + dist.sample(&mut rng));
     }
-}
 
-/// Initializes a quantum field lattice with default parameters.
-pub fn init_quantum_fields(dimensions: (usize, usize, usize), lattice_spacing: f64) -> Result<QuantumFieldLattice> {
-    let mut lattice = QuantumFieldLattice::new(dimensions, lattice_spacing);
-    lattice.initialize_vacuum_fluctuations();
-    Ok(lattice)
+    /// This function simulates the effect of quantum fluctuations on the field.
+    pub fn apply_quantum_fluctuations(&mut self, temperature: f64) -> Result<()> {
+        let mut rng = thread_rng();
+        let std_dev = self.calculate_fluctuation_amplitude(temperature);
+        let dist = Normal::new(0.0, std_dev)?;
+
+        for val in self.field.iter_mut().flatten().flatten() {
+            *val += dist.sample(&mut rng);
+        }
+
+        Ok(())
+    }
+
+    /// Add a specified amount of energy to the field, simulating an interaction.
+    pub fn add_energy(&mut self, energy: f64) {
+        let mut rng = thread_rng();
+        // The energy is distributed as a Gaussian pulse.
+        let dist = Normal::new(0.0, energy.sqrt()).unwrap();
+        self.field.iter_mut().flatten().flatten().for_each(|v| *v += dist.sample(&mut rng));
+    }
+    
+    /// Calculates the amplitude of vacuum fluctuations based on temperature.
+    fn calculate_fluctuation_amplitude(&self, temperature: f64) -> f64 {
+        // Simplified model: fluctuation amplitude is proportional to temperature.
+        temperature * 1e-5
+    }
 }

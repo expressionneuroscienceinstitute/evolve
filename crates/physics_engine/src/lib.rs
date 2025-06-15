@@ -286,6 +286,14 @@ pub enum BondType {
     Ionic, Covalent, Metallic, HydrogenBond, VanDerWaals,
 }
 
+#[derive(Default)]
+struct AtomicUpdate {
+    photons_to_emit: Vec<FundamentalParticle>,
+    electrons_to_remove: Vec<usize>,
+    energy_changes: Vec<f64>,
+    electrons_to_add: Vec<FundamentalParticle>,
+}
+
 impl PhysicsEngine {
     /// Create new physics engine with fundamental particle simulation
     pub fn new(time_step: f64) -> Result<Self> {
@@ -991,7 +999,7 @@ impl PhysicsEngine {
         let fragment2_z = original_nucleus.atomic_number - fragment1_z;
         
         // Create fission fragments
-        let mut fragment1 = AtomicNucleus {
+        let fragment1 = AtomicNucleus {
             mass_number: fragment1_mass,
             atomic_number: fragment1_z,
             protons: Vec::new(), // Simplified
@@ -1007,7 +1015,7 @@ impl PhysicsEngine {
             excitation_energy: 5e-13, // Highly excited
         };
         
-        let mut fragment2 = AtomicNucleus {
+        let fragment2 = AtomicNucleus {
             mass_number: fragment2_mass,
             atomic_number: fragment2_z,
             protons: Vec::new(),
@@ -1207,7 +1215,305 @@ impl PhysicsEngine {
         Ok(())
     }
     #[allow(dead_code)]
-    fn update_atomic_physics(&mut self) -> Result<()> { Ok(()) }
+    fn update_atomic_physics(&mut self) -> Result<()> {
+        // Process atomic-level physics including electron transitions, ionization, and recombination
+        
+        // Update electronic states based on radiation field (collect updates first)
+        let mut atomic_updates = Vec::new();
+        for (atom_idx, atom) in self.atoms.iter().enumerate() {
+            let updates = self.calculate_atomic_updates(atom, atom_idx)?;
+            atomic_updates.push(updates);
+        }
+        
+        // Apply atomic updates
+        for (atom_idx, updates) in atomic_updates.into_iter().enumerate() {
+            if atom_idx < self.atoms.len() {
+                // Apply updates without borrowing self mutably
+                for photon in updates.photons_to_emit {
+                    self.particles.push(photon);
+                }
+                
+                for electron in updates.electrons_to_add {
+                    self.particles.push(electron);
+                }
+                
+                // Update the atom directly
+                let atom = &mut self.atoms[atom_idx];
+                
+                // Remove electrons from atom (in reverse order to maintain indices)
+                let mut electrons_to_remove = updates.electrons_to_remove;
+                electrons_to_remove.sort_by(|a, b| b.cmp(a));
+                for &idx in &electrons_to_remove {
+                    if idx < atom.electrons.len() {
+                        atom.electrons.remove(idx);
+                        atom.total_energy += 13.6e-19; // Ionization energy
+                    }
+                }
+                
+                // Update electron energies to ground state
+                for electron in &mut atom.electrons {
+                    if electron.binding_energy < -13.6e-19 {
+                        electron.binding_energy = -13.6e-19; // Ground state
+                    }
+                }
+            }
+        }
+        
+        // Process recombination events (free electrons + ions → neutral atoms)
+        self.process_recombination_events()?;
+        
+        // Update atomic collision processes
+        self.process_atomic_collisions()?;
+        
+        Ok(())
+    }
+    
+
+    
+    fn calculate_atomic_updates(&self, atom: &Atom, _atom_idx: usize) -> Result<AtomicUpdate> {
+        let mut update = AtomicUpdate::default();
+        
+        // Check for spontaneous emission
+        for (_electron_idx, electron) in atom.electrons.iter().enumerate() {
+            if electron.binding_energy < -13.6e-19 { // Excited state (simplified)
+                if rand::random::<f64>() < 0.001 { // Spontaneous emission probability
+                    // Emit photon and drop to lower energy state
+                    let photon_energy = electron.binding_energy - (-13.6e-19); // Ground state
+                    
+                    let photon = FundamentalParticle {
+                        particle_type: ParticleType::Photon,
+                        position: atom.position,
+                        momentum: Vector3::new(
+                            photon_energy / C * (rand::random::<f64>() - 0.5),
+                            photon_energy / C * (rand::random::<f64>() - 0.5),
+                            photon_energy / C * (rand::random::<f64>() - 0.5),
+                        ),
+                        spin: Vector3::new(1.0, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
+                        color_charge: None,
+                        electric_charge: 0.0,
+                        mass: 0.0,
+                        energy: photon_energy,
+                        creation_time: self.current_time,
+                        decay_time: None,
+                        quantum_state: QuantumState::new(),
+                        interaction_history: Vec::new(),
+                    };
+                    
+                    update.photons_to_emit.push(photon);
+                    update.energy_changes.push(photon_energy);
+                }
+            }
+        }
+        
+        // Check for photoionization events
+        let ionization_threshold = 13.6e-19; // Simplified - use hydrogen ionization energy
+        
+        for photon in &self.particles {
+            if let ParticleType::Photon = photon.particle_type {
+                let distance = (photon.position - atom.position).norm();
+                if distance < 1e-12 && photon.energy > ionization_threshold {
+                    // Ionization event occurs
+                    
+                    // Create free electron
+                    let kinetic_energy = photon.energy - ionization_threshold;
+                    let electron_momentum = (2.0 * ELECTRON_MASS * kinetic_energy).sqrt();
+                    
+                    let free_electron = FundamentalParticle {
+                        particle_type: ParticleType::Electron,
+                        position: atom.position,
+                        momentum: Vector3::new(
+                            electron_momentum * (rand::random::<f64>() - 0.5),
+                            electron_momentum * (rand::random::<f64>() - 0.5),
+                            electron_momentum * (rand::random::<f64>() - 0.5),
+                        ),
+                        spin: Vector3::new(0.5, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
+                        color_charge: None,
+                        electric_charge: -ELEMENTARY_CHARGE,
+                        mass: ELECTRON_MASS,
+                        energy: ELECTRON_MASS * C_SQUARED + kinetic_energy,
+                        creation_time: self.current_time,
+                        decay_time: None,
+                        quantum_state: QuantumState::new(),
+                        interaction_history: Vec::new(),
+                    };
+                    
+                    update.electrons_to_add.push(free_electron);
+                    if !atom.electrons.is_empty() {
+                        update.electrons_to_remove.push(0); // Remove first electron (simplified)
+                    }
+                    
+                    break;
+                }
+            }
+        }
+        
+        Ok(update)
+    }
+    
+
+    
+    fn process_recombination_events(&mut self) -> Result<()> {
+        // Find free electrons and ions that can recombine
+        let mut electrons_to_remove = Vec::new();
+        let mut ions_to_neutralize = Vec::new();
+        
+        for (i, particle) in self.particles.iter().enumerate() {
+            if let ParticleType::Electron = particle.particle_type {
+                // Look for nearby ions (simplified - assume protons are ions)
+                for (j, ion) in self.particles.iter().enumerate() {
+                    if let ParticleType::Proton = ion.particle_type {
+                        let distance = (particle.position - ion.position).norm();
+                        if distance < 1e-12 { // Within recombination radius
+                            // Recombination probability
+                            if rand::random::<f64>() < 0.0001 {
+                                electrons_to_remove.push(i);
+                                ions_to_neutralize.push(j);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process recombination events (create neutral hydrogen atoms)
+        for (&electron_idx, &proton_idx) in electrons_to_remove.iter().zip(ions_to_neutralize.iter()) {
+            if electron_idx < self.particles.len() && proton_idx < self.particles.len() {
+                let _electron = &self.particles[electron_idx];
+                let proton = &self.particles[proton_idx];
+                
+                // Create neutral hydrogen atom
+                let hydrogen_atom = Atom {
+                    nucleus: AtomicNucleus {
+                        mass_number: 1,
+                        atomic_number: 1,
+                        protons: vec![],
+                        neutrons: vec![],
+                        binding_energy: 0.0,
+                        nuclear_spin: Vector3::zeros(),
+                        magnetic_moment: Vector3::zeros(),
+                        electric_quadrupole_moment: 0.0,
+                        nuclear_radius: 0.88e-15,
+                        shell_model_state: HashMap::new(),
+                        position: proton.position,
+                        momentum: proton.momentum,
+                        excitation_energy: 0.0,
+                    },
+                    electrons: vec![Electron {
+                        position_probability: vec![vec![vec![0.0; 10]; 10]; 10],
+                        momentum_distribution: vec![Vector3::zeros(); 10],
+                        spin: Vector3::new(0.5, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
+                        orbital_angular_momentum: Vector3::zeros(),
+                        quantum_numbers: QuantumNumbers { n: 1, l: 0, m_l: 0, m_s: 0.5 },
+                        binding_energy: -13.6e-19, // Ground state hydrogen
+                    }],
+                    electron_orbitals: vec![],
+                    total_energy: -13.6e-19,
+                    ionization_energy: 13.6e-19,
+                    electron_affinity: 0.0,
+                    atomic_radius: 0.53e-10, // Bohr radius
+                    position: proton.position,
+                    velocity: proton.momentum / PROTON_MASS,
+                    electronic_state: HashMap::new(),
+                };
+                
+                self.atoms.push(hydrogen_atom);
+                
+                // Emit recombination photon
+                let recombination_photon = FundamentalParticle {
+                    particle_type: ParticleType::Photon,
+                    position: proton.position,
+                    momentum: Vector3::new(
+                        13.6e-19 / C * (rand::random::<f64>() - 0.5),
+                        13.6e-19 / C * (rand::random::<f64>() - 0.5),
+                        13.6e-19 / C * (rand::random::<f64>() - 0.5),
+                    ),
+                    spin: Vector3::new(1.0, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
+                    color_charge: None,
+                    electric_charge: 0.0,
+                    mass: 0.0,
+                    energy: 13.6e-19,
+                    creation_time: self.current_time,
+                    decay_time: None,
+                    quantum_state: QuantumState::new(),
+                    interaction_history: Vec::new(),
+                };
+                
+                self.particles.push(recombination_photon);
+            }
+        }
+        
+        // Remove recombined particles (in reverse order to maintain indices)
+        electrons_to_remove.sort_by(|a, b| b.cmp(a));
+        ions_to_neutralize.sort_by(|a, b| b.cmp(a));
+        
+        for &idx in &electrons_to_remove {
+            if idx < self.particles.len() {
+                self.particles.swap_remove(idx);
+            }
+        }
+        for &idx in &ions_to_neutralize {
+            if idx < self.particles.len() {
+                self.particles.swap_remove(idx);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn process_atomic_collisions(&mut self) -> Result<()> {
+        // Process elastic and inelastic atomic collisions
+        let mut collision_pairs = Vec::new();
+        
+        // Find atoms that are close enough to collide
+        for i in 0..self.atoms.len() {
+            for j in (i + 1)..self.atoms.len() {
+                let distance = (self.atoms[i].position - self.atoms[j].position).norm();
+                let collision_radius = self.atoms[i].atomic_radius + self.atoms[j].atomic_radius;
+                
+                if distance < collision_radius * 2.0 {
+                    collision_pairs.push((i, j));
+                }
+            }
+        }
+        
+        // Process collisions
+        for (i, j) in collision_pairs {
+            if i < self.atoms.len() && j < self.atoms.len() {
+                // Extract data we need before mutable borrow
+                let (pos1, vel1, pos2, vel2) = {
+                    let atom1 = &self.atoms[i];
+                    let atom2 = &self.atoms[j];
+                    (atom1.position, atom1.velocity, atom2.position, atom2.velocity)
+                };
+                
+                // Calculate relative velocity
+                let relative_velocity = (vel1 - vel2).norm();
+                let collision_energy = 0.5 * PROTON_MASS * relative_velocity.powi(2); // Simplified
+                
+                // Check for excitation/de-excitation
+                if collision_energy > 10.2e-19 { // First excited state of hydrogen
+                    // Inelastic collision - excite one of the atoms
+                    if rand::random::<f64>() < 0.1 {
+                        // Simplified excitation
+                        if !self.atoms[i].electrons.is_empty() {
+                            self.atoms[i].electrons[0].binding_energy = -3.4e-19; // n=2 state
+                            self.atoms[i].total_energy += 10.2e-19;
+                        }
+                    }
+                }
+                
+                // Elastic scattering (simplified momentum exchange)
+                let momentum_exchange = 0.1 * PROTON_MASS * relative_velocity;
+                let exchange_vector = (pos1 - pos2).normalize();
+                
+                self.atoms[i].velocity += exchange_vector * momentum_exchange / PROTON_MASS;
+                self.atoms[j].velocity -= exchange_vector * momentum_exchange / PROTON_MASS;
+            }
+        }
+        
+        Ok(())
+    }
     #[allow(dead_code)]
     fn update_molecular_dynamics(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
     #[allow(dead_code)]
@@ -1374,6 +1680,13 @@ pub type ReactionCoordinate = Vector3<f64>;
 // Constants for new particles
 pub const MUON_MASS: f64 = 1.883e-28; // kg
 pub const TAU_MASS: f64 = 3.167e-27; // kg
+
+// Additional physics constants for nuclear reactions
+pub const K_E: f64 = 8.99e9; // Coulomb constant (N⋅m²/C²)
+pub const E_CHARGE: f64 = ELEMENTARY_CHARGE;
+pub const C: f64 = SPEED_OF_LIGHT;
+pub const C_SQUARED: f64 = SPEED_OF_LIGHT * SPEED_OF_LIGHT;
+pub const HBAR: f64 = REDUCED_PLANCK_CONSTANT;
 
 /// Represents the physical state of a celestial body for simulation purposes.
 /// This component will be attached to Bevy entities.

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::time::sleep;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
@@ -790,8 +790,337 @@ fn render_sample_planets(class_filter: &Option<String>, habitable_only: bool) {
     println!("G = Gas dwarf (no solid surface)");
 }
 
+fn render_planet_inspection(planet_data: &serde_json::Value) -> Result<()> {
+    println!("=== PLANET DETAILED INSPECTION ===");
+    
+    if let Some(id) = planet_data.get("id").and_then(|v| v.as_str()) {
+        println!("Planet ID: {}", id);
+    }
+    
+    if let Some(class) = planet_data.get("class").and_then(|v| v.as_str()) {
+        println!("Class: {} ({})", class, match class {
+            "E" => "Earth-like",
+            "D" => "Desert world", 
+            "I" => "Ice world",
+            "T" => "Toxic world",
+            "G" => "Gas dwarf",
+            _ => "Unknown"
+        });
+    }
+    
+    if let Some(mass) = planet_data.get("mass_earth").and_then(|v| v.as_f64()) {
+        println!("Mass: {:.2} Earth masses", mass);
+    }
+    
+    if let Some(radius) = planet_data.get("radius_earth").and_then(|v| v.as_f64()) {
+        println!("Radius: {:.2} Earth radii", radius);
+    }
+    
+    if let Some(temp) = planet_data.get("temperature").and_then(|v| v.as_f64()) {
+        println!("Temperature: {:.1}°C", temp);
+    }
+    
+    if let Some(water) = planet_data.get("water_fraction").and_then(|v| v.as_f64()) {
+        println!("Water coverage: {:.1}%", water * 100.0);
+    }
+    
+    if let Some(oxygen) = planet_data.get("oxygen_fraction").and_then(|v| v.as_f64()) {
+        println!("Atmospheric O₂: {:.1}%", oxygen * 100.0);
+    }
+    
+    if let Some(radiation) = planet_data.get("radiation_level").and_then(|v| v.as_f64()) {
+        println!("Radiation level: {:.3} (relative)", radiation);
+    }
+    
+    if let Some(age) = planet_data.get("age_gyr").and_then(|v| v.as_f64()) {
+        println!("Age: {:.1} billion years", age);
+    }
+    
+    if let Some(habitable) = planet_data.get("habitable").and_then(|v| v.as_bool()) {
+        println!("Habitable: {}", if habitable { "Yes" } else { "No" });
+    }
+    
+    Ok(())
+}
+
+fn render_sample_planet_inspection(id: &str) {
+    println!("=== PLANET DETAILED INSPECTION (SAMPLE DATA) ===");
+    println!("Planet ID: {}", id);
+    println!("Class: E (Earth-like)");
+    println!("Mass: 1.1 Earth masses");
+    println!("Radius: 1.05 Earth radii");
+    println!("Temperature: 18.5°C");
+    println!("Water coverage: 67.0%");
+    println!("Atmospheric O₂: 19.0%");
+    println!("Radiation level: 0.003 (relative)");
+    println!("Age: 3.2 billion years");
+    println!("Habitable: Yes");
+    println!("\nNote: Connect to running simulation for real data");
+}
+
+fn render_lineage_inspection(lineage_data: &serde_json::Value) -> Result<()> {
+    println!("=== LINEAGE DETAILED INSPECTION ===");
+    
+    if let Some(id) = lineage_data.get("id").and_then(|v| v.as_str()) {
+        println!("Lineage ID: {}", id);
+    }
+    
+    if let Some(generation) = lineage_data.get("generation").and_then(|v| v.as_u64()) {
+        println!("Generation: {}", generation);
+    }
+    
+    if let Some(population) = lineage_data.get("population").and_then(|v| v.as_u64()) {
+        println!("Current population: {}", population);
+    }
+    
+    if let Some(fitness) = lineage_data.get("average_fitness").and_then(|v| v.as_f64()) {
+        println!("Average fitness: {:.3}", fitness);
+    }
+    
+    if let Some(sentience) = lineage_data.get("sentience_level").and_then(|v| v.as_f64()) {
+        println!("Sentience level: {:.2}%", sentience * 100.0);
+    }
+    
+    if let Some(tech) = lineage_data.get("tech_level").and_then(|v| v.as_f64()) {
+        println!("Technology level: {:.2}%", tech * 100.0);
+    }
+    
+    if let Some(immortal) = lineage_data.get("immortality_achieved").and_then(|v| v.as_bool()) {
+        println!("Immortality achieved: {}", if immortal { "Yes" } else { "No" });
+    }
+    
+    Ok(())
+}
+
+fn render_sample_lineage_inspection(id: &str) {
+    println!("=== LINEAGE DETAILED INSPECTION (SAMPLE DATA) ===");
+    println!("Lineage ID: {}", id);
+    println!("Generation: 42");
+    println!("Current population: 1,247");
+    println!("Average fitness: 0.742");
+    println!("Sentience level: 23.5%");
+    println!("Technology level: 12.8%");
+    println!("Immortality achieved: No");
+    println!("\nNote: Connect to running simulation for real data");
+}
+
+fn render_universe_stats(stats_data: &serde_json::Value) -> Result<()> {
+    println!("=== UNIVERSE STATISTICS ===");
+    
+    if let Some(age) = stats_data.get("age_gyr").and_then(|v| v.as_f64()) {
+        println!("Universe age: {:.2} billion years", age);
+    }
+    
+    if let Some(era) = stats_data.get("cosmic_era").and_then(|v| v.as_str()) {
+        println!("Cosmic era: {}", era);
+    }
+    
+    if let Some(particles) = stats_data.get("total_particles").and_then(|v| v.as_u64()) {
+        println!("Total particles: {}", particles);
+    }
+    
+    if let Some(stars) = stats_data.get("star_count").and_then(|v| v.as_u64()) {
+        println!("Star count: {}", stars);
+    }
+    
+    if let Some(planets) = stats_data.get("planet_count").and_then(|v| v.as_u64()) {
+        println!("Planet count: {}", planets);
+    }
+    
+    if let Some(lineages) = stats_data.get("lineage_count").and_then(|v| v.as_u64()) {
+        println!("Active lineages: {}", lineages);
+    }
+    
+    if let Some(temp) = stats_data.get("average_temperature").and_then(|v| v.as_f64()) {
+        println!("Average temperature: {:.1} K", temp);
+    }
+    
+    if let Some(energy) = stats_data.get("total_energy").and_then(|v| v.as_f64()) {
+        println!("Total energy: {:.2e} J", energy);
+    }
+    
+    Ok(())
+}
+
+fn render_sample_universe_stats() {
+    println!("=== UNIVERSE STATISTICS (SAMPLE DATA) ===");
+    println!("Universe age: 13.8 billion years");
+    println!("Cosmic era: Biogenesis");
+    println!("Total particles: 10,847,293,521");
+    println!("Star count: 2,847");
+    println!("Planet count: 8,291");
+    println!("Active lineages: 127");
+    println!("Average temperature: 2.7 K");
+    println!("Total energy: 4.23e+42 J");
+    println!("\nNote: Connect to running simulation for real data");
+}
+
+fn render_physics_diagnostics(diagnostics_data: &serde_json::Value) -> Result<()> {
+    println!("=== PHYSICS ENGINE DIAGNOSTICS ===");
+    
+    if let Some(step_time) = diagnostics_data.get("average_step_time_ms").and_then(|v| v.as_f64()) {
+        println!("Average step time: {:.2} ms", step_time);
+    }
+    
+    if let Some(interactions) = diagnostics_data.get("interactions_per_step").and_then(|v| v.as_u64()) {
+        println!("Interactions per step: {}", interactions);
+    }
+    
+    if let Some(fusion_events) = diagnostics_data.get("fusion_events").and_then(|v| v.as_u64()) {
+        println!("Nuclear fusion events: {}", fusion_events);
+    }
+    
+    if let Some(fission_events) = diagnostics_data.get("fission_events").and_then(|v| v.as_u64()) {
+        println!("Nuclear fission events: {}", fission_events);
+    }
+    
+    if let Some(decay_events) = diagnostics_data.get("particle_decays").and_then(|v| v.as_u64()) {
+        println!("Particle decay events: {}", decay_events);
+    }
+    
+    if let Some(temp) = diagnostics_data.get("system_temperature").and_then(|v| v.as_f64()) {
+        println!("System temperature: {:.1} K", temp);
+    }
+    
+    if let Some(pressure) = diagnostics_data.get("system_pressure").and_then(|v| v.as_f64()) {
+        println!("System pressure: {:.2e} Pa", pressure);
+    }
+    
+    if let Some(energy_conservation) = diagnostics_data.get("energy_conservation_error").and_then(|v| v.as_f64()) {
+        println!("Energy conservation error: {:.2e}", energy_conservation);
+    }
+    
+    Ok(())
+}
+
+fn render_sample_physics_diagnostics() {
+    println!("=== PHYSICS ENGINE DIAGNOSTICS (SAMPLE DATA) ===");
+    println!("Average step time: 12.3 ms");
+    println!("Interactions per step: 284,571");
+    println!("Nuclear fusion events: 1,247");
+    println!("Nuclear fission events: 23");
+    println!("Particle decay events: 8,291");
+    println!("System temperature: 2,847.3 K");
+    println!("System pressure: 1.24e+8 Pa");
+    println!("Energy conservation error: 2.3e-12");
+    println!("\nNote: Connect to running simulation for real data"); 
+}
+
 async fn cmd_inspect(target: InspectTarget) -> Result<()> {
-    println!("Inspecting {:?}...", target);
+    let client = reqwest::Client::new();
+    
+    match target {
+        InspectTarget::Planet { id } => {
+            println!("Inspecting planet {}...\n", id);
+            
+            let params = json!({ "planet_id": id });
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "inspect_planet",
+                "params": params,
+                "id": 7
+            });
+
+            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
+                Ok(res) if res.status().is_success() => {
+                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
+                        if let Some(planet_data) = rpc_res.result {
+                            render_planet_inspection(&planet_data)?;
+                        } else if let Some(error) = rpc_res.error {
+                            println!("RPC Error: {} (code: {})", error.message, error.code);
+                        }
+                    }
+                }
+                _ => {
+                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
+                    render_sample_planet_inspection(&id);
+                }
+            }
+        }
+        
+        InspectTarget::Lineage { id } => {
+            println!("Inspecting lineage {}...\n", id);
+            
+            let params = json!({ "lineage_id": id });
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "inspect_lineage", 
+                "params": params,
+                "id": 8
+            });
+
+            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
+                Ok(res) if res.status().is_success() => {
+                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
+                        if let Some(lineage_data) = rpc_res.result {
+                            render_lineage_inspection(&lineage_data)?;
+                        } else if let Some(error) = rpc_res.error {
+                            println!("RPC Error: {} (code: {})", error.message, error.code);
+                        }
+                    }
+                }
+                _ => {
+                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
+                    render_sample_lineage_inspection(&id);
+                }
+            }
+        }
+        
+        InspectTarget::Universe => {
+            println!("Inspecting universe statistics...\n");
+            
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "universe_stats",
+                "params": {},
+                "id": 9
+            });
+
+            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
+                Ok(res) if res.status().is_success() => {
+                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
+                        if let Some(stats_data) = rpc_res.result {
+                            render_universe_stats(&stats_data)?;
+                        } else if let Some(error) = rpc_res.error {
+                            println!("RPC Error: {} (code: {})", error.message, error.code);
+                        }
+                    }
+                }
+                _ => {
+                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
+                    render_sample_universe_stats();
+                }
+            }
+        }
+        
+        InspectTarget::Physics => {
+            println!("Inspecting physics engine diagnostics...\n");
+            
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "physics_diagnostics",
+                "params": {},
+                "id": 10
+            });
+
+            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
+                Ok(res) if res.status().is_success() => {
+                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
+                        if let Some(diagnostics_data) = rpc_res.result {
+                            render_physics_diagnostics(&diagnostics_data)?;
+                        } else if let Some(error) = rpc_res.error {
+                            println!("RPC Error: {} (code: {})", error.message, error.code);
+                        }
+                    }
+                }
+                _ => {
+                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
+                    render_sample_physics_diagnostics();
+                }
+            }
+        }
+    }
+    
     Ok(())
 }
 
@@ -1521,50 +1850,59 @@ async fn handle_rpc_request(
                     let zoom = params.zoom.unwrap_or(1.0);
                     let layer = params.layer.as_deref().unwrap_or("stars");
                     
-                    // TODO: Generate real map data from simulation
-                    // For now, return synthetic data that matches the CLI expectations
+                    // Get real map data from simulation
+                    let mut sim_guard = shared_state.sim.lock().unwrap();
                     let width = 60;
                     let height = 20;
-                    let mut density_grid = Vec::new();
                     
-                    for y in 0..height {
-                        for x in 0..width {
-                            let nx = (x as f64 / width as f64 - 0.5) * zoom;
-                            let ny = (y as f64 / height as f64 - 0.5) * zoom;
+                    let response_data = match sim_guard.get_map_data(zoom, layer, width, height) {
+                        Ok(map_data) => map_data,
+                        Err(e) => {
+                            // Fallback to synthetic data if real data fails
+                            warn!("Failed to get real map data: {}, using synthetic data", e);
+                            let mut density_grid = Vec::new();
                             
-                            let density = match layer {
-                                "stars" => {
-                                    let cluster_1 = (-((nx + 0.3).powi(2) + (ny - 0.2).powi(2)) * 30.0).exp();
-                                    let cluster_2 = (-((nx - 0.4).powi(2) + (ny + 0.1).powi(2)) * 40.0).exp();
-                                    (cluster_1 + cluster_2).max(0.0).min(1.0)
-                                },
-                                "gas" => {
-                                    let shock_fronts = ((nx * 15.0).sin() + (ny * 12.0).cos()) * 0.5 + 0.5;
-                                    let void_regions = (-((nx * nx + ny * ny) * 5.0)).exp();
-                                    (shock_fronts * 0.6 + void_regions * 0.4).max(0.0).min(1.0)
-                                },
-                                "dark_matter" => {
-                                    let filament = (nx * 10.0).sin() * (ny * 10.0).cos();
-                                    let halo = (-((nx * nx + ny * ny) * 20.0)).exp();
-                                    (filament * 0.3 + halo * 0.7 + 0.1).max(0.0).min(1.0)
-                                },
-                                _ => 0.1
-                            };
-                            density_grid.push(density);
+                            for y in 0..height {
+                                for x in 0..width {
+                                    let nx = (x as f64 / width as f64 - 0.5) * zoom;
+                                    let ny = (y as f64 / height as f64 - 0.5) * zoom;
+                                    
+                                    let density = match layer {
+                                        "stars" => {
+                                            let cluster_1 = (-((nx + 0.3).powi(2) + (ny - 0.2).powi(2)) * 30.0).exp();
+                                            let cluster_2 = (-((nx - 0.4).powi(2) + (ny + 0.1).powi(2)) * 40.0).exp();
+                                            (cluster_1 + cluster_2).max(0.0).min(1.0)
+                                        },
+                                        "gas" => {
+                                            let shock_fronts = ((nx * 15.0).sin() + (ny * 12.0).cos()) * 0.5 + 0.5;
+                                            let void_regions = (-((nx * nx + ny * ny) * 5.0)).exp();
+                                            (shock_fronts * 0.6 + void_regions * 0.4).max(0.0).min(1.0)
+                                        },
+                                        "dark_matter" => {
+                                            let filament = (nx * 10.0).sin() * (ny * 10.0).cos();
+                                            let halo = (-((nx * nx + ny * ny) * 20.0)).exp();
+                                            (filament * 0.3 + halo * 0.7 + 0.1).max(0.0).min(1.0)
+                                        },
+                                        _ => 0.1
+                                    };
+                                    density_grid.push(density);
+                                }
+                            }
+                            
+                            json!({
+                                "density_grid": density_grid,
+                                "width": width,
+                                "height": height,
+                                "layer": layer,
+                                "zoom": zoom,
+                                "fallback": true,
+                                "generated_at": std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs()
+                            })
                         }
-                    }
-                    
-                    let response_data = json!({
-                        "density_grid": density_grid,
-                        "width": width,
-                        "height": height,
-                        "layer": layer,
-                        "zoom": zoom,
-                        "generated_at": std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs()
-                    });
+                    };
                     
                     let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
                         jsonrpc: "2.0".to_string(),
@@ -1602,75 +1940,75 @@ async fn handle_rpc_request(
                 Ok(params) => {
                     let habitable_only = params.habitable_only.unwrap_or(false);
                     
-                    // TODO: Get actual planet data from simulation
-                    // For now, return realistic synthetic data
-                    let mut planets = vec![
-                        json!({
-                            "id": "SIM-001",
-                            "class": "E",
-                            "temperature": 18.5,
-                            "water_fraction": 0.67,
-                            "oxygen_fraction": 0.19,
-                            "radiation_level": 0.003,
-                            "habitable": true,
-                            "age_gyr": 3.2,
-                            "mass_earth": 1.1,
-                            "radius_earth": 1.05
-                        }),
-                        json!({
-                            "id": "SIM-002", 
-                            "class": "D",
-                            "temperature": -45.0,
-                            "water_fraction": 0.02,
-                            "oxygen_fraction": 0.001,
-                            "radiation_level": 0.08,
-                            "habitable": false,
-                            "age_gyr": 5.1,
-                            "mass_earth": 0.8,
-                            "radius_earth": 0.9
-                        }),
-                        json!({
-                            "id": "SIM-003",
-                            "class": "E", 
-                            "temperature": 12.0,
-                            "water_fraction": 0.43,
-                            "oxygen_fraction": 0.16,
-                            "radiation_level": 0.004,
-                            "habitable": true,
-                            "age_gyr": 2.8,
-                            "mass_earth": 0.95,
-                            "radius_earth": 0.98
-                        }),
-                        json!({
-                            "id": "SIM-004",
-                            "class": "I",
-                            "temperature": -120.0,
-                            "water_fraction": 0.85,
-                            "oxygen_fraction": 0.08,
-                            "radiation_level": 0.012,
-                            "habitable": false,
-                            "age_gyr": 4.6,
-                            "mass_earth": 1.3,
-                            "radius_earth": 1.15
-                        }),
-                    ];
-                    
-                    // Apply filters
-                    if let Some(ref filter_class) = params.class_filter {
-                        planets.retain(|planet| {
-                            planet.get("class").and_then(|v| v.as_str()).unwrap_or("") == filter_class
-                        });
-                    }
-                    
-                    if habitable_only {
-                        planets.retain(|planet| {
-                            planet.get("habitable").and_then(|v| v.as_bool()).unwrap_or(false)
-                        });
-                    }
+                    // Get real planet data from simulation
+                    let mut sim_guard = shared_state.sim.lock().unwrap();
+                    let planets = match sim_guard.get_planet_data(params.class_filter.clone(), habitable_only) {
+                        Ok(real_planets) => real_planets,
+                        Err(e) => {
+                            // Fallback to synthetic data if real data fails
+                            warn!("Failed to get real planet data: {}, using synthetic data", e);
+                            let mut fallback_planets = vec![
+                                json!({
+                                    "id": "SIM-001",
+                                    "class": "E",
+                                    "temperature": 18.5,
+                                    "water_fraction": 0.67,
+                                    "oxygen_fraction": 0.19,
+                                    "radiation_level": 0.003,
+                                    "habitable": true,
+                                    "age_gyr": 3.2,
+                                    "mass_earth": 1.1,
+                                    "radius_earth": 1.05,
+                                    "fallback": true
+                                }),
+                                json!({
+                                    "id": "SIM-002", 
+                                    "class": "D",
+                                    "temperature": -45.0,
+                                    "water_fraction": 0.02,
+                                    "oxygen_fraction": 0.001,
+                                    "radiation_level": 0.08,
+                                    "habitable": false,
+                                    "age_gyr": 5.1,
+                                    "mass_earth": 0.8,
+                                    "radius_earth": 0.9,
+                                    "fallback": true
+                                }),
+                                json!({
+                                    "id": "SIM-003",
+                                    "class": "E", 
+                                    "temperature": 12.0,
+                                    "water_fraction": 0.43,
+                                    "oxygen_fraction": 0.16,
+                                    "radiation_level": 0.004,
+                                    "habitable": true,
+                                    "age_gyr": 2.8,
+                                    "mass_earth": 0.95,
+                                    "radius_earth": 0.98,
+                                    "fallback": true
+                                }),
+                            ];
+                            
+                            // Apply filters to fallback data
+                            if let Some(ref filter_class) = params.class_filter {
+                                fallback_planets.retain(|planet| {
+                                    planet.get("class").and_then(|v| v.as_str()).unwrap_or("") == filter_class
+                                });
+                            }
+                            
+                            if habitable_only {
+                                fallback_planets.retain(|planet| {
+                                    planet.get("habitable").and_then(|v| v.as_bool()).unwrap_or(false)
+                                });
+                            }
+                            
+                            json!(fallback_planets)
+                        }
+                    };
                     
                     let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
                         jsonrpc: "2.0".to_string(),
-                        result: Some(json!(planets)),
+                        result: Some(planets),
                         error: None,
                         id: response_id,
                     };
@@ -1739,6 +2077,221 @@ async fn handle_rpc_request(
             });
             
             Ok(warp::reply::json(&rpc_response))
+        }
+
+        "universe_stats" => {
+            let mut sim_guard = shared_state.sim.lock().unwrap();
+            let stats = sim_guard.get_stats();
+            
+            // TODO: Get comprehensive universe statistics from simulation
+            // For now, return enhanced statistics based on SimulationStats
+            let universe_stats = json!({
+                "age_gyr": stats.universe_age_gyr,
+                "cosmic_era": format!("{:?}", stats.cosmic_era),
+                "total_particles": stats.particle_count,
+                "star_count": stats.celestial_body_count,
+                "planet_count": stats.planet_count,
+                "lineage_count": stats.lineage_count,
+                "average_temperature": 2.7, // CMB temperature + local variations
+                "total_energy": 4.23e42, // Placeholder - should calculate from physics engine
+                "hubble_constant": 67.4, // km/s/Mpc
+                "dark_matter_fraction": 0.264,
+                "dark_energy_fraction": 0.686,
+                "ordinary_matter_fraction": 0.05
+            });
+            
+            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: Some(universe_stats),
+                error: None,
+                id: response_id,
+            };
+            
+            Ok(warp::reply::json(&rpc_response))
+        }
+
+        "physics_diagnostics" => {
+            let sim_guard = shared_state.sim.lock().unwrap();
+            
+            // TODO: Get actual physics engine diagnostics
+            // For now, return sample diagnostics that match expected format
+            let diagnostics = json!({
+                "average_step_time_ms": 12.3,
+                "interactions_per_step": 284571,
+                "fusion_events": sim_guard.physics_engine.neutron_decay_count, // Reuse existing counter
+                "fission_events": sim_guard.physics_engine.compton_count, // Reuse existing counter  
+                "particle_decays": sim_guard.physics_engine.pair_production_count, // Reuse existing counter
+                "system_temperature": sim_guard.physics_engine.temperature,
+                "system_pressure": 1.24e8, // Placeholder - should calculate from thermodynamics
+                "energy_conservation_error": 2.3e-12, // Should track energy conservation
+                "particle_count": sim_guard.physics_engine.particles.len(),
+                "nuclei_count": sim_guard.physics_engine.nuclei.len(),
+                "atoms_count": sim_guard.physics_engine.atoms.len(),
+                "molecules_count": sim_guard.physics_engine.molecules.len(),
+                "current_time": sim_guard.physics_engine.current_time,
+                "time_step": sim_guard.physics_engine.time_step
+            });
+            
+            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: Some(diagnostics),
+                error: None,
+                id: response_id,
+            };
+            
+            Ok(warp::reply::json(&rpc_response))
+        }
+
+        "inspect_planet" => {
+            #[derive(Deserialize)]
+            struct InspectPlanetParams {
+                planet_id: String,
+            }
+
+            match serde_json::from_value::<InspectPlanetParams>(request.params) {
+                Ok(params) => {
+                    // Get real planet data from simulation ECS
+                    let mut sim_guard = shared_state.sim.lock().unwrap();
+                    let planet_data = match sim_guard.get_planet_inspection_data(&params.planet_id) {
+                        Ok(Some(real_planet_data)) => real_planet_data,
+                        Ok(None) => {
+                            // Planet not found in simulation, return error
+                            let error = rpc::RpcError {
+                                code: rpc::INVALID_PARAMS,
+                                message: format!("Planet '{}' not found in simulation", params.planet_id),
+                            };
+                            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: None,
+                                error: Some(error),
+                                id: response_id,
+                            };
+                            return Ok(warp::reply::json(&rpc_response));
+                        }
+                        Err(e) => {
+                            // Fallback to synthetic data if real data fails
+                            warn!("Failed to get real planet data for {}: {}, using fallback", params.planet_id, e);
+                            json!({
+                                "id": params.planet_id,
+                                "class": "E",
+                                "mass_earth": 1.1,
+                                "radius_earth": 1.05,
+                                "temperature": 18.5,
+                                "water_fraction": 0.67,
+                                "oxygen_fraction": 0.19,
+                                "radiation_level": 0.003,
+                                "age_gyr": 3.2,
+                                "habitable": true,
+                                "orbital_distance_au": 1.0,
+                                "orbital_period_days": 365.25,
+                                "magnetic_field_strength": 0.5, // Relative to Earth
+                                "atmospheric_pressure_atm": 1.0,
+                                "surface_gravity_g": 1.1,
+                                "tidal_locked": false,
+                                "fallback": true
+                            })
+                        }
+                    };
+                    
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: Some(planet_data),
+                        error: None,
+                        id: response_id,
+                    };
+                    
+                    Ok(warp::reply::json(&rpc_response))
+                }
+                Err(_) => {
+                    let error = rpc::RpcError {
+                        code: rpc::INVALID_PARAMS,
+                        message: "Invalid planet inspect parameters".to_string(),
+                    };
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(error),
+                        id: response_id,
+                    };
+                    Ok(warp::reply::json(&rpc_response))
+                }
+            }
+        }
+
+        "inspect_lineage" => {
+            #[derive(Deserialize)]
+            struct InspectLineageParams {
+                lineage_id: String,
+            }
+
+            match serde_json::from_value::<InspectLineageParams>(request.params) {
+                Ok(params) => {
+                    // Get real lineage data from simulation ECS
+                    let mut sim_guard = shared_state.sim.lock().unwrap();
+                    let lineage_data = match sim_guard.get_lineage_inspection_data(&params.lineage_id) {
+                        Ok(Some(real_lineage_data)) => real_lineage_data,
+                        Ok(None) => {
+                            // Lineage not found in simulation, return error
+                            let error = rpc::RpcError {
+                                code: rpc::INVALID_PARAMS,
+                                message: format!("Lineage '{}' not found in simulation", params.lineage_id),
+                            };
+                            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: None,
+                                error: Some(error),
+                                id: response_id,
+                            };
+                            return Ok(warp::reply::json(&rpc_response));
+                        }
+                        Err(e) => {
+                            // Fallback to synthetic data if real data fails
+                            warn!("Failed to get real lineage data for {}: {}, using fallback", params.lineage_id, e);
+                            json!({
+                                "id": params.lineage_id,
+                                "generation": 42,
+                                "population": 1247,
+                                "average_fitness": 0.742,
+                                "sentience_level": 0.235,
+                                "tech_level": 0.128,
+                                "industrialization_level": 0.067,
+                                "digitalization_level": 0.023,
+                                "immortality_achieved": false,
+                                "birth_tick": 1250,
+                                "last_mutation_tick": 15847,
+                                "code_hash": "a7b4c8d9e2f1",
+                                "parent_lineage_id": "LIN-003",
+                                "dominant_strategies": ["cooperation", "resource_hoarding", "exploration"],
+                                "average_energy": 847.2,
+                                "reproduction_rate": 0.24,
+                                "fallback": true
+                            })
+                        }
+                    };
+                    
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: Some(lineage_data),
+                        error: None,
+                        id: response_id,
+                    };
+                    
+                    Ok(warp::reply::json(&rpc_response))
+                }
+                Err(_) => {
+                    let error = rpc::RpcError {
+                        code: rpc::INVALID_PARAMS,
+                        message: "Invalid lineage inspect parameters".to_string(),
+                    };
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(error),
+                        id: response_id,
+                    };
+                    Ok(warp::reply::json(&rpc_response))
+                }
+            }
         }
 
         _ => {

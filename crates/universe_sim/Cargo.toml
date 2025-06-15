@@ -8,6 +8,7 @@ physics_engine = { path = "../physics_engine" }
 bevy_ecs = { workspace = true }
 rkyv = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

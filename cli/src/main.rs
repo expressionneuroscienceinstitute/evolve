@@ -1108,17 +1108,25 @@ fn render_physics_diagnostics(diagnostics_data: &serde_json::Value) -> Result<()
     if let Some(interactions) = diagnostics_data.get("interactions_per_step").and_then(|v| v.as_u64()) {
         println!("  Interactions per step: {}", interactions);
     }
-    
     if let Some(fusion_events) = diagnostics_data.get("fusion_events").and_then(|v| v.as_u64()) {
-        println!("  Neutron decay events: {}", fusion_events);
+        println!("  Fusion events: {}", fusion_events);
     }
-    
     if let Some(fission_events) = diagnostics_data.get("fission_events").and_then(|v| v.as_u64()) {
-        println!("  Compton scattering events: {}", fission_events);
+        println!("  Fission events: {}", fission_events);
     }
-    
-    if let Some(decay_events) = diagnostics_data.get("particle_decays").and_then(|v| v.as_u64()) {
-        println!("  Pair production events: {}", decay_events);
+    if let Some(decay_events) = diagnostics_data.get("particle_decay_events").and_then(|v| v.as_u64()) {
+        println!("  Particle decay events: {}", decay_events);
+    }
+
+    println!("\n⚡️ Electromagnetic & Weak Events:");
+    if let Some(compton_events) = diagnostics_data.get("compton_scattering_events").and_then(|v| v.as_u64()) {
+        println!("  Compton scattering events: {}", compton_events);
+    }
+    if let Some(pair_events) = diagnostics_data.get("pair_production_events").and_then(|v| v.as_u64()) {
+        println!("  Pair production events: {}", pair_events);
+    }
+    if let Some(neutrino_events) = diagnostics_data.get("neutrino_scattering_events").and_then(|v| v.as_u64()) {
+        println!("  Neutrino scattering events: {}", neutrino_events);
     }
 
     // System state
@@ -1182,15 +1190,42 @@ fn render_physics_diagnostics(diagnostics_data: &serde_json::Value) -> Result<()
 
 fn render_sample_physics_diagnostics() {
     println!("=== PHYSICS ENGINE DIAGNOSTICS (SAMPLE DATA) ===");
-    println!("Average step time: 12.3 ms");
-    println!("Interactions per step: 284,571");
-    println!("Nuclear fusion events: 1,247");
-    println!("Nuclear fission events: 23");
-    println!("Particle decay events: 8,291");
-    println!("System temperature: 2,847.3 K");
-    println!("System pressure: 1.24e+8 Pa");
-    println!("Energy conservation error: 2.3e-12");
-    println!("\nNote: Connect to running simulation for real data"); 
+    println!("\n🚀 Performance Metrics:");
+    println!("  Average physics step time: 12.3 ms");
+    println!("  95th percentile step time: 25.1 ms");
+    println!("  Average universe tick time: 15.8 ms");
+
+    println!("\n⚛️  Nuclear Physics Events:");
+    println!("  Interactions per step: 284,571");
+    println!("  Fusion events: 1,247");
+    println!("  Fission events: 23");
+    println!("  Particle decay events: 8,291");
+
+    println!("\n⚡️ Electromagnetic & Weak Events:");
+    println!("  Compton scattering events: 150,432");
+    println!("  Pair production events: 12,345");
+    println!("  Neutrino scattering events: 112,233");
+
+    println!("\n🌡️  System State:");
+    println!("  System temperature: 2,847.3 K");
+    println!("  System pressure: 1.24e+8 Pa");
+    println!("  Energy conservation error: 2.3e-12");
+
+    println!("\n💾 Resource Usage:");
+    println!("  Memory usage: 512.4 MB");
+    println!("  CPU usage: 75.2%");
+    println!("  Allocation rate: 10.5 MB/s");
+
+    println!("\n🔍 Performance Status:");
+    println!("  ✅ No performance bottlenecks detected");
+
+    println!("\n🔬 Particle Inventory:");
+    println!("  Total particles: 1,234,567");
+    println!("  Atomic nuclei: 12,345");
+    println!("  Complete atoms: 6,789");
+    println!("  Molecules: 42");
+
+    println!("\nNote: Connect to a running simulation for real data.");
 }
 
 async fn cmd_inspect(target: InspectTarget) -> Result<()> {
@@ -2317,21 +2352,21 @@ async fn handle_rpc_request(
             let interactions_per_step = if performance_report.metrics.interaction_rates.stats.mean > 0.0 {
                 performance_report.metrics.interaction_rates.stats.mean as u64
             } else {
-                (physics.compton_count + physics.pair_production_count + physics.neutrino_scatter_count).min(10000)
+                (physics.compton_count + physics.pair_production_count + physics.neutrino_scatter_count
+               + physics.particle_decay_count + physics.fusion_count + physics.fission_count).min(10000)
             };
             
-            let system_pressure = if physics.volume > 0.0 {
-                physics.energy_density / 3.0
-            } else {
-                0.0
-            };
+            let system_pressure = physics.calculate_system_pressure();
             
             let diagnostics = json!({
                 "average_step_time_ms": average_step_time_ms,
                 "interactions_per_step": interactions_per_step,
-                "fusion_events": physics.neutron_decay_count,
-                "fission_events": physics.compton_count,
-                "particle_decays": physics.pair_production_count,
+                "compton_scattering_events": physics.compton_count,
+                "pair_production_events": physics.pair_production_count,
+                "neutrino_scattering_events": physics.neutrino_scatter_count,
+                "particle_decay_events": physics.particle_decay_count,
+                "fusion_events": physics.fusion_count,
+                "fission_events": physics.fission_count,
                 "system_temperature": physics.temperature,
                 "system_pressure": system_pressure,
                 "energy_conservation_error": 0.0,

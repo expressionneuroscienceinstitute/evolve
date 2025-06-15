@@ -30,6 +30,16 @@ impl Pressure {
     }
 }
 
+/// Represents density in kilograms per cubic meter.
+#[derive(Debug, Default)]
+pub struct Density(pub f64);
+
+impl Density {
+    pub fn as_kg_per_m3(&self) -> f64 {
+        self.0
+    }
+}
+
 /// Represents entropy in Joules per Kelvin.
 #[derive(Debug, Default)]
 pub struct Entropy(pub f64);
@@ -39,6 +49,7 @@ pub struct Entropy(pub f64);
 pub struct EmergenceMonitor {
     pub temperature: Temperature,
     pub pressure: Pressure,
+    pub density: Density,
 }
 
 impl EmergenceMonitor {
@@ -48,9 +59,10 @@ impl EmergenceMonitor {
     }
 
     /// Update all emergent properties from the states of the particles.
-    pub fn update(&mut self, states: &[PhysicsState]) -> Result<()> {
+    pub fn update(&mut self, states: &[PhysicsState], volume: f64) -> Result<()> {
         self.temperature = self.calculate_temperature(states);
-        self.pressure = self.calculate_pressure(states);
+        self.pressure = self.calculate_pressure(states, volume);
+        self.density = self.calculate_density(states, volume);
         // self.entropy = self.calculate_entropy(states);
         Ok(())
     }
@@ -66,17 +78,24 @@ impl EmergenceMonitor {
         Temperature(temperature)
     }
 
-    /// Calculate the pressure using the virial theorem.
-    fn calculate_pressure(&self, particles: &[PhysicsState]) -> Pressure {
-        let kinetic_energy: f64 = particles
-            .iter()
-            .map(|p| 0.5 * p.mass * p.velocity.norm_squared())
-            .sum();
-
-        // This is a simplified calculation. A full implementation would need to
-        // consider intermolecular forces.
-        let pressure = (2.0 / 3.0) * kinetic_energy;
+    /// Calculate the pressure using the ideal gas law for now.
+    fn calculate_pressure(&self, particles: &[PhysicsState], volume: f64) -> Pressure {
+        if volume == 0.0 {
+            return Pressure(0.0);
+        }
+        let num_particles = particles.len() as f64;
+        let temperature = self.calculate_temperature(particles).as_kelvin();
+        let pressure = num_particles * BOLTZMANN * temperature / volume;
         Pressure(pressure)
+    }
+
+    /// Calculate the total density of the particles.
+    fn calculate_density(&self, particles: &[PhysicsState], volume: f64) -> Density {
+        if volume == 0.0 {
+            return Density(0.0);
+        }
+        let total_mass: f64 = particles.iter().map(|p| p.mass).sum();
+        Density(total_mass / volume)
     }
 
     /// Calculate the entropy.
@@ -91,12 +110,13 @@ impl EmergenceMonitor {
 }
 
 /// Main function to update and log emergent properties.
-pub fn update_emergent_properties(monitor: &mut EmergenceMonitor, particles: &[PhysicsState], _volume: f64) -> Result<()> {
-    monitor.update(particles)?;
+pub fn update_emergent_properties(monitor: &mut EmergenceMonitor, particles: &[PhysicsState], volume: f64) -> Result<()> {
+    monitor.update(particles, volume)?;
     log::info!(
-        "Emergent Properties Updated: Temp={:.2} K, Pressure={:.2} Pa",
+        "Emergent Properties Updated: Temp={:.2} K, Pressure={:.2} Pa, Density={:.2} kg/m^3",
         monitor.temperature.as_kelvin(),
-        monitor.pressure.as_pascals()
+        monitor.pressure.as_pascals(),
+        monitor.density.as_kg_per_m3()
     );
     Ok(())
 }

@@ -202,6 +202,83 @@ impl Atom {
 
         Ok(())
     }
+
+    /// Estimates the atomic radius using the Bohr model radius of the outermost shell.
+    /// r_n = n^2 * a_0 / Z
+    /// where a_0 is the Bohr radius (~5.29e-11 m).
+    pub fn atomic_radius(&self) -> f64 {
+        const BOHR_RADIUS: f64 = 5.29177e-11; // meters
+        if let Some(outer_shell) = self.shells.last() {
+            if !outer_shell.electrons.is_empty() {
+                let n = outer_shell.quantum_number as f64;
+                let z = self.nucleus.protons as f64;
+                return n.powi(2) * BOHR_RADIUS / z;
+            }
+        }
+        // For a bare nucleus, return a default small radius.
+        BOHR_RADIUS / (self.nucleus.protons as f64)
+    }
+}
+
+/// Calculates the photoionization cross-section for a hydrogen-like atom.
+///
+/// This uses a simplified model, valid for photon energies above the ionization threshold.
+/// The cross-section is given by σ(E) ≈ σ_L * (I/E)^3, where σ_L is the cross-section
+/// at the Lyman limit (ionization threshold).
+///
+/// # Arguments
+/// * `atomic_number` - The atomic number (Z) of the nucleus.
+/// * `photon_energy_ev` - The energy of the incoming photon in electron-volts (eV).
+///
+/// # Returns
+/// The photoionization cross-section in square meters (m^2), or 0 if the photon energy
+/// is below the ionization threshold.
+pub fn photoionization_cross_section(atomic_number: u32, photon_energy_ev: f64) -> f64 {
+    // Ionization energy for a hydrogen-like atom: I = 13.6 eV * Z^2
+    let ionization_energy = RYDBERG_ENERGY * (atomic_number as f64).powi(2);
+
+    if photon_energy_ev < ionization_energy {
+        return 0.0; // Photon energy is not sufficient to ionize the atom.
+    }
+
+    // Cross-section at the ionization threshold for hydrogen (Z=1).
+    // From NIST data, this is approximately 6.3e-18 cm^2.
+    const SIGMA_L_H: f64 = 6.3e-18; // cm^2
+
+    // The cross-section for a hydrogen-like ion scales as Z^-2.
+    let sigma_l = SIGMA_L_H / (atomic_number as f64).powi(2);
+
+    // Calculate the cross-section using the approximate formula σ ~ (I/E)^3
+    let cross_section_cm2 = sigma_l * (ionization_energy / photon_energy_ev).powi(3);
+
+    // Convert from cm^2 to m^2 (1 m^2 = 10^4 cm^2)
+    cross_section_cm2 / 1.0e4
+}
+
+/// Calculates the radiative recombination rate for hydrogen.
+///
+/// This rate represents the number of recombination events per unit volume per second.
+/// The formula used is Rate = α(T) * n_e * n_p, where α(T) is the recombination
+/// coefficient, which is temperature-dependent.
+///
+/// # Arguments
+/// * `electron_density` - Number of electrons per cubic meter (m^-3).
+/// * `ion_density` - Number of ions (protons) per cubic meter (m^-3).
+/// * `temperature` - Gas temperature in Kelvin.
+///
+/// # Returns
+/// The recombination rate in events per cubic meter per second.
+pub fn radiative_recombination_rate(electron_density: f64, ion_density: f64, temperature: f64) -> f64 {
+    // Recombination coefficient α(T) for hydrogen.
+    // This is an approximation for Case B recombination, valid for T ~ 10^4 K.
+    // α_B(T) ≈ 2.59e-13 * (T / 10^4 K)^-0.7 cm^3 s^-1
+    let alpha_cm3_s = 2.59e-13 * (temperature / 1.0e4).powf(-0.7);
+    
+    // Convert α from cm^3 s^-1 to m^3 s^-1 (1 m^3 = 10^6 cm^3)
+    let alpha_m3_s = alpha_cm3_s / 1.0e6;
+
+    // Rate = α * n_e * n_p
+    alpha_m3_s * electron_density * ion_density
 }
 
 /// Validates the atomic physics implementation by computing a diagnostic summary.
@@ -217,6 +294,14 @@ pub fn compute_atomic_properties(atom: &Atom) -> Result<()> {
     }
     
     Ok(())
+}
+
+/// Calculates the geometric cross-section for an elastic collision between two atoms.
+/// This is a simple approximation based on the sum of their atomic radii.
+pub fn elastic_collision_cross_section(atom1: &Atom, atom2: &Atom) -> f64 {
+    let r1 = atom1.atomic_radius();
+    let r2 = atom2.atomic_radius();
+    std::f64::consts::PI * (r1 + r2).powi(2)
 }
 
 #[cfg(test)]
@@ -368,54 +453,81 @@ mod tests {
     
     #[test]
     fn test_photoionization_cross_sections() {
-        // Test that ionization cross-sections are reasonable
-        let nucleus = Nucleus::new(1, 1);
-        let atom = Atom::new(nucleus);
+        // Test photoionization cross-section for hydrogen.
+        // The threshold energy is ~13.6 eV.
+        let h_ionization_energy = 13.6;
+
+        // At threshold, the cross-section should be ~6.3e-22 m^2.
+        let cs_at_threshold = photoionization_cross_section(1, h_ionization_energy);
+        assert_relative_eq!(cs_at_threshold, 6.3e-22, epsilon = 1e-23);
+
+        // For a photon with twice the ionization energy, the cross-section should be 1/8.
+        let cs_at_2x = photoionization_cross_section(1, h_ionization_energy * 2.0);
+        assert_relative_eq!(cs_at_2x, 6.3e-22 / 8.0, epsilon = 1e-24);
         
-        // Ground state binding energy
-        let binding_energy = atom.shells[0].energy_level.abs();
-        
-        // Photoionization threshold should be at binding energy
-        assert!(binding_energy > 10.0, "Hydrogen binding energy should be ~13.6 eV");
-        assert!(binding_energy < 15.0, "Hydrogen binding energy should be ~13.6 eV");
-        
-        // Cross-section should scale appropriately with atomic number
-        let helium_nucleus = Nucleus::new(2, 2);
-        let helium_atom = Atom::new(helium_nucleus);
-        let helium_binding = helium_atom.shells[0].energy_level.abs();
-        
-        assert!(helium_binding > binding_energy, "Helium should be more tightly bound than hydrogen");
+        // Below threshold, cross-section should be zero.
+        let cs_below_threshold = photoionization_cross_section(1, h_ionization_energy - 1.0);
+        assert_eq!(cs_below_threshold, 0.0);
+
+        // Test for Helium (Z=2). Ionization energy is 4x hydrogen's.
+        // Threshold cross-section should be sigma_L / Z^2
+        let he_ionization_energy = 13.6 * 4.0;
+        let cs_he_threshold = photoionization_cross_section(2, he_ionization_energy);
+        assert_relative_eq!(cs_he_threshold, 6.3e-22 / 4.0, epsilon = 1e-24);
     }
     
     #[test]
     fn test_recombination_processes() {
-        let nucleus = Nucleus::new(1, 1);
-        let mut atom = Atom::new(nucleus);
-        
-        // Ionize the atom first
-        atom.ionize().expect("Should ionize");
-        assert_eq!(atom.charge(), 1, "Should be ionized");
-        
-        // Simulate recombination by adding electron back
-        if !atom.shells.is_empty() && !atom.shells[0].is_full() {
-            atom.shells[0].add_electron(Electron::default()).unwrap();
-            assert_eq!(atom.charge(), 0, "Should be neutral after recombination");
-        }
+        // Test radiative recombination rate for typical astrophysical conditions.
+        let electron_density_m3 = 1.0e6; // 1 electron per cm^3
+        let ion_density_m3 = 1.0e6;      // 1 ion per cm^3
+        let temperature_k = 1.0e4;       // 10,000 K
+
+        let rate = radiative_recombination_rate(electron_density_m3, ion_density_m3, temperature_k);
+
+        // At 10^4 K, α ≈ 2.59e-13 cm^3/s = 2.59e-19 m^3/s
+        // Rate = 2.59e-19 * 1e6 * 1e6 = 2.59e-7 events / m^3 / s
+        let expected_alpha = 2.59e-19;
+        let expected_rate = expected_alpha * electron_density_m3 * ion_density_m3;
+
+        assert_relative_eq!(rate, expected_rate, epsilon = 1e-9);
+
+        // Test temperature dependence (rate should increase as T decreases)
+        let rate_at_lower_temp = radiative_recombination_rate(electron_density_m3, ion_density_m3, temperature_k / 2.0);
+        assert!(rate_at_lower_temp > rate, "Recombination rate should increase at lower temperatures");
     }
     
     #[test]
     fn test_atomic_collision_cross_sections() {
-        // Test elastic collision cross-sections
-        let hydrogen = Atom::new(Nucleus::new(1, 1));
-        let helium = Atom::new(Nucleus::new(2, 2));
+        // Test elastic collision cross-sections using a geometric model.
+        let hydrogen = Atom::new(Nucleus::new(1, 0)); // Z=1
+        let helium = Atom::new(Nucleus::new(2, 2));   // Z=2
+
+        // Radii: r_H ~ 1^2 * a_0 / 1 = a_0
+        //        r_He ~ 1^2 * a_0 / 2 = 0.5 * a_0
+        let h_radius = hydrogen.atomic_radius();
+        let he_radius = helium.atomic_radius();
+
+        assert_relative_eq!(h_radius, 5.29177e-11, epsilon = 1e-15);
+        assert_relative_eq!(he_radius, 5.29177e-11 / 2.0, epsilon = 1e-15);
+
+        // Cross section for H-H collision
+        let cs_hh = elastic_collision_cross_section(&hydrogen, &hydrogen);
+        let expected_cs_hh = std::f64::consts::PI * (h_radius * 2.0).powi(2);
+        assert_relative_eq!(cs_hh, expected_cs_hh, epsilon = 1e-25);
+
+        // Cross section for H-He collision
+        let cs_h_he = elastic_collision_cross_section(&hydrogen, &helium);
+        let expected_cs_h_he = std::f64::consts::PI * (h_radius + he_radius).powi(2);
+        assert_relative_eq!(cs_h_he, expected_cs_h_he, epsilon = 1e-25);
+
+        // A larger atom (e.g. Lithium) should have a larger cross-section.
+        let lithium = Atom::new(Nucleus::new(3, 4)); // Z=3, outer shell n=2
+        let li_radius = lithium.atomic_radius();
+        assert!(li_radius > h_radius, "Lithium should be larger than hydrogen");
         
-        // Cross-section should scale with atomic size (roughly proportional to Z)
-        // This test verifies the relative scaling is reasonable
-        let h_size = hydrogen.shells[0].energy_level.abs(); // Rough measure of size
-        let he_size = helium.shells[0].energy_level.abs();
-        
-        // Helium should be smaller (more tightly bound) than hydrogen
-        assert!(he_size > h_size, "Helium electrons should be more tightly bound");
+        let cs_h_li = elastic_collision_cross_section(&hydrogen, &lithium);
+        assert!(cs_h_li > cs_h_he, "H-Li cross section should be larger than H-He");
     }
     
     #[test]

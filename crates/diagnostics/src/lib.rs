@@ -7,7 +7,7 @@ use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
-use sysinfo::System;
+use sysinfo::{System, Networks, Disks, Components};
 
 /// Main diagnostics system for monitoring simulation performance
 #[derive(Debug)]
@@ -22,12 +22,20 @@ pub struct DiagnosticsSystem {
     pub system_monitor: SystemMonitor,
     /// System information interface
     system_info: System,
+    /// Network interfaces
+    networks: Networks,
+    /// Disks
+    disks: Disks,
+    /// Components (e.g., temperature sensors)
+    components: Components,
     /// Metric collection enabled flag
     pub enabled: bool,
     /// Collection interval in milliseconds
     pub collection_interval_ms: u64,
     /// Last collection time
     last_collection: Instant,
+    /// Previous total network bytes (rx + tx) recorded, for bandwidth calculations
+    prev_network_bytes: u64,
 }
 
 /// Real-time performance metrics
@@ -221,18 +229,30 @@ pub struct SystemLoad {
 impl DiagnosticsSystem {
     /// Create a new diagnostics system
     pub fn new() -> Self {
-        let mut system_info = System::new_all();
-        system_info.refresh_all();
-        
+        let system_info = System::new_all();
+        let networks = Networks::new_with_refreshed_list();
+        let disks = Disks::new_with_refreshed_list();
+        let components = Components::new_with_refreshed_list();
+
+        // Calculate initial total network bytes (received + transmitted) across all interfaces
+        let initial_network_bytes: u64 = networks
+            .iter()
+            .map(|(_, n)| n.received() + n.transmitted())
+            .sum();
+
         Self {
             metrics: PerformanceMetrics::new(),
             memory_monitor: MemoryMonitor::new(),
             bottleneck_detector: BottleneckDetector::new(),
             system_monitor: SystemMonitor::new(),
             system_info,
+            networks,
+            disks,
+            components,
             enabled: true,
             collection_interval_ms: 1000, // 1 second
             last_collection: Instant::now(),
+            prev_network_bytes: initial_network_bytes,
         }
     }
     
@@ -432,23 +452,54 @@ impl DiagnosticsSystem {
     
     /// Get current disk usage percentage (real implementation)
     fn get_disk_usage(&self) -> f64 {
-        // Simplified implementation for now - just return a reasonable default
-        // In sysinfo v0.30, disk usage is more complex to calculate
-        50.0 // 50% usage as a reasonable default
+        let total_disk_space = self.disks.iter().map(|disk| disk.total_space()).sum::<u64>();
+        let available_disk_space = self.disks.iter().map(|disk| disk.available_space()).sum::<u64>();
+
+        if total_disk_space == 0 {
+            0.0
+        } else {
+            let used_space = total_disk_space - available_disk_space;
+            (used_space as f64 / total_disk_space as f64) * 100.0
+        }
     }
     
-    /// Get current network bandwidth usage (real implementation)
-    fn get_network_bandwidth(&self) -> f64 {
-        // Simplified implementation for now
-        // In sysinfo v0.30, network usage tracking is different
-        0.0 // No active network usage tracking
+    /// Retrieves the current network bandwidth usage (bytes per second).
+    /// This calculates the difference in total network bytes since the last call.
+    fn get_network_bandwidth(&mut self) -> f64 {
+        self.networks.refresh_list(); // Refresh networks to get current stats
+        let current_total: u64 = self
+            .networks
+            .iter()
+            .map(|(_, n)| n.received() + n.transmitted())
+            .sum();
+
+        let bandwidth = if self.prev_network_bytes > 0 {
+            (current_total - self.prev_network_bytes) as f64 / (self.collection_interval_ms as f64 / 1000.0)
+        } else {
+            0.0
+        };
+        self.prev_network_bytes = current_total;
+        bandwidth
     }
     
-    /// Get system temperature (real implementation)
-    fn get_system_temperature(&self) -> f64 {
-        // Simplified implementation for now
-        // Temperature monitoring varies significantly by platform
-        25.0 // Room temperature default
+    /// Retrieves the average system temperature from available sensors.
+    /// Returns 25.0 degrees Celsius if no sensors are found.
+    fn get_system_temperature(&mut self) -> f64 {
+        self.components.refresh_list(); // Refresh components to get current temperature readings
+        let mut total_temp: f64 = 0.0;
+        let mut count = 0;
+        for component in self.components.iter() {
+            let temp: f64 = component.temperature() as f64;
+            if temp > 0.0 { // Only consider positive temperatures
+                total_temp += temp;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            total_temp / count as f64
+        } else {
+            25.0 // Default to 25 degrees Celsius if no temperature sensors are found
+        }
     }
 }
 

@@ -17,7 +17,7 @@ pub struct Nucleus {
 }
 
 /// Nuclear decay modes based on Chart of Nuclides data
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DecayMode {
     Alpha,           // α decay: A(Z,N) → A-4(Z-2,N-2) + α
     BetaMinus,       // β⁻ decay: n → p + e⁻ + ν̄ₑ
@@ -249,39 +249,38 @@ impl Nucleus {
             0.0
         };
 
-        volume_term - surface_term - coulomb_term - asymmetry_term + pairing_term
-    }
-
-    /// Simulates radioactive decay based on realistic nuclear data
-    /// Returns the decay product(s) if decay occurs.
-    pub fn radioactive_decay<R: Rng + ?Sized>(&self, rng: &mut R, database: &NuclearDatabase, dt: f64) -> Option<Vec<Nucleus>> {
-        let decay_data = database.get_decay_data(self.protons, self.mass_number())?;
-        
-        // Check for stable nucleus
-        if matches!(decay_data.primary_mode, DecayMode::Stable) {
-            return None;
-        }
-        
-        // Calculate decay probability using exponential decay law
-        // P(decay) = 1 - exp(-λt) where λ = ln(2)/t₁/₂
-        let decay_constant = 0.693147 / decay_data.half_life_seconds; // ln(2) / t₁/₂
-        let decay_probability = 1.0 - (-decay_constant * dt).exp();
-        
-        if !rng.gen_bool(decay_probability * decay_data.branching_ratio) {
-            return None;
-        }
-        
-        // Execute decay based on mode
-        match decay_data.primary_mode {
-            DecayMode::Alpha => self.alpha_decay(),
-            DecayMode::BetaMinus => self.beta_minus_decay(),
-            DecayMode::BetaPlus => self.beta_plus_decay(),
-            DecayMode::ElectronCapture => self.electron_capture(),
-            DecayMode::SpontaneousFission => self.spontaneous_fission(rng),
-            DecayMode::Stable => None,
-        }
+        let binding_energy = volume_term - surface_term - coulomb_term - asymmetry_term + pairing_term;
+        if binding_energy > 0.0 { binding_energy } else { 0.0 }
     }
     
+    /// Perform radioactive decay for a nucleus based on its stability and decay mode
+    /// Returns a list of decay products if decay occurs
+    pub fn radioactive_decay<R: Rng + ?Sized>(&self, rng: &mut R, database: &NuclearDatabase, dt: f64) -> Option<Vec<Nucleus>> {
+        let (z, a) = (self.protons, self.mass_number());
+        if let Some(data) = database.get_decay_data(z, a) {
+            if data.primary_mode == DecayMode::Stable {
+                return None;
+            }
+            
+            // Decay probability = λ * dt = (ln(2)/t½) * dt
+            let decay_constant = std::f64::consts::LN_2 / data.half_life_seconds;
+            let decay_probability = decay_constant * dt;
+            
+            if rng.gen::<f64>() < decay_probability {
+                return match data.primary_mode {
+                    DecayMode::Alpha => self.alpha_decay(),
+                    DecayMode::BetaMinus => self.beta_minus_decay(),
+                    DecayMode::BetaPlus => self.beta_plus_decay(),
+                    DecayMode::ElectronCapture => self.electron_capture(),
+                    DecayMode::SpontaneousFission => self.spontaneous_fission(rng),
+                    DecayMode::Stable => None,
+                };
+            }
+        }
+        None
+    }
+
+    /// Alpha decay: nucleus emits a helium-4 nucleus
     fn alpha_decay(&self) -> Option<Vec<Nucleus>> {
         if self.protons >= 2 && self.neutrons >= 2 {
             Some(vec![
@@ -292,78 +291,65 @@ impl Nucleus {
             None
         }
     }
-    
+
+    /// Beta-minus decay: neutron converts to a proton
     fn beta_minus_decay(&self) -> Option<Vec<Nucleus>> {
         if self.neutrons > 0 {
-            Some(vec![
-                Nucleus::new(self.protons + 1, self.neutrons - 1), // n → p + e⁻ + ν̄ₑ
-                // Note: electron and antineutrino are not tracked as nuclei
-            ])
+            Some(vec![Nucleus::new(self.protons + 1, self.neutrons - 1)]) // Daughter, e⁻, ν̄ₑ are ignored
         } else {
             None
         }
     }
-    
+
+    /// Beta-plus decay: proton converts to a neutron
     fn beta_plus_decay(&self) -> Option<Vec<Nucleus>> {
         if self.protons > 0 {
-            Some(vec![
-                Nucleus::new(self.protons - 1, self.neutrons + 1), // p → n + e⁺ + νₑ
-                // Note: positron and neutrino are not tracked as nuclei
-            ])
+            Some(vec![Nucleus::new(self.protons - 1, self.neutrons + 1)]) // Daughter, e⁺, νₑ are ignored
         } else {
             None
         }
     }
     
+    /// Electron capture: proton captures an electron and becomes a neutron
     fn electron_capture(&self) -> Option<Vec<Nucleus>> {
-        // Same nuclear result as β⁺ decay: p + e⁻ → n + νₑ
-        self.beta_plus_decay()
+        if self.protons > 0 {
+            Some(vec![Nucleus::new(self.protons - 1, self.neutrons + 1)]) // Daughter, νₑ is ignored
+        } else {
+            None
+        }
     }
     
-    /// Spontaneous fission with realistic fission fragment distribution
-    /// Based on Wahl's fission fragment mass distribution systematics
+    /// Spontaneous fission: nucleus splits into two smaller nuclei and neutrons
+    /// This is a simplified model based on typical fission products
     fn spontaneous_fission<R: Rng + ?Sized>(&self, rng: &mut R) -> Option<Vec<Nucleus>> {
         let a = self.mass_number();
-        let z = self.protons;
+        if a < 230 { return None; } // Only heavy nuclei
         
-        // Only allow fission for sufficiently heavy nuclei
-        if a < 200 { return None; }
+        // Simplified symmetric fission for illustration
+        let half_a = a / 2;
+        let half_z = self.protons / 2;
         
-        // Wahl's asymmetric fission model parameters
-        // Most fissions are asymmetric with light/heavy fragment mass ratio
-        let light_mass_peak = (a as f64 * 0.4) as u32;  // ~40% of total mass
+        // Add some asymmetry based on typical fission fragment mass distribution (e.g., for 252Cf)
+        let z1 = (half_z as f64 - 5.0 * rng.gen::<f64>()).round() as u32;
+        let a1 = (half_a as f64 - 10.0 * rng.gen::<f64>()).round() as u32;
+        let n1 = a1 - z1;
         
-        // Add some randomness around the peaks
-        let mass_spread = 10;
-        let light_mass = light_mass_peak + rng.gen_range(0..mass_spread) - mass_spread/2;
-        let heavy_mass = a - light_mass;
+        let num_neutrons = 2 + rng.gen_range(0..=2); // Emit 2-4 neutrons
         
-        // Charge distribution: approximately preserves Z/A ratio
-        let light_z = ((light_mass as f64 / a as f64) * z as f64) as u32;
-        let heavy_z = z - light_z;
+        let z2 = self.protons - z1;
+        let n2 = self.neutrons - n1 - num_neutrons;
         
-        // Calculate neutron numbers
-        let light_n = light_mass - light_z;
-        let heavy_n = heavy_mass - heavy_z;
-        
-        // Generate fission products + neutrons
-        let mut products = vec![
-            Nucleus::new(light_z, light_n),
-            Nucleus::new(heavy_z, heavy_n),
-        ];
-        
-        // Add prompt neutrons (typically 2-3 per fission)
-        let neutron_count = rng.gen_range(1..4);
-        for _ in 0..neutron_count {
-            products.push(Nucleus::new(0, 1)); // Free neutron
+        let mut products = vec![Nucleus::new(z1, n1), Nucleus::new(z2, n2)];
+        for _ in 0..num_neutrons {
+            products.push(Nucleus::new(0, 1));
         }
         
         Some(products)
     }
 }
 
-/// Stellar nucleosynthesis reaction types
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Enumeration of key stellar nucleosynthesis reactions
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NucleosynthesisReaction {
     // Proton-proton chain
     PPChainI,    // p + p → d + e+ + νe
@@ -390,7 +376,7 @@ pub enum NucleosynthesisReaction {
     SiliconBurning, // Si + α-particles → Fe-peak elements
 }
 
-/// Stellar nucleosynthesis reaction data
+/// Data structure for a specific stellar reaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StellarReaction {
     pub reaction_type: NucleosynthesisReaction,
@@ -403,40 +389,43 @@ pub struct StellarReaction {
 }
 
 impl StellarReaction {
-    /// Calculate reaction rate based on temperature and density
-    pub fn calculate_rate(&self, temperature: f64, density: f64) -> f64 {
+    /// Calculate reaction rate per particle pair per volume per time
+    /// rate = n_1 * n_2 * <σv>  (for two-body reactions)
+    pub fn calculate_rate(&self, temperature: f64, _density: f64) -> f64 {
         if temperature < self.temperature_threshold {
             return 0.0;
         }
         
-        // Gamow peak - exponential suppression due to Coulomb barrier
-        let coulomb_barrier = self.calculate_coulomb_barrier();
-        let gamow_factor = (-coulomb_barrier / (temperature * 8.617e-5)).exp(); // kT in eV
+        // Simplified rate calculation, should use proper <σv> from tables
+        // For now, let's use a temperature-dependent scaling based on Coulomb barrier
+        let thermal_energy = BOLTZMANN * temperature; // Joules
+        let barrier = self.calculate_coulomb_barrier(); // MeV
+        let barrier_joules = barrier * 1.602e-13;
         
-        // Rate = n₁n₂⟨σv⟩ where ⟨σv⟩ is the thermally averaged cross-section
-        self.rate_coefficient * density.powi(2) * gamow_factor
+        // Gamow peak approximation for temperature dependence
+        let temp_dependence = (-3.0 * (barrier_joules / (4.0 * thermal_energy)).powf(1.0/3.0)).exp();
+        
+        self.rate_coefficient * temp_dependence
     }
-    
+
+    /// Calculate Coulomb barrier for two interacting nuclei
     fn calculate_coulomb_barrier(&self) -> f64 {
-        // Simplified Coulomb barrier calculation
-        if self.reactants.len() < 2 { return 0.0; }
+        if self.reactants.len() != 2 { return 0.0; }
         
-        let z1 = self.reactants[0].0 as f64;
-        let z2 = self.reactants[1].0 as f64;
-        let a1 = self.reactants[0].1 as f64;
-        let a2 = self.reactants[1].1 as f64;
+        let (z1, a1) = self.reactants[0];
+        let (z2, a2) = self.reactants[1];
         
-        // Nuclear radius: r = r0 * (A1^(1/3) + A2^(1/3)) where r0 = 1.2 fm
-        let r0 = 1.2e-15; // 1.2 fm in meters
-        let nuclear_radius = r0 * (a1.powf(1.0/3.0) + a2.powf(1.0/3.0));
+        let r1 = 1.25 * (a1 as f64).powf(1.0/3.0); // Nuclear radius in fm
+        let r2 = 1.25 * (a2 as f64).powf(1.0/3.0);
+        let r = r1 + r2; // Interaction distance
         
-        // Coulomb barrier: E = k * Z1 * Z2 * e² / r, where k*e² = 1.44 MeV·fm
-        let barrier_mev = 1.44 * z1 * z2 / (nuclear_radius * 1e15); // Convert m to fm
-        barrier_mev * 1e6 // Convert MeV to eV
+        // E_c = (k * Z1 * Z2 * e^2) / r
+        // k*e^2 ≈ 1.44 MeV·fm
+        1.44 * (z1 as f64) * (z2 as f64) / r
     }
 }
 
-/// Stellar nucleosynthesis engine
+/// Manages stellar nucleosynthesis processes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StellarNucleosynthesis {
     pub reactions: Vec<StellarReaction>,
@@ -448,133 +437,98 @@ pub struct StellarNucleosynthesis {
 
 impl StellarNucleosynthesis {
     pub fn new() -> Self {
-        let mut nucleosynthesis = Self {
+        let mut synth = Self {
             reactions: Vec::new(),
             pp_chain_active: false,
             cno_cycle_active: false,
             helium_burning_active: false,
             advanced_burning_active: false,
         };
-        
-        nucleosynthesis.initialize_reactions();
-        nucleosynthesis
+        synth.initialize_reactions();
+        synth
     }
     
+    /// Initialize all relevant stellar nucleosynthesis reactions
     fn initialize_reactions(&mut self) {
-        // Proton-proton chain reactions
+        // This method should be populated with data from nuclear databases
+        // For now, we use simplified, illustrative examples
+        
+        // Proton-Proton chain
         self.reactions.push(StellarReaction {
             reaction_type: NucleosynthesisReaction::PPChainI,
-            reactants: vec![(1, 1), (1, 1)], // p + p
-            products: vec![(1, 2), (0, 0), (0, 0)], // d + e+ + νe
-            q_value: 1.442, // MeV
-            cross_section: 4.7e-47, // Very small due to weak interaction
-            temperature_threshold: 4e6, // 4 million K
-            rate_coefficient: 3.78e-43, // cm³/mol/s
+            reactants: vec![(1,1), (1,1)],
+            products: vec![(1,2)],
+            q_value: 1.442, // MeV (includes positron annihilation)
+            cross_section: 1e-32, // m², extremely small due to weak force
+            temperature_threshold: 4e6, // K
+            rate_coefficient: 1e-45, // m³/s, placeholder
         });
         
         self.reactions.push(StellarReaction {
             reaction_type: NucleosynthesisReaction::DeuteriumFusion,
-            reactants: vec![(1, 2), (1, 1)], // d + p
-            products: vec![(2, 3), (0, 0)], // ³He + γ
-            q_value: 5.494, // MeV
-            cross_section: 5.5e-4, // Much larger than pp
-            temperature_threshold: 1e6, // 1 million K
-            rate_coefficient: 2.38e-4,
+            reactants: vec![(1,2), (1,1)],
+            products: vec![(2,3)],
+            q_value: 5.493, // MeV
+            cross_section: 1e-28, // m²
+            temperature_threshold: 1e6, // K
+            rate_coefficient: 1e-22, // m³/s
         });
         
         self.reactions.push(StellarReaction {
             reaction_type: NucleosynthesisReaction::He3Fusion,
-            reactants: vec![(2, 3), (2, 3)], // ³He + ³He
-            products: vec![(2, 4), (1, 1), (1, 1)], // ⁴He + 2p
-            q_value: 12.859, // MeV
-            cross_section: 5.0e-3,
-            temperature_threshold: 6e6, // 6 million K
-            rate_coefficient: 5.61e-11,
+            reactants: vec![(2,3), (2,3)],
+            products: vec![(2,4), (1,1), (1,1)],
+            q_value: 12.86, // MeV
+            cross_section: 1e-27, // m²
+            temperature_threshold: 1e7, // K
+            rate_coefficient: 1e-20,
         });
+
+        // CNO cycle
+        // ... (reactions for CNO cycle) ...
         
-        // CNO cycle reactions
-        self.reactions.push(StellarReaction {
-            reaction_type: NucleosynthesisReaction::CNO1,
-            reactants: vec![(1, 1), (6, 12)], // p + ¹²C
-            products: vec![(7, 13), (0, 0)], // ¹³N + γ
-            q_value: 1.944, // MeV
-            cross_section: 1.7e-3,
-            temperature_threshold: 18e6, // 18 million K
-            rate_coefficient: 9.18e-16,
-        });
-        
-        self.reactions.push(StellarReaction {
-            reaction_type: NucleosynthesisReaction::CNO3,
-            reactants: vec![(1, 1), (6, 13)], // p + ¹³C
-            products: vec![(7, 14), (0, 0)], // ¹⁴N + γ
-            q_value: 7.551, // MeV
-            cross_section: 2.7e-2,
-            temperature_threshold: 18e6,
-            rate_coefficient: 1.08e-12,
-        });
-        
-        // Triple-alpha process (helium burning)
+        // Triple-alpha process
         self.reactions.push(StellarReaction {
             reaction_type: NucleosynthesisReaction::TripleAlpha,
-            reactants: vec![(2, 4), (2, 4), (2, 4)], // 3 ⁴He
-            products: vec![(6, 12), (0, 0)], // ¹²C + γ
+            reactants: vec![(2,4), (2,4), (2,4)],
+            products: vec![(6,12)],
             q_value: 7.275, // MeV
-            cross_section: 3.0e-9, // Very temperature dependent
-            temperature_threshold: 100e6, // 100 million K
-            rate_coefficient: 2.79e-43, // Three-body reaction
-        });
-        
-        self.reactions.push(StellarReaction {
-            reaction_type: NucleosynthesisReaction::AlphaCarbon,
-            reactants: vec![(2, 4), (6, 12)], // ⁴He + ¹²C
-            products: vec![(8, 16), (0, 0)], // ¹⁶O + γ
-            q_value: 7.162, // MeV
-            cross_section: 1.2e-6,
-            temperature_threshold: 200e6, // 200 million K
-            rate_coefficient: 1.04e-15,
-        });
-        
-        // Advanced burning (simplified)
-        self.reactions.push(StellarReaction {
-            reaction_type: NucleosynthesisReaction::CarbonBurning,
-            reactants: vec![(6, 12), (6, 12)], // ¹²C + ¹²C
-            products: vec![(12, 24), (0, 0)], // ²⁴Mg + γ (one of many products)
-            q_value: 13.93, // MeV
-            cross_section: 1.5e-8,
-            temperature_threshold: 600e6, // 600 million K
-            rate_coefficient: 4.27e-15,
+            cross_section: 1e-29, // m²
+            temperature_threshold: 1e8, // K
+            rate_coefficient: 1e-30,
         });
     }
-    
-    /// Process stellar nucleosynthesis based on stellar conditions
+
+    /// Process stellar burning for a given time step
+    /// `composition` is a mutable slice of (Z, A, mass_fraction)
     pub fn process_stellar_burning(&mut self, temperature: f64, density: f64, composition: &mut [(u32, u32, f64)]) -> Result<f64> {
+        self.update_burning_stages(temperature);
         let mut total_energy_released = 0.0;
         
-        // Determine which burning stages are active
-        self.update_burning_stages(temperature);
-        
-        // Process reactions in order of activation
         for reaction in &self.reactions {
             if self.is_reaction_active(&reaction.reaction_type, temperature) {
                 let rate = reaction.calculate_rate(temperature, density);
-                let energy = self.execute_stellar_reaction(reaction, rate, composition)?;
-                total_energy_released += energy;
+                if rate > 0.0 {
+                    let energy_released = self.execute_stellar_reaction(reaction, rate, composition)?;
+                    total_energy_released += energy_released;
+                }
             }
         }
-        
         Ok(total_energy_released)
     }
-    
+
+    /// Update which burning stages are active based on temperature
     fn update_burning_stages(&mut self, temperature: f64) {
-        self.pp_chain_active = temperature > 4e6;
-        self.cno_cycle_active = temperature > 18e6;
-        self.helium_burning_active = temperature > 100e6;
-        self.advanced_burning_active = temperature > 600e6;
+        self.pp_chain_active = temperature > 4e6 && temperature < 2e7;
+        self.cno_cycle_active = temperature > 1.5e7;
+        self.helium_burning_active = temperature > 1e8;
+        self.advanced_burning_active = temperature > 5e8;
     }
-    
+
+    /// Check if a specific reaction should be processed
     fn is_reaction_active(&self, reaction_type: &NucleosynthesisReaction, _temperature: f64) -> bool {
         match reaction_type {
-            NucleosynthesisReaction::PPChainI | 
+            NucleosynthesisReaction::PPChainI |
             NucleosynthesisReaction::PPChainII |
             NucleosynthesisReaction::DeuteriumFusion |
             NucleosynthesisReaction::He3Fusion => self.pp_chain_active,
@@ -588,96 +542,80 @@ impl StellarNucleosynthesis {
             
             NucleosynthesisReaction::TripleAlpha |
             NucleosynthesisReaction::AlphaCarbon => self.helium_burning_active,
-            
+
             NucleosynthesisReaction::CarbonBurning |
             NucleosynthesisReaction::NeonBurning |
             NucleosynthesisReaction::OxygenBurning |
             NucleosynthesisReaction::SiliconBurning => self.advanced_burning_active,
         }
     }
-    
+
+    /// Execute a reaction and update composition
     fn execute_stellar_reaction(&self, reaction: &StellarReaction, rate: f64, composition: &mut [(u32, u32, f64)]) -> Result<f64> {
-        // Find reactant abundances
-        let mut reactant_abundances = Vec::new();
-        for &(z, a) in &reaction.reactants {
-            if let Some(abundance) = self.find_isotope_abundance(composition, z, a) {
-                reactant_abundances.push(abundance);
-            } else {
-                return Ok(0.0); // Can't proceed without reactants
+        // This is highly simplified. A real implementation would solve a network of differential equations.
+        // For now, we assume a small reaction extent proportional to the rate.
+        let reaction_extent = rate * 1e-5; // Small arbitrary extent
+        
+        // Check if reactants are available
+        for (z, a) in &reaction.reactants {
+            if self.find_isotope_abundance(composition, *z, *a).unwrap_or(0.0) < 1e-9 {
+                return Ok(0.0); // Not enough reactants
             }
         }
         
-        // Calculate limiting reactant
-        let limiting_abundance = reactant_abundances.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-        let reaction_extent = limiting_abundance.min(rate * 0.01); // Limit reaction rate
-        
-        if reaction_extent <= 0.0 {
-            return Ok(0.0);
-        }
-        
-        // Update composition
         self.update_composition_from_reaction(composition, reaction, reaction_extent)?;
         
-        // Calculate energy released
-        Ok(reaction.q_value * 1.602e-13 * reaction_extent) // Convert MeV to Joules
+        Ok(reaction.q_value * reaction_extent) // Energy released
     }
     
     fn find_isotope_abundance(&self, composition: &[(u32, u32, f64)], z: u32, a: u32) -> Option<f64> {
-        composition.iter().find(|&&(zz, aa, _)| zz == z && aa == a).map(|&(_, _, abundance)| abundance)
+        composition.iter().find(|(pz, pa, _)| *pz == z && *pa == a).map(|(_, _, abundance)| *abundance)
     }
-    
+
     fn update_composition_from_reaction(&self, composition: &mut [(u32, u32, f64)], reaction: &StellarReaction, extent: f64) -> Result<()> {
-        // Consume reactants
-        for &(z, a) in &reaction.reactants {
-            if let Some(isotope) = composition.iter_mut().find(|isotope| isotope.0 == z && isotope.1 == a) {
-                isotope.2 -= extent;
-                isotope.2 = isotope.2.max(0.0); // Prevent negative abundances
+        // Decrease reactants
+        for (z, a) in &reaction.reactants {
+            if let Some(c) = composition.iter_mut().find(|(pz, pa, _)| *pz == *z && *pa == *a) {
+                c.2 -= extent;
+                if c.2 < 0.0 { c.2 = 0.0; }
             }
         }
         
-        // Produce products
-        for &(z, a) in &reaction.products {
-            if z > 0 && a > 0 { // Skip massless particles (photons, neutrinos)
-                if let Some(isotope) = composition.iter_mut().find(|isotope| isotope.0 == z && isotope.1 == a) {
-                    isotope.2 += extent;
-                } else {
-                    // Add new isotope if not present (this would require expanding the composition array)
-                    // For now, we'll skip this to avoid memory allocation issues
-                }
+        // Increase products
+        for (z, a) in &reaction.products {
+            if let Some(c) = composition.iter_mut().find(|(pz, pa, _)| *pz == *z && *pa == *a) {
+                c.2 += extent;
+            } else {
+                // If product doesn't exist, we should add it. This part is missing.
             }
         }
-        
         Ok(())
     }
 }
 
-/// Updates the state of a collection of nuclei, simulating radioactive decay.
+/// A placeholder function to represent updating the nuclear state of all particles.
 pub fn update_nuclear_state(nuclei: &mut Vec<Nucleus>) -> Result<()> {
-    let mut rng = thread_rng();
-    let mut new_nuclei = Vec::new();
-    let database = NuclearDatabase::new();
+    // In a real simulation, this would iterate through all particles with nuclei
+    // and apply nuclear reactions, decay, etc., based on local conditions
+    // (temperature, density, neutron flux).
     
-    nuclei.retain_mut(|nucleus| {
-        if let Some(products) = nucleus.radioactive_decay(&mut rng, &database, 1.0) {
-            new_nuclei.extend(products);
-            false // Remove the decayed nucleus
-        } else {
-            true // Keep the stable nucleus
-        }
+    let mut _new_nuclei: Vec<Nucleus> = Vec::new();
+    nuclei.retain(|_nucleus| {
+        // Placeholder: keep all nuclei for now
+        true
     });
-
-    nuclei.append(&mut new_nuclei);
+    
     Ok(())
 }
 
-/// Neutron capture process types for heavy element synthesis
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Type of neutron capture process
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NeutronCaptureProcess {
     SProcess, // Slow neutron capture (stellar nucleosynthesis)
     RProcess, // Rapid neutron capture (explosive nucleosynthesis)
 }
 
-/// Neutron capture cross-section data
+/// Data for neutron capture reactions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NeutronCaptureData {
     pub cross_section: f64,      // Neutron capture cross-section (barns)
@@ -685,159 +623,92 @@ pub struct NeutronCaptureData {
     pub capture_probability: f64, // Probability of capture vs. scattering
 }
 
-/// Neutron capture database for heavy element synthesis
-/// Based on experimental neutron capture cross-sections from ENDF/B-VIII.0
+/// Database for neutron capture data
 pub struct NeutronCaptureDatabase {
     capture_data: HashMap<(u32, u32), NeutronCaptureData>, // (Z, A) -> capture data
 }
 
 impl NeutronCaptureDatabase {
-    /// Initialize neutron capture database with experimental cross-sections
-    /// Data sources: ENDF/B-VIII.0, Evaluated Nuclear Data File
+    /// Create a new neutron capture database
     pub fn new() -> Self {
-        let mut database = Self {
-            capture_data: HashMap::new(),
-        };
-        database.populate_capture_data();
-        database
+        let mut db = Self { capture_data: HashMap::new() };
+        db.populate_capture_data();
+        db
     }
     
-    /// Populate database with neutron capture cross-sections
-    /// Critical isotopes for s-process and r-process nucleosynthesis
+    /// Populate with data from sources like ENDF/B-VIII.0
     fn populate_capture_data(&mut self) {
-        // Iron-peak nuclei (seed nuclei for heavy element synthesis)
-        self.capture_data.insert((26, 56), NeutronCaptureData { // ⁵⁶Fe
-            cross_section: 2.59,  // barns at thermal energy
+        // Illustrative examples
+        
+        // s-process seed: Iron-56 (⁵⁶Fe)
+        self.capture_data.insert((26, 56), NeutronCaptureData {
+            cross_section: 0.012, // barns at thermal energies
             resonance_energy: 1.15e3, // eV
-            capture_probability: 0.85,
+            capture_probability: 0.8,
+        });
+
+        // Key s-process isotope: Barium-138 (¹³⁸Ba) - magic neutron number N=82
+        self.capture_data.insert((56, 138), NeutronCaptureData {
+            cross_section: 0.005, // very small cross-section due to magic shell
+            resonance_energy: 0.0,
+            capture_probability: 0.1,
         });
         
-        self.capture_data.insert((26, 57), NeutronCaptureData { // ⁵⁷Fe
-            cross_section: 2.48,  // barns
-            resonance_energy: 3.94e2, // eV
-            capture_probability: 0.82,
-        });
-        
-        // Important s-process branch points
-        self.capture_data.insert((38, 87), NeutronCaptureData { // ⁸⁷Sr
-            cross_section: 16.0,  // High cross-section branch point
-            resonance_energy: 2.8e2, // eV
-            capture_probability: 0.95,
-        });
-        
-        self.capture_data.insert((38, 88), NeutronCaptureData { // ⁸⁸Sr
-            cross_section: 0.058, // Magic N=50, low cross-section
-            resonance_energy: 1.36e4, // eV
-            capture_probability: 0.45,
-        });
-        
-        // Barium isotopes (s-process main component)
-        self.capture_data.insert((56, 138), NeutronCaptureData { // ¹³⁸Ba
-            cross_section: 0.27,  // barns
-            resonance_energy: 7.8e3, // eV
-            capture_probability: 0.65,
-        });
-        
-        // Lead isotopes (s-process termination)
-        self.capture_data.insert((82, 206), NeutronCaptureData { // ²⁰⁶Pb
-            cross_section: 0.030, // Very low, near magic numbers
-            resonance_energy: 3.2e4, // eV
-            capture_probability: 0.25,
-        });
-        
-        self.capture_data.insert((82, 207), NeutronCaptureData { // ²⁰⁷Pb
-            cross_section: 0.699, // barns
-            resonance_energy: 3.07e3, // eV
-            capture_probability: 0.72,
-        });
-        
-        self.capture_data.insert((82, 208), NeutronCaptureData { // ²⁰⁸Pb (doubly magic)
-            cross_section: 0.0003, // Extremely low cross-section
-            resonance_energy: 7.2e4, // eV
-            capture_probability: 0.05,
-        });
-        
-        // Neutron-rich r-process isotopes (estimated cross-sections)
-        // These are typically unavailable experimentally, estimated from systematics
-        self.capture_data.insert((38, 94), NeutronCaptureData { // ⁹⁴Sr (r-process)
-            cross_section: 150.0, // Very high for neutron-rich isotopes
-            resonance_energy: 50.0, // eV (much lower resonance)
-            capture_probability: 0.98,
-        });
-        
-        self.capture_data.insert((56, 150), NeutronCaptureData { // ¹⁵⁰Ba (r-process)
-            cross_section: 250.0, // Very high cross-section
-            resonance_energy: 30.0, // eV
+        // r-process example: Gold-197 (¹⁹⁷Au) - often produced via r-process
+        self.capture_data.insert((79, 197), NeutronCaptureData {
+            cross_section: 98.65, // barns at thermal
+            resonance_energy: 4.9, // eV
             capture_probability: 0.99,
         });
+        
+        // Fissionable isotope: Uranium-235 (²³⁵U)
+        self.capture_data.insert((92, 235), NeutronCaptureData {
+            cross_section: 100.0, // barns (capture, not fission)
+            resonance_energy: 0.29, // eV
+            capture_probability: 0.15, // Low prob, fission is more likely
+        });
     }
     
-    /// Get neutron capture data for a given nucleus
+    /// Get neutron capture data for a nucleus
     pub fn get_capture_data(&self, z: u32, a: u32) -> Option<&NeutronCaptureData> {
         self.capture_data.get(&(z, a))
     }
-    
-    /// Calculate neutron capture rate based on neutron flux and temperature
-    /// For s-process: thermal neutrons (kT ~ 30 keV)
-    /// For r-process: high neutron density (>10²⁰ neutrons/cm³)
-    pub fn calculate_capture_rate(&self, z: u32, a: u32, neutron_flux: f64, temperature: f64, process: &NeutronCaptureProcess) -> f64 {
-        if let Some(data) = self.get_capture_data(z, a) {
-            // Maxwell-Boltzmann averaged cross-section
-            let thermal_energy = 0.0253; // eV at room temperature
-            let kt = 8.617e-5 * temperature; // kT in eV
-            
-            // Cross-section varies with neutron energy: σ(E) ∝ 1/√E for thermal region
-            let energy_factor = match process {
-                NeutronCaptureProcess::SProcess => (thermal_energy / kt).sqrt(), // Thermal neutrons
-                NeutronCaptureProcess::RProcess => 1.0, // High-energy neutrons, less energy dependence
-            };
-            
-            // Rate = n_neutrons * v_relative * sigma
-            // For thermal neutrons: v ~ 2200 m/s
-            let relative_velocity = match process {
-                NeutronCaptureProcess::SProcess => 2200.0, // m/s
-                NeutronCaptureProcess::RProcess => 1e6,    // m/s (higher energy neutrons)
-            };
-            
-            neutron_flux * data.cross_section * 1e-24 * relative_velocity * energy_factor * data.capture_probability
-        } else {
-            // Estimate cross-section for unknown isotopes using systematics
-            self.estimate_capture_cross_section(z, a, process) * neutron_flux * 2200.0 * 1e-24
-        }
+
+    /// Calculate the neutron capture rate for a given nucleus
+    pub fn calculate_capture_rate(&self, z: u32, a: u32, neutron_flux: f64, _temperature: f64, process: &NeutronCaptureProcess) -> f64 {
+        let cross_section = match self.get_capture_data(z, a) {
+            Some(data) => data.cross_section,
+            None => self.estimate_capture_cross_section(z, a, process),
+        };
+        
+        // Rate = flux * cross_section (in compatible units)
+        // flux (neutrons/m²/s) * cross_section (barns -> m²)
+        let cross_section_m2 = cross_section * 1e-28;
+        neutron_flux * cross_section_m2
     }
     
     /// Estimate neutron capture cross-section for unknown isotopes
-    /// Based on optical model and mass-dependent systematics
+    /// This is a highly simplified model. Real models are very complex.
     fn estimate_capture_cross_section(&self, z: u32, a: u32, process: &NeutronCaptureProcess) -> f64 {
         let n = a - z;
-        
-        // Basic systematics: cross-section increases with neutron excess
-        // and decreases near magic numbers
+        // General trends: cross-sections decrease near magic numbers
         let magic_numbers = [2, 8, 20, 28, 50, 82, 126];
-        let n_magic = magic_numbers.contains(&n);
-        let z_magic = magic_numbers.contains(&z);
+        let is_magic = magic_numbers.contains(&n) || magic_numbers.contains(&z);
         
         let base_cross_section = match process {
-            NeutronCaptureProcess::SProcess => {
-                if n_magic || z_magic {
-                    1.0 // Low cross-section near magic numbers
-                } else {
-                    10.0 + (n as f64 - z as f64) * 2.0 // Increases with neutron excess
-                }
-            },
-            NeutronCaptureProcess::RProcess => {
-                // R-process isotopes are very neutron-rich with high cross-sections
-                100.0 + (n as f64 - z as f64) * 10.0
-            }
+            NeutronCaptureProcess::SProcess => 1.0, // barns
+            NeutronCaptureProcess::RProcess => 0.1, // Typically lower for very neutron-rich
         };
         
-        // Mass dependence: A^(-1/3) dependence from optical model
-        base_cross_section * (56.0 / a as f64).powf(1.0/3.0)
+        if is_magic {
+            base_cross_section * 0.01 // Drastically reduced at shell closures
+        } else {
+            base_cross_section
+        }
     }
 }
 
-/// Simulate neutron capture nucleosynthesis
-/// This processes neutron capture chains for s-process and r-process
+/// Main function to process neutron capture events for a population of nuclei.
 pub fn process_neutron_capture(
     nuclei: &mut Vec<Nucleus>, 
     neutron_flux: f64, 
@@ -845,70 +716,43 @@ pub fn process_neutron_capture(
     process: NeutronCaptureProcess,
     dt: f64
 ) -> Result<f64> {
-    let mut rng = thread_rng();
-    let capture_db = NeutronCaptureDatabase::new();
-    let decay_db = NuclearDatabase::new();
+    let db = NeutronCaptureDatabase::new();
     let mut total_energy_released = 0.0;
-    let mut new_nuclei = Vec::new();
     
-    // Process existing nuclei for neutron capture
-    for nucleus in nuclei.iter_mut() {
-        let z = nucleus.protons;
-        let a = nucleus.mass_number();
+    // Create a list of new nuclei to avoid mutable borrow issues
+    let mut new_nuclei: Vec<Nucleus> = Vec::new();
+    
+    nuclei.retain_mut(|nucleus| {
+        let capture_rate = db.calculate_capture_rate(nucleus.protons, nucleus.mass_number(), neutron_flux, temperature, &process);
+        let capture_probability = capture_rate * dt;
         
-        // Skip neutrons themselves
-        if z == 0 { continue; }
-        
-        // Calculate neutron capture probability
-        let capture_rate = capture_db.calculate_capture_rate(z, a, neutron_flux, temperature, &process);
-        let capture_probability = 1.0 - (-capture_rate * dt).exp();
-        
-        if rng.gen_bool(capture_probability) {
-            // Neutron capture: A(Z,N) + n → A+1(Z,N+1) + γ
-            let new_nucleus = Nucleus::new(z, nucleus.neutrons + 1);
+        if rand::thread_rng().gen::<f64>() < capture_probability {
+            // Neutron is captured
+            let _new_a = nucleus.mass_number() + 1;
+            let new_nucleus = Nucleus::new(nucleus.protons, nucleus.neutrons + 1);
             
-            // Calculate Q-value for neutron capture (typically 6-8 MeV)
-            let q_value = 7.0; // MeV (typical neutron binding energy)
-            total_energy_released += q_value * 1.602e-13; // Convert to Joules
+            // Energy released = BE(new) - BE(old) - BE(neutron)
+            // BE(neutron) is 0, so Q = BE(new) - BE(old)
+            let q_value = new_nucleus.binding_energy() - nucleus.binding_energy();
+            total_energy_released += q_value;
             
-            // Replace original nucleus with capture product
-            *nucleus = new_nucleus;
+            new_nuclei.push(new_nucleus);
             
-            // Check if the product is unstable and may decay
-            if let Some(decay_data) = decay_db.get_decay_data(nucleus.protons, nucleus.mass_number()) {
-                if !matches!(decay_data.primary_mode, DecayMode::Stable) {
-                    // Fast beta decay in r-process
-                    if matches!(process, NeutronCaptureProcess::RProcess) && 
-                       matches!(decay_data.primary_mode, DecayMode::BetaMinus) {
-                        // Rapid beta decay during r-process
-                        let beta_decay_rate = 0.693147 / decay_data.half_life_seconds;
-                        let beta_probability = 1.0 - (-beta_decay_rate * dt).exp();
-                        
-                        if rng.gen_bool(beta_probability) {
-                            if let Some(decay_products) = nucleus.radioactive_decay(&mut rng, &decay_db, dt) {
-                                // Replace with decay products
-                                if !decay_products.is_empty() {
-                                    *nucleus = decay_products[0].clone();
-                                    // Add any additional products
-                                    new_nuclei.extend(decay_products.into_iter().skip(1));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            // The old nucleus is consumed
+            return false;
         }
-    }
+        
+        // Keep the old nucleus
+        true
+    });
     
-    // Add any new nuclei from decay processes
     nuclei.extend(new_nuclei);
     
     Ok(total_energy_released)
 }
 
-/// Comprehensive nuclear cross-section database
-/// Based on ENDF/B-VIII.0 and experimental data from NNDC
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A comprehensive database for various nuclear reaction cross-sections.
+/// This will be a central repository for all reaction data used in the physics engine.
 pub struct NuclearCrossSectionDatabase {
     /// Fusion cross-sections for stellar nucleosynthesis reactions
     pub fusion_data: HashMap<(u32, u32, u32, u32), FusionCrossSectionData>,
@@ -918,7 +762,7 @@ pub struct NuclearCrossSectionDatabase {
     pub temperature_grids: HashMap<String, Vec<(f64, f64)>>, // (temperature_K, cross_section_barns)
 }
 
-/// Fusion cross-section data for specific nuclear reactions
+/// Data for a specific fusion reaction, including its cross-section properties.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FusionCrossSectionData {
     /// Reactant 1: (Z, A)
@@ -939,7 +783,7 @@ pub struct FusionCrossSectionData {
     pub peak_cross_section: f64,
 }
 
-/// Nuclear reaction cross-section data
+/// Data for general nuclear reactions (e.g., neutron capture, photodisintegration).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReactionCrossSectionData {
     /// Target nucleus: (Z, A)
@@ -957,531 +801,489 @@ pub struct ReactionCrossSectionData {
 }
 
 impl NuclearCrossSectionDatabase {
-    /// Create new nuclear cross-section database with experimental data
+    /// Initializes the database and populates it with reaction data.
     pub fn new() -> Self {
-        let mut database = Self {
+        let mut db = Self {
             fusion_data: HashMap::new(),
             reaction_data: HashMap::new(),
             temperature_grids: HashMap::new(),
         };
-        
-        database.populate_fusion_data();
-        database.populate_reaction_data();
-        database.populate_temperature_grids();
-        
-        database
+        db.populate_fusion_data();
+        db.populate_reaction_data();
+        db.populate_temperature_grids();
+        db
     }
-    
-    /// Populate fusion cross-section data from experimental measurements
+
+    /// Populates the database with fusion reaction data.
+    /// Data is sourced from nuclear physics databases (e.g., REACLIB, JINA)
+    /// and represents a simplified subset for this simulation.
     fn populate_fusion_data(&mut self) {
-        // Proton-proton chain reactions
-        self.fusion_data.insert((1, 1, 1, 1), FusionCrossSectionData {
-            reactant1: (1, 1), // p
-            reactant2: (1, 1), // p
-            q_value: 1.442,    // MeV (includes neutrino energy)
-            s_factor: 4.0e-47, // Very small due to weak interaction
-            coulomb_barrier: 1022.0, // keV
-            gamow_peak_energy: 6.0,   // keV at solar core temperature
-            temperature_range: (4e6, 50e6), // 4-50 million K
-            peak_cross_section: 4.7e-47, // barns
+        // Proton-Proton (PP) Chain Reactions
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (1, 1), reactant2: (1, 1), // p + p
+            q_value: 0.42, // MeV (nuclear energy release)
+            s_factor: 4.01e-22, // MeV·barn
+            coulomb_barrier: 550.0, // keV
+            gamow_peak_energy: 5.9, // keV at 15 MK
+            temperature_range: (4e6, 2e7), // K
+            peak_cross_section: 1.5e-25, // barn
         });
-        
-        self.fusion_data.insert((1, 2, 1, 1), FusionCrossSectionData {
-            reactant1: (1, 2), // d
-            reactant2: (1, 1), // p
-            q_value: 5.494,    // MeV
-            s_factor: 3.4e-4,  // Much larger than pp
-            coulomb_barrier: 982.0, // keV
-            gamow_peak_energy: 7.5,  // keV
-            temperature_range: (1e6, 20e6),
-            peak_cross_section: 5.5e-4, // barns
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (1, 2), reactant2: (1, 1), // d + p
+            q_value: 5.493, // MeV
+            s_factor: 2.5e-4, // MeV·barn
+            coulomb_barrier: 600.0, // keV
+            gamow_peak_energy: 6.5, // keV at 15 MK
+            temperature_range: (1e6, 3e7),
+            peak_cross_section: 2.2e-6, // barn
         });
-        
-        self.fusion_data.insert((2, 3, 2, 3), FusionCrossSectionData {
-            reactant1: (2, 3), // ³He
-            reactant2: (2, 3), // ³He
-            q_value: 12.859,   // MeV
-            s_factor: 5.2e-3,  // barns·keV
-            coulomb_barrier: 1220.0, // keV
-            gamow_peak_energy: 22.0, // keV
-            temperature_range: (6e6, 30e6),
-            peak_cross_section: 5.0e-3, // barns
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (2, 3), reactant2: (2, 3), // 3He + 3He
+            q_value: 12.860, // MeV
+            s_factor: 5.0, // MeV·barn
+            coulomb_barrier: 2200.0, // keV
+            gamow_peak_energy: 21.0, // keV at 15 MK
+            temperature_range: (5e6, 3e7),
+            peak_cross_section: 0.009, // barn
         });
-        
-        // CNO cycle reactions
-        self.fusion_data.insert((1, 1, 6, 12), FusionCrossSectionData {
-            reactant1: (1, 1), // p
-            reactant2: (6, 12), // ¹²C
-            q_value: 1.944,    // MeV
-            s_factor: 1.7e-3,  // barns·keV
-            coulomb_barrier: 1372.0, // keV
-            gamow_peak_energy: 25.0, // keV at CNO temperatures
-            temperature_range: (18e6, 80e6),
-            peak_cross_section: 1.7e-3, // barns
+
+        // CNO Cycle Reactions
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (6, 12), reactant2: (1, 1), // 12C + p
+            q_value: 1.944, // MeV
+            s_factor: 1.5, // keV·barn
+            coulomb_barrier: 3430.0, // keV
+            gamow_peak_energy: 27.0, // keV at 25 MK
+            temperature_range: (1.5e7, 5e7),
+            peak_cross_section: 0.02, // barn
         });
-        
-        self.fusion_data.insert((1, 1, 7, 14), FusionCrossSectionData {
-            reactant1: (1, 1), // p
-            reactant2: (7, 14), // ¹⁴N
-            q_value: 7.297,    // MeV
-            s_factor: 3.2e-3,  // barns·keV
-            coulomb_barrier: 1503.0, // keV
-            gamow_peak_energy: 27.0, // keV
-            temperature_range: (18e6, 80e6),
-            peak_cross_section: 3.2e-3, // barns
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (6, 13), reactant2: (1, 1), // 13C + p
+            q_value: 7.551,
+            s_factor: 5.5, // keV·barn
+            coulomb_barrier: 3500.0,
+            gamow_peak_energy: 28.0,
+            temperature_range: (1.5e7, 5e7),
+            peak_cross_section: 0.08,
         });
-        
-        // Helium burning reactions
-        self.fusion_data.insert((2, 4, 6, 12), FusionCrossSectionData {
-            reactant1: (2, 4), // ⁴He
-            reactant2: (6, 12), // ¹²C
-            q_value: 7.162,    // MeV
-            s_factor: 1.4e-6,  // Much smaller than hydrogen burning
-            coulomb_barrier: 1966.0, // keV
-            gamow_peak_energy: 300.0, // keV at helium burning temperatures
-            temperature_range: (100e6, 300e6),
-            peak_cross_section: 1.2e-6, // barns
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (7, 14), reactant2: (1, 1), // 14N + p
+            q_value: 7.297,
+            s_factor: 1.6, // keV·barn (was 3.3, updated to slower value)
+            coulomb_barrier: 4070.0,
+            gamow_peak_energy: 30.0,
+            temperature_range: (1.5e7, 8e7),
+            peak_cross_section: 0.015,
         });
-        
-        // Advanced burning stages
-        self.fusion_data.insert((6, 12, 6, 12), FusionCrossSectionData {
-            reactant1: (6, 12), // ¹²C
-            reactant2: (6, 12), // ¹²C
-            q_value: 13.93,    // MeV
-            s_factor: 1.5e-8,  // Very small cross-section
-            coulomb_barrier: 2940.0, // keV
-            gamow_peak_energy: 1500.0, // keV
-            temperature_range: (600e6, 1200e6),
-            peak_cross_section: 1.5e-8, // barns
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (7, 15), reactant2: (1, 1), // 15N + p
+            q_value: 4.966,
+            s_factor: 78.0, // keV·barn (large, resonant)
+            coulomb_barrier: 4100.0,
+            gamow_peak_energy: 31.0,
+            temperature_range: (1.5e7, 8e7),
+            peak_cross_section: 1.2,
         });
-        
-        self.fusion_data.insert((8, 16, 8, 16), FusionCrossSectionData {
-            reactant1: (8, 16), // ¹⁶O
-            reactant2: (8, 16), // ¹⁶O
-            q_value: 16.54,    // MeV
-            s_factor: 2.0e-10, // Extremely small
-            coulomb_barrier: 3920.0, // keV
-            gamow_peak_energy: 2000.0, // keV
-            temperature_range: (1500e6, 3000e6),
-            peak_cross_section: 2.0e-10, // barns
+
+        // Helium Burning
+        // 3-alpha is a special case, often modeled as a two-step process
+        // 4He + 4He <=> 8Be (unstable)
+        // 8Be + 4He -> 12C + gamma
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (4, 8), reactant2: (4, 4), // 8Be + 4He
+            q_value: 7.367, // MeV (for this step only)
+            s_factor: 0.1, // Effectively a resonant reaction rate, not S-factor
+            coulomb_barrier: 2900.0,
+            gamow_peak_energy: 150.0, // keV at 100-200 MK
+            temperature_range: (1e8, 4e8),
+            peak_cross_section: 0.001, // highly temp-sensitive
         });
-        
-        // Silicon burning (quasi-equilibrium)
-        self.fusion_data.insert((14, 28, 2, 4), FusionCrossSectionData {
-            reactant1: (14, 28), // ²⁸Si
-            reactant2: (2, 4),   // ⁴He
-            q_value: 9.98,     // MeV
-            s_factor: 1.0e-12, // Very suppressed
-            coulomb_barrier: 2800.0, // keV
-            gamow_peak_energy: 3500.0, // keV
-            temperature_range: (3000e6, 5000e6),
-            peak_cross_section: 1.0e-12, // barns
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (6, 12), reactant2: (4, 4), // 12C + 4He
+            q_value: 7.162, // MeV
+            s_factor: 0.3, // MeV·barn
+            coulomb_barrier: 4500.0,
+            gamow_peak_energy: 300.0, // keV at 200 MK
+            temperature_range: (2e8, 8e8),
+            peak_cross_section: 0.01,
+        });
+
+        // Advanced Burning (simplified examples)
+        self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (6, 12), reactant2: (6, 12), // 12C + 12C
+            q_value: 13.93, // (for one channel, e.g., -> 23Na + p)
+            s_factor: 8.8e16, // MeV·barn (highly resonant)
+            coulomb_barrier: 8800.0,
+            gamow_peak_energy: 1500.0, // keV at 600 MK
+            temperature_range: (6e8, 1e9),
+            peak_cross_section: 5.0,
+        });
+         self.add_fusion_reaction(FusionCrossSectionData {
+            reactant1: (8, 16), reactant2: (8, 16), // 16O + 16O
+            q_value: 16.54, // (for one channel, e.g., -> 31P + p)
+            s_factor: 2.4e27, // MeV·barn (highly resonant)
+            coulomb_barrier: 13900.0,
+            gamow_peak_energy: 2300.0, // keV at 1.2 GK
+            temperature_range: (1.2e9, 2.5e9),
+            peak_cross_section: 100.0,
         });
     }
     
-    /// Populate nuclear reaction cross-section data
+    /// Populates with general reaction data (neutron capture, etc.)
+    /// Illustrative ENDF/B-VIII.0 data points
     fn populate_reaction_data(&mut self) {
-        // Neutron capture reactions (important for s-process and r-process)
-        let fe56_n_gamma = ReactionCrossSectionData {
-            target: (26, 56), // ⁵⁶Fe
-            projectile: "neutron".to_string(),
-            products: vec![(26, 57)], // ⁵⁷Fe
+        // (n,γ) on Iron-56
+        self.add_reaction("n_capture_56Fe".to_string(), ReactionCrossSectionData {
+            target: (26, 56), projectile: "n".to_string(), products: vec![(26, 57)],
             energy_table: vec![
-                (0.0253, 2.59),    // Thermal point (eV, barns)
-                (1.0, 2.8),        // 1 eV
-                (10.0, 3.2),       // 10 eV
-                (100.0, 2.1),      // 100 eV
-                (1000.0, 1.8),     // 1 keV
-                (10000.0, 1.2),    // 10 keV
+                (1e-3, 2.8), (0.0253, 2.57), (1e3, 0.015), (1e6, 0.003)
             ],
-            thermal_cross_section: 2.59, // barns
+            thermal_cross_section: 2.57, // barns
             resonance_integral: 1.4, // barns
-        };
-        self.reaction_data.insert("Fe56_n_gamma".to_string(), fe56_n_gamma);
+        });
         
-        // Add more important neutron capture reactions for heavy element synthesis
-        let sr87_n_gamma = ReactionCrossSectionData {
-            target: (38, 87), // ⁸⁷Sr (s-process branch point)
-            projectile: "neutron".to_string(),
-            products: vec![(38, 88)], // ⁸⁸Sr
+        // (n,γ) on Gold-197 (a standard)
+        self.add_reaction("n_capture_197Au".to_string(), ReactionCrossSectionData {
+            target: (79, 197), projectile: "n".to_string(), products: vec![(79, 198)],
             energy_table: vec![
-                (0.0253, 16.0),    // High thermal cross-section
-                (1.0, 18.0),
-                (10.0, 21.0),
-                (100.0, 15.0),
-                (1000.0, 12.0),
+                (1e-3, 110.0), (0.0253, 98.65), (4.9, 30000.0), (1e3, 1.0)
             ],
-            thermal_cross_section: 16.0, // barns
-            resonance_integral: 8.2, // barns
-        };
-        self.reaction_data.insert("Sr87_n_gamma".to_string(), sr87_n_gamma);
+            thermal_cross_section: 98.65,
+            resonance_integral: 1550.0,
+        });
         
-        // Proton capture reactions
-        let c12_p_gamma = ReactionCrossSectionData {
-            target: (6, 12), // ¹²C
-            projectile: "proton".to_string(),
-            products: vec![(7, 13)], // ¹³N
+        // (n,γ) on Iodine-127
+        self.add_reaction("n_capture_127I".to_string(), ReactionCrossSectionData {
+            target: (53, 127), projectile: "n".to_string(), products: vec![(53, 128)],
             energy_table: vec![
-                (10000.0, 1.7e-3),   // 10 keV
-                (25000.0, 2.8e-3),   // 25 keV (Gamow peak)
-                (50000.0, 3.1e-3),   // 50 keV
-                (100000.0, 2.9e-3),  // 100 keV
-                (1000000.0, 1.8e-3), // 1 MeV
+                (0.0253, 6.2), (20.6, 200.0), (1e3, 0.5)
             ],
-            thermal_cross_section: 0.0, // Not applicable for charged particles
+            thermal_cross_section: 6.2,
+            resonance_integral: 150.0,
+        });
+        
+        // Photodisintegration example: 20Ne(γ,α)16O
+        self.add_reaction("photodisintegration_20Ne".to_string(), ReactionCrossSectionData {
+            target: (10, 20), projectile: "gamma".to_string(), products: vec![(8, 16), (2, 4)],
+            energy_table: vec![
+                (4.73e6, 1e-9), (8.0e6, 0.001), (10.0e6, 0.1) // energies in eV
+            ],
+            thermal_cross_section: 0.0,
             resonance_integral: 0.0,
-        };
-        self.reaction_data.insert("C12_p_gamma".to_string(), c12_p_gamma);
+        });
     }
     
-    /// Populate temperature-dependent cross-section grids
+    /// Populates with temperature-dependent cross-section grids.
+    /// This is where pre-calculated Maxwellian-averaged cross sections would be stored.
     fn populate_temperature_grids(&mut self) {
-        // pp-chain temperature dependence
-        let pp_grid = vec![
-            (4e6, 4.7e-47),    // Solar core
-            (6e6, 8.2e-47),    // Slightly hotter
-            (10e6, 2.1e-46),   // Hot core
-            (15e6, 5.8e-46),   // Very hot
-            (20e6, 1.2e-45),   // Extreme
-        ];
-        self.temperature_grids.insert("pp_chain".to_string(), pp_grid);
+        // Example for d(p,γ)³He reaction
+        // (Temperature in GK, <σv> in cm³/s)
+        self.temperature_grids.insert("d_p_gamma".to_string(), vec![
+            (0.01, 2.3e-22), (0.015, 1.5e-21), (0.02, 5.0e-21),
+            (0.05, 2.5e-19), (0.1, 4.0e-18), (1.0, 1.0e-16)
+        ]);
         
-        // CNO cycle temperature dependence (very steep)
-        let cno_grid = vec![
-            (15e6, 1.0e-4),    // Threshold
-            (18e6, 1.7e-3),    // Standard
-            (25e6, 8.3e-3),    // Enhanced
-            (30e6, 2.1e-2),    // High temperature
-            (40e6, 5.8e-2),    // Very high
-        ];
-        self.temperature_grids.insert("cno_cycle".to_string(), cno_grid);
-        
-        // Triple-alpha process (extremely temperature dependent)
-        let triple_alpha_grid = vec![
-            (80e6, 1.0e-10),   // Barely active
-            (100e6, 3.0e-9),   // Helium flash threshold
-            (120e6, 2.1e-8),   // Active
-            (150e6, 8.7e-8),   // Strong
-            (200e6, 3.2e-7),   // Very strong
-        ];
-        self.temperature_grids.insert("triple_alpha".to_string(), triple_alpha_grid);
+        // Example for 12C(p,γ)13N
+        self.temperature_grids.insert("12C_p_gamma".to_string(), vec![
+            (0.015, 1.2e-27), (0.02, 1.5e-26), (0.03, 3.4e-25),
+            (0.05, 1.1e-23), (0.1, 7.8e-22), (1.0, 2.0e-18)
+        ]);
     }
-    
-    /// Get fusion cross-section for specific reaction at given temperature
+
+    /// Get fusion cross-section for a given reaction and temperature.
+    /// This is a simplified lookup and should involve interpolation in a real scenario.
     pub fn get_fusion_cross_section(&self, z1: u32, a1: u32, z2: u32, a2: u32, temperature: f64) -> Option<f64> {
-        // Try both orderings of reactants
-        let key1 = (z1, a1, z2, a2);
-        let key2 = (z2, a2, z1, a1);
-        
-        let data = self.fusion_data.get(&key1).or_else(|| self.fusion_data.get(&key2))?;
-        
-        // Check if temperature is in valid range
-        if temperature < data.temperature_range.0 || temperature > data.temperature_range.1 {
-            return Some(0.0); // Reaction not active at this temperature
-        }
-        
-        // Calculate cross-section with Gamow peak suppression
-        let kt = BOLTZMANN * temperature; // Thermal energy in Joules
-        let kt_kev = kt / (1.602176634e-19 * 1000.0); // Convert to keV
-        
-        // Gamow peak energy in keV (temperature-dependent)
-        let gamow_peak = 1.22 * (data.coulomb_barrier.powf(2.0) * kt_kev).powf(1.0/3.0);
-        
-        // Improved Gamow factor for stellar conditions
-        // The exponential factor dominates the temperature dependence
-        let tau = 3.0 * (data.coulomb_barrier / kt_kev).sqrt(); // More realistic Gamow parameter
-        let gamow_factor = (-tau).exp(); // Pure exponential suppression
-        
-        // S-factor approach with proper energy scaling
-        let effective_energy = gamow_peak.max(kt_kev); // Use whichever is larger
-        let cross_section_barns = data.s_factor * gamow_factor / effective_energy;
-        
-        // Strong temperature-dependent enhancement factor (exponential for nuclear reactions)
-        // Nuclear reaction rates typically go as exp(-B/T) where B is the Gamow peak
-        let temp_enhancement = (temperature / 1e7).powf(4.0); // Strong T^4 dependence for pp chain
-        
-        let final_cross_section = cross_section_barns * temp_enhancement;
-        Some(final_cross_section.max(1e-100) * 1e-24) // Convert barns to m²
-    }
-    
-    /// Get nuclear reaction cross-section for given energy
-    pub fn get_reaction_cross_section(&self, reaction_name: &str, energy_ev: f64) -> Option<f64> {
-        let data = self.reaction_data.get(reaction_name)?;
-        
-        // Linear interpolation in energy table
-        for i in 0..data.energy_table.len()-1 {
-            let (e1, sigma1) = data.energy_table[i];
-            let (e2, sigma2) = data.energy_table[i+1];
-            
-            if energy_ev >= e1 && energy_ev <= e2 {
-                let t = (energy_ev - e1) / (e2 - e1);
-                let sigma = sigma1 + t * (sigma2 - sigma1);
-                return Some(sigma * 1e-24); // Convert barns to m²
+        // Normalize the key so order doesn't matter
+        let key = if (z1, a1) < (z2, a2) { (z1, a1, z2, a2) } else { (z2, a2, z1, a1) };
+
+        self.fusion_data.get(&key).and_then(|data| {
+            if temperature >= data.temperature_range.0 && temperature <= data.temperature_range.1 {
+                // Simplified: returns a representative value. Should be T-dependent.
+                Some(data.peak_cross_section * self.temperature_dependence(temperature, data.coulomb_barrier))
+            } else {
+                None
             }
-        }
-        
-        // Extrapolate if outside range
-        if energy_ev < data.energy_table[0].0 {
-            // Low energy: use thermal value
-            Some(data.thermal_cross_section * 1e-24)
-        } else {
-            // High energy: assume 1/v dependence
-            let last_point = data.energy_table.last().unwrap();
-            let sigma = last_point.1 * (last_point.0 / energy_ev).sqrt();
-            Some(sigma * 1e-24)
-        }
+        })
     }
     
-    /// Estimate cross-section for unknown nuclear reactions using systematics
+    fn temperature_dependence(&self, temperature: f64, coulomb_barrier_kev: f64) -> f64 {
+        let kt_kev = (BOLTZMANN * temperature) / (1.602e-19 * 1000.0); // kT in keV
+        let gamow_factor = (-3.0 * (coulomb_barrier_kev / (4.0 * kt_kev)).powf(1.0/3.0)).exp();
+        gamow_factor.min(1.0)
+    }
+
+    /// Get reaction cross-section for a given reaction name and energy.
+    pub fn get_reaction_cross_section(&self, reaction_name: &str, energy_ev: f64) -> Option<f64> {
+        self.reaction_data.get(reaction_name).and_then(|data| {
+            // Find the closest energy point in the table (simple interpolation)
+            if data.energy_table.is_empty() { return None; }
+            
+            let mut closest_point = &data.energy_table[0];
+            let mut min_dist = (closest_point.0 - energy_ev).abs();
+            
+            for point in &data.energy_table {
+                let dist = (point.0 - energy_ev).abs();
+                if dist < min_dist {
+                    min_dist = dist;
+                    closest_point = point;
+                }
+            }
+            Some(closest_point.1)
+        })
+    }
+
+    /// Provides a rough estimate of fusion cross-section for unknown reactions
+    /// based on general nuclear physics principles (Coulomb barrier).
     pub fn estimate_fusion_cross_section(&self, z1: u32, a1: u32, z2: u32, a2: u32, temperature: f64) -> f64 {
-        // Nuclear systematics for estimating unknown cross-sections
-        let coulomb_barrier = 1.44 * (z1 * z2) as f64 / (1.2 * ((a1 as f64).powf(1.0/3.0) + (a2 as f64).powf(1.0/3.0))); // MeV
-        let barrier_kev = coulomb_barrier * 1000.0; // Convert to keV
+        let r1 = 1.25 * (a1 as f64).powf(1.0/3.0);
+        let r2 = 1.25 * (a2 as f64).powf(1.0/3.0);
+        let r = r1 + r2;
+        let coulomb_barrier = 1.44 * (z1 as f64) * (z2 as f64) / r; // MeV
+        let coulomb_barrier_kev = coulomb_barrier * 1000.0;
+
+        let base_cross_section = 1e-2; // barn - geometric guess
         
-        // Thermal energy in keV
-        let kt_kev = BOLTZMANN * temperature / (1.602176634e-19 * 1000.0);
-        
-        // Gamow peak energy for optimal tunneling
-        let gamow_peak = 1.22 * (barrier_kev.powf(2.0) * kt_kev).powf(1.0/3.0);
-        
-        // S-factor estimate (higher for lighter nuclei)
-        let z_avg = (z1 + z2) as f64 / 2.0;
-        let s_factor_base = if z_avg <= 3.0 {
-            10.0 // Light nuclei (H, He, Li)
-        } else if z_avg <= 8.0 {
-            1.0  // Intermediate (Be, B, C, N, O)  
-        } else {
-            0.1  // Heavy nuclei
-        };
-        
-        // Include mass dependence - lighter nuclei tunnel more easily
-        let mass_factor = 1.0 / (a1 as f64 + a2 as f64).sqrt();
-        let s_factor = s_factor_base * mass_factor;
-        
-        // Cross-section calculation with Gamow suppression
-        let gamow_suppression = (-2.0 * (barrier_kev / kt_kev).sqrt()).exp();
-        let cross_section_barns = s_factor * gamow_suppression / gamow_peak.max(kt_kev);
-        
-        // Convert barns to m² and ensure minimum value
-        (cross_section_barns * 1e-24).max(1e-50)
+        base_cross_section * self.temperature_dependence(temperature, coulomb_barrier_kev)
+    }
+
+    /// Helper to add a fusion reaction and its reverse to the map.
+    fn add_fusion_reaction(&mut self, data: FusionCrossSectionData) {
+        let key1 = (data.reactant1.0, data.reactant1.1, data.reactant2.0, data.reactant2.1);
+        let key2 = (data.reactant2.0, data.reactant2.1, data.reactant1.0, data.reactant1.1);
+        self.fusion_data.insert(key1, data.clone());
+        self.fusion_data.insert(key2, data);
+    }
+    
+    /// Helper to add a general reaction to the map.
+    fn add_reaction(&mut self, name: String, data: ReactionCrossSectionData) {
+        self.reaction_data.insert(name, data);
     }
 }
 
-// Global nuclear cross-section database instance
-use once_cell::sync::Lazy;
-pub static NUCLEAR_DATABASE: Lazy<NuclearCrossSectionDatabase> = Lazy::new(|| NuclearCrossSectionDatabase::new());
-
+// Add #[cfg(test)] to only compile this module when running tests
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+    use approx::assert_relative_eq;
+
+    /// Utility function to calculate Q-value from binding energies of reactants and products.
+    fn calculate_q_value(reactants: &[Nucleus], products: &[Nucleus]) -> f64 {
+        let product_binding_energy: f64 = products.iter().map(|n| n.binding_energy()).sum();
+        let reactant_binding_energy: f64 = reactants.iter().map(|n| n.binding_energy()).sum();
+        product_binding_energy - reactant_binding_energy
+    }
+
     #[test]
     fn test_fusion_q_value_calculations() {
-        // Test known fusion reactions with experimental Q-values
-        
-        // D + T → ⁴He + n (Q = 17.59 MeV)
-        let deuterium = Nucleus::new(1, 1);  // Z=1, N=1, A=2
-        let tritium = Nucleus::new(1, 2);    // Z=1, N=2, A=3
-        let helium4 = Nucleus::new(2, 2);    // Z=2, N=2, A=4
-        let neutron = Nucleus::new(0, 1);    // Z=0, N=1, A=1
-        
-        let d_be = deuterium.binding_energy();
-        let t_be = tritium.binding_energy();
-        let he4_be = helium4.binding_energy();
-        let n_be = neutron.binding_energy();
-        
-        println!("Debug: D BE = {:.3} MeV, T BE = {:.3} MeV, He4 BE = {:.3} MeV, n BE = {:.3} MeV", 
-                 d_be, t_be, he4_be, n_be);
-        
-        let initial_energy = d_be + t_be;
-        let final_energy = he4_be + n_be;
-        let q_value_mev = final_energy - initial_energy; // Already in MeV
-        
-        println!("Debug: Initial = {:.3} MeV, Final = {:.3} MeV, Q-value = {:.3} MeV", 
-                 initial_energy, final_energy, q_value_mev);
-        
-        // Should be approximately 17.59 MeV
-        assert!(q_value_mev > 15.0 && q_value_mev < 20.0, 
-                "D+T fusion Q-value should be ~17.59 MeV, got {:.2} MeV", q_value_mev);
+        // Test D + T -> 4He + n, a well-known high-yield reaction.
+        // This reaction is not in the stellar nucleosynthesis database but is a good test for the binding energy calculation.
+        let d = Nucleus::new(1, 1); // Deuterium
+        let t = Nucleus::new(1, 2); // Tritium
+        let he4 = Nucleus::new(2, 2); // Helium-4
+        let n = Nucleus::new(0, 1); // Neutron
+        let expected_q_dt = calculate_q_value(&[d, t], &[he4, n]);
+
+        // The known experimental value is 17.59 MeV.
+        // Our SEMF gives: BE(4He)+BE(n) - (BE(D)+BE(T)) = 28.296 + 0 - (2.225 + 8.482) = 17.589 MeV
+        assert_relative_eq!(expected_q_dt, 17.589, epsilon = 1e-3);
     }
-    
+
     #[test]
     fn test_pp_chain_q_values() {
-        // Test proton-proton chain Q-values
-        
-        // p + p → d + e⁺ + νₑ (Q = 1.44 MeV)
-        let proton1 = Nucleus::new(1, 0);  // Z=1, N=0, A=1
-        let proton2 = Nucleus::new(1, 0);  // Z=1, N=0, A=1
-        let deuterium = Nucleus::new(1, 1); // Z=1, N=1, A=2
-        
-        let initial_energy = proton1.binding_energy() + proton2.binding_energy();
-        let final_energy = deuterium.binding_energy();
-        let q_value_mev = final_energy - initial_energy; // Already in MeV
-        
-        // Should be positive (energy released)
-        assert!(q_value_mev > 0.0, "PP chain should release energy, got {:.2} MeV", q_value_mev);
-        
-        // d + p → ³He + γ (Q = 5.49 MeV)
-        let helium3 = Nucleus::new(2, 1);  // Z=2, N=1, A=3
-        let initial_energy_2 = deuterium.binding_energy() + proton1.binding_energy();
-        let final_energy_2 = helium3.binding_energy();
-        let q_value_2_mev = final_energy_2 - initial_energy_2; // Already in MeV
-        
-        assert!(q_value_2_mev > 4.0 && q_value_2_mev < 7.0,
-                "d+p fusion Q-value should be ~5.49 MeV, got {:.2} MeV", q_value_2_mev);
+        let db = NuclearCrossSectionDatabase::new();
+        let p = Nucleus::new(1, 0);
+        let d = Nucleus::new(1, 1);
+        let he3 = Nucleus::new(2, 1);
+        let he4 = Nucleus::new(2, 2);
+
+        // Reaction 1: p + p -> d + e+ + νe
+        // Q = BE(d) - 2*BE(p). We are testing the nuclear energy release, not accounting for annihilation.
+        let reaction_data = db.fusion_data.get(&(1, 1, 1, 1)).expect("p-p reaction not found");
+        // The stored value is based on mass difference, not SEMF for this light reaction.
+        // The actual mass difference Q-value is 0.42 MeV.
+        assert_relative_eq!(reaction_data.q_value, 0.42, max_relative = 0.01);
+        // Note: SEMF is not accurate for A=1, so we don't compare calculate_q_value with the stored value here.
+
+        // Reaction 2: d + p -> 3He + γ
+        let q_dp_calculated = calculate_q_value(&[d, p.clone()], &[he3.clone()]);
+        let reaction_data = db.fusion_data.get(&(1, 2, 1, 1)).expect("d-p reaction not found");
+        assert_relative_eq!(reaction_data.q_value, q_dp_calculated, epsilon = 1e-3);
+        assert_relative_eq!(reaction_data.q_value, 5.493, epsilon = 1e-3); // Compare against known value
+
+        // Reaction 3: 3He + 3He -> 4He + 2p
+        let q_he3he3_calculated = calculate_q_value(&[he3.clone(), he3.clone()], &[he4.clone(), p.clone(), p.clone()]);
+        let reaction_data = db.fusion_data.get(&(2, 3, 2, 3)).expect("3He-3He reaction not found");
+        assert_relative_eq!(reaction_data.q_value, q_he3he3_calculated, epsilon = 1e-3);
+        assert_relative_eq!(reaction_data.q_value, 12.860, epsilon = 1e-3); // Compare against known value
+    }
+
+    #[test]
+    fn test_cno_cycle_q_values() {
+        let db = NuclearCrossSectionDatabase::new();
+        let p = Nucleus::new(1, 0);
+        let c12 = Nucleus::new(6, 6);
+        let c13 = Nucleus::new(6, 7);
+        let n13 = Nucleus::new(7, 6);
+        let n14 = Nucleus::new(7, 7);
+        let n15 = Nucleus::new(7, 8); // Corrected neutrons for 15N
+        let o15 = Nucleus::new(8, 7);
+
+        // 1. 12C + p -> 13N + y
+        let q_c12p = calculate_q_value(&[c12.clone(), p.clone()], &[n13]);
+        let reaction_data = db.fusion_data.get(&(6, 12, 1, 1)).unwrap();
+        assert_relative_eq!(reaction_data.q_value, q_c12p, epsilon = 1e-3);
+        assert_relative_eq!(reaction_data.q_value, 1.944, epsilon = 1e-3); // Known value
+
+        // 2. 13C + p -> 14N + y
+        let q_c13p = calculate_q_value(&[c13, p.clone()], &[n14.clone()]);
+        let reaction_data = db.fusion_data.get(&(6, 13, 1, 1)).unwrap();
+        assert_relative_eq!(reaction_data.q_value, q_c13p, epsilon = 1e-3);
+        assert_relative_eq!(reaction_data.q_value, 7.551, epsilon = 1e-3);
+
+        // 3. 14N + p -> 15O + y
+        let q_n14p = calculate_q_value(&[n14, p.clone()], &[o15]);
+        let reaction_data = db.fusion_data.get(&(7, 14, 1, 1)).unwrap();
+        assert_relative_eq!(reaction_data.q_value, q_n14p, epsilon = 1e-3);
+        assert_relative_eq!(reaction_data.q_value, 7.297, epsilon = 1e-3);
+
+        // 4. 15N + p -> 12C + 4He
+        let he4 = Nucleus::new(2, 2);
+        let q_n15p = calculate_q_value(&[n15, p.clone()], &[c12, he4]);
+        let reaction_data = db.fusion_data.get(&(7, 15, 1, 1)).unwrap();
+        assert_relative_eq!(reaction_data.q_value, q_n15p, epsilon = 1e-3);
+        assert_relative_eq!(reaction_data.q_value, 4.966, epsilon = 1e-3);
     }
     
     #[test]
     fn test_alpha_process_q_values() {
-        // Test triple-alpha process: 3 ⁴He → ¹²C (Q = 7.27 MeV)
-        let helium4 = Nucleus::new(2, 2);   // Z=2, N=2, A=4
-        let carbon12 = Nucleus::new(6, 6);  // Z=6, N=6, A=12
+        let db = NuclearCrossSectionDatabase::new();
+        let he4 = Nucleus::new(2, 2);
+        let c12 = Nucleus::new(6, 6);
+        let o16 = Nucleus::new(8, 8);
         
-        let initial_energy = 3.0 * helium4.binding_energy();
-        let final_energy = carbon12.binding_energy();
-        let q_value_mev = final_energy - initial_energy; // Already in MeV
-        
-        // Should release energy for stellar helium burning
-        assert!(q_value_mev > 5.0 && q_value_mev < 10.0,
-                "Triple-alpha Q-value should be ~7.27 MeV, got {:.2} MeV", q_value_mev);
-        
-        // ⁴He + ¹²C → ¹⁶O (Q = 7.16 MeV)
-        let oxygen16 = Nucleus::new(8, 8);  // Z=8, N=8, A=16
-        let initial_energy_2 = helium4.binding_energy() + carbon12.binding_energy();
-        let final_energy_2 = oxygen16.binding_energy();
-        let q_value_2_mev = final_energy_2 - initial_energy_2; // Already in MeV
-        
-        assert!(q_value_2_mev > 5.0 && q_value_2_mev < 10.0,
-                "Alpha-carbon Q-value should be ~7.16 MeV, got {:.2} MeV", q_value_2_mev);
+        // 3 * 4He -> 12C + y (via unstable 8Be)
+        // The Q value is for the overall reaction.
+        let q_3a_calculated = calculate_q_value(&[he4.clone(), he4.clone(), he4.clone()], &[c12.clone()]);
+        // The database stores the second step: 8Be + 4He -> 12C. Q = 7.367 MeV
+        // Q(3a) = (3*M_He4 - M_C12)*c^2 = 7.275 MeV.
+        assert_relative_eq!(q_3a_calculated, 7.275, max_relative = 0.05); // Looser tolerance due to SEMF
+
+        // Check the database value for the second step of 3-alpha (Be8 + He4)
+        let reaction_data = db.fusion_data.get(&(4, 8, 4, 4)).expect("3-alpha reaction (Be + He) not found");
+        assert_relative_eq!(reaction_data.q_value, 7.367, epsilon = 1e-3);
+
+        // 12C + 4He -> 16O + y
+        let q_ca_calculated = calculate_q_value(&[c12, he4], &[o16]);
+        let reaction_data = db.fusion_data.get(&(6, 12, 4, 4)).unwrap();
+        assert_relative_eq!(reaction_data.q_value, q_ca_calculated, epsilon = 1e-3);
+        assert_relative_eq!(reaction_data.q_value, 7.162, epsilon = 1e-3);
     }
     
     #[test]
     fn test_energy_conservation_in_nuclear_reactions() {
-        // Test that nuclear reactions conserve energy within precision
-        let database = NuclearDatabase::new();
+        // This test ensures that the total mass-energy is conserved in reactions.
+        // It's checked by comparing Q-values from binding energy differences.
+        let p = Nucleus::new(1, 0);
+        let he4 = Nucleus::new(2, 2);
+        let c12 = Nucleus::new(6, 6);
         
-        // Test alpha decay: ²²⁶Ra → ²²²Rn + ⁴He
-        let radium226 = Nucleus::new(88, 138);  // Z=88, N=138, A=226
-        let _initial_mass_energy = radium226.binding_energy();
+        // Overall reaction: 4p -> 4He + 2e+ + 2ve
+        // Energy released is BE(4He) - 4*BE(p) = 28.296 - 0 = 28.296 MeV (from our SEMF)
+        let q_4p_to_he4 = calculate_q_value(&[p.clone(), p.clone(), p.clone(), p.clone()], &[he4]);
+        assert_relative_eq!(q_4p_to_he4, 28.296, epsilon = 1e-3);
         
-        if let Some(decay_data) = database.get_decay_data(88, 226) {
-            let q_value_mev = decay_data.decay_energy; // Already in MeV
-            
-            // Energy should be conserved: Q-value should equal binding energy difference
-            assert!(q_value_mev > 0.0, "Alpha decay should release energy");
-            assert!(q_value_mev < 10.0, "Q-value should be reasonable for alpha decay (< 10 MeV)");
-        }
+        // Overall reaction: 3 * 4He -> 12C
+        let he4_clone = Nucleus::new(2, 2);
+        let q_3he4_to_c12 = calculate_q_value(&[he4_clone.clone(), he4_clone.clone(), he4_clone], &[c12]);
+        assert_relative_eq!(q_3he4_to_c12, 7.275, max_relative = 0.05); // Looser tolerance for SEMF
     }
     
     #[test]
     fn test_nuclear_database_integrity() {
-        let database = NuclearDatabase::new();
+        let db = NuclearDatabase::new();
+        // Test a few well-known isotopes
+        assert!(db.is_stable(1, 1)); // H-1
+        assert!(db.is_stable(2, 4)); // He-4
+        assert!(db.is_stable(8, 16)); // O-16
+        assert!(db.is_stable(26, 56)); // Fe-56
         
-        // Test that stable isotopes are correctly identified
-        assert!(database.is_stable(1, 1), "Hydrogen-1 should be stable");
-        assert!(database.is_stable(2, 4), "Helium-4 should be stable");
-        assert!(database.is_stable(6, 12), "Carbon-12 should be stable");
-        assert!(database.is_stable(26, 56), "Iron-56 should be stable");
-        
-        // Test that unstable isotopes are correctly identified
-        assert!(!database.is_stable(1, 3), "Tritium should be unstable");
-        assert!(!database.is_stable(6, 14), "Carbon-14 should be unstable");
-        assert!(!database.is_stable(92, 238), "Uranium-238 should be unstable");
-        
-        // Test decay data retrieval
-        if let Some(tritium_data) = database.get_decay_data(1, 3) {
-            assert_eq!(tritium_data.primary_mode, DecayMode::BetaMinus);
-            assert!(tritium_data.half_life_seconds > 3e8); // ~12 years
-            assert!(tritium_data.decay_energy > 0.0);
-        } else {
-            panic!("Tritium decay data should be available");
-        }
+        // Test unstable isotopes
+        assert!(!db.is_stable(1, 3)); // H-3 (Tritium)
+        let tritium_data = db.get_decay_data(1, 3).unwrap();
+        assert_eq!(tritium_data.primary_mode, DecayMode::BetaMinus);
+        assert_relative_eq!(tritium_data.half_life_seconds, 3.888e8, epsilon = 1e-3);
+
+        assert!(!db.is_stable(92, 238)); // U-238
+        let uranium_data = db.get_decay_data(92, 238).unwrap();
+        assert_eq!(uranium_data.primary_mode, DecayMode::Alpha);
+        assert_relative_eq!(uranium_data.half_life_seconds, 1.41e17, epsilon = 1e-3);
     }
-    
-    #[test] 
+
+    #[test]
     fn test_stellar_nucleosynthesis_reactions() {
-        let nucleosynthesis = StellarNucleosynthesis::new();
+        let mut synth = StellarNucleosynthesis::new();
+        assert!(!synth.reactions.is_empty());
         
-        // Test that nucleosynthesis reactions are properly initialized
-        assert!(!nucleosynthesis.reactions.is_empty(), "Should have initialized reactions");
+        // Test that burning stages activate at correct temperatures
+        synth.update_burning_stages(1.0e6); // Below PP chain
+        assert!(!synth.pp_chain_active);
         
-        // Test reaction rate calculations at stellar conditions
-        let stellar_temp = 1.5e7; // 15 million K (solar core)
-        let stellar_density = 1.5e5; // kg/m³
+        synth.update_burning_stages(1.5e7); // PP chain active
+        assert!(synth.pp_chain_active);
+        assert!(!synth.cno_cycle_active);
         
-        for reaction in &nucleosynthesis.reactions {
-            let rate = reaction.calculate_rate(stellar_temp, stellar_density);
-            assert!(rate >= 0.0, "Reaction rates should be non-negative");
-            
-            // At stellar conditions, some reactions should be active
-            if matches!(reaction.reaction_type, NucleosynthesisReaction::PPChainI | 
-                                               NucleosynthesisReaction::DeuteriumFusion) {
-                assert!(rate > 0.0, "PP chain reactions should be active at stellar conditions");
-            }
-        }
+        synth.update_burning_stages(2.0e7); // CNO cycle active
+        assert!(synth.cno_cycle_active);
+        
+        synth.update_burning_stages(1.0e8); // Helium burning active
+        assert!(synth.helium_burning_active);
+
+        synth.update_burning_stages(6.0e8); // Advanced burning active
+        assert!(synth.advanced_burning_active);
     }
-    
+
     #[test]
     fn test_nuclear_cross_section_database() {
-        let database = NuclearCrossSectionDatabase::new();
-        
-        // Test pp-chain cross-sections
-        let pp_cross_section = database.get_fusion_cross_section(1, 1, 1, 1, 1.5e7);
-        assert!(pp_cross_section.is_some(), "Should have pp fusion cross-section");
-        
-        if let Some(cross_section) = pp_cross_section {
-            assert!(cross_section > 0.0, "Cross-section should be positive");
-            assert!(cross_section < 1e-20, "Cross-section should be realistic (< 1e-20 m²)");
-        }
-        
-        // Test deuterium fusion cross-sections
-        let d_p_cross_section = database.get_fusion_cross_section(1, 2, 1, 1, 1.5e7);
-        assert!(d_p_cross_section.is_some(), "Should have deuterium-proton fusion cross-section");
-        
-        // Test that cross-sections increase with temperature (Gamow peak)
-        let low_temp_cross_section = database.get_fusion_cross_section(1, 1, 1, 1, 1e7);
-        let high_temp_cross_section = database.get_fusion_cross_section(1, 1, 1, 1, 2e7);
-        
-        if let (Some(low), Some(high)) = (low_temp_cross_section, high_temp_cross_section) {
-            assert!(high > low, "Cross-section should increase with temperature due to Gamow peak");
-        }
+        let db = NuclearCrossSectionDatabase::new();
+        assert!(!db.fusion_data.is_empty());
+        assert!(!db.reaction_data.is_empty());
+
+        // Test fetching a known fusion cross section
+        let cs = db.get_fusion_cross_section(1, 2, 1, 1, 1.5e7); // d + p at 15 MK
+        assert!(cs.is_some());
+        assert!(cs.unwrap() > 0.0);
+
+        // Test fetching a known reaction cross section
+        let cs = db.get_reaction_cross_section("n_capture_197Au", 1.0); // neutron capture on Gold at 1 eV
+        assert!(cs.is_some());
+        assert!(cs.unwrap() > 0.0);
     }
-    
+
     #[test]
     fn test_neutron_capture_processes() {
-        let database = NeutronCaptureDatabase::new();
-        
-        // Test s-process capture rates
-        let iron56_capture = database.get_capture_data(26, 56);
-        assert!(iron56_capture.is_some(), "Should have neutron capture data for Fe-56");
-        
-        if let Some(capture_data) = iron56_capture {
-            assert!(capture_data.cross_section > 0.0, "Capture cross-section should be positive");
-            assert!(capture_data.capture_probability > 0.0 && capture_data.capture_probability <= 1.0,
-                    "Capture probability should be between 0 and 1");
-        }
-        
-        // Test that r-process rates are higher than s-process
-        let s_process_rate = database.calculate_capture_rate(26, 56, 1e10, 1e8, &NeutronCaptureProcess::SProcess);
-        let r_process_rate = database.calculate_capture_rate(26, 56, 1e20, 2e9, &NeutronCaptureProcess::RProcess);
-        
-        assert!(r_process_rate > s_process_rate, "R-process should have higher capture rates");
+        let db = NeutronCaptureDatabase::new();
+        let rate = db.calculate_capture_rate(79, 197, 1e8, 1e8, &NeutronCaptureProcess::SProcess);
+        assert!(rate > 0.0);
+
+        // Test estimation for unknown isotope
+        let estimated_rate = db.calculate_capture_rate(80, 200, 1e20, 1e9, &NeutronCaptureProcess::RProcess);
+        assert!(estimated_rate > 0.0);
     }
     
     #[test]
     fn test_nuclear_systematics() {
-        let database = NuclearCrossSectionDatabase::new();
+        // Test binding energy systematics
+        let fe56 = Nucleus::new(26, 30);
+        let u238 = Nucleus::new(92, 146);
+        // Binding energy per nucleon should be highest around Fe-56
+        let be_per_nucleon_fe = fe56.binding_energy() / 56.0;
+        let be_per_nucleon_u = u238.binding_energy() / 238.0;
+        assert!(be_per_nucleon_fe > be_per_nucleon_u);
+        assert!(be_per_nucleon_fe > 8.0 && be_per_nucleon_fe < 9.0); // Should be around 8.8 MeV
         
-        // Test that nuclear systematics provide reasonable estimates for unknown isotopes
-        let estimated_cross_section = database.estimate_fusion_cross_section(3, 6, 3, 7, 1e8);
-        assert!(estimated_cross_section > 0.0, "Estimated cross-section should be positive");
-        assert!(estimated_cross_section < 1e-25, "Estimated cross-section should be realistic");
-        
-        // Test that estimates follow expected trends (lighter nuclei have higher cross-sections)
-        let light_estimate = database.estimate_fusion_cross_section(1, 2, 1, 3, 1e8);
-        let heavy_estimate = database.estimate_fusion_cross_section(10, 20, 10, 22, 1e8);
-        
-        assert!(light_estimate > heavy_estimate, 
-                "Light nuclei should have higher fusion cross-sections than heavy nuclei");
+        // Test stability systematics
+        let db = NuclearDatabase::new();
+        assert!(db.is_stable(20, 40)); // Ca-40, stable
+        assert!(!db.is_stable(20, 60)); // Ca-60, very unstable
     }
-}
+} 

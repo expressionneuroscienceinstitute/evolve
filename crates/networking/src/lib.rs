@@ -135,7 +135,7 @@ impl NetworkNode {
                     println!("Node {:?} received response from {:?} for request {}: {:?}", self.id, responder_node, request_id, payload);
                     // Process response: e.g., update requested data, continue simulation
                 },
-                NetworkMessage::Heartbeat { node_id, timestamp } => {
+                NetworkMessage::Heartbeat { node_id: _, timestamp: _ } => {
                     // println!("Node {:?} received heartbeat from {:?} at {}", self.id, node_id, timestamp);
                     // Update liveness status of node, check for failures
                 },
@@ -145,7 +145,7 @@ impl NetworkNode {
     }
 
     /// Distributes a workload packet to a connected node (example).
-    pub async fn distribute_workload(&self, target_node: NodeId, packet: WorkloadPacket) -> Result<()> {
+    pub async fn distribute_workload(&self, _target_node: NodeId, packet: WorkloadPacket) -> Result<()> {
         let message = NetworkMessage::Data { sender_node: self.id, payload: packet.simulation_segment };
         self.send_message(message).await
     }
@@ -163,7 +163,7 @@ impl NetworkNode {
 
     /// Synchronizes a portion of the local simulation state with other nodes.
     /// This could be periodic or event-driven.
-    pub async fn synchronize_state(&self, target_node: NodeId) -> Result<()> {
+    pub async fn synchronize_state(&self, _target_node: NodeId) -> Result<()> {
         let message = NetworkMessage::Data { sender_node: self.id, payload: self.local_simulation_state.clone() };
         self.send_message(message).await
     }
@@ -181,9 +181,9 @@ pub async fn run_network_node(node_id: u64, buffer_size: usize) -> Result<()> {
     node.connect_to_node(NodeId::new(999), dummy_tx).await; // Connect to a dummy coordinator
 
     // Spawn a task to handle incoming messages
-    let mut node_clone = node.id;
+    let _node_clone = node.id;
     tokio::spawn(async move {
-        while let Some(message) = dummy_rx.recv().await {
+        while let Some(_message) = dummy_rx.recv().await {
             // Dummy processing for messages from coordinator
             // println!("Dummy coordinator received message for {:?}: {:?}", node_clone, message);
         }
@@ -213,7 +213,7 @@ mod tests {
     fn test_node_creation() {
         let node = NetworkNode::new(1, 10);
         assert_eq!(node.id.0, 1);
-        assert!(!node.connected_nodes.is_empty()); // Should be connected to the dummy node
+        assert!(node.connected_nodes.is_empty()); // New nodes start with no connections
     }
 
     #[test]

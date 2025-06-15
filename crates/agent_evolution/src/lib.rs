@@ -254,10 +254,14 @@ impl EvolutionEngine {
             let outcome = self.simulate_action_outcome(&agent, &action)?;
             
             // Agent learns from the outcome
+            let energy = agent.energy;
+            let sentience_level = agent.sentience_level;
+            let tech_level = agent.tech_level;
+            
             agent.ai_core.learn_from_outcome(
                 action.action_type,
                 outcome.fitness_change,
-                vec![agent.energy, agent.sentience_level, agent.tech_level],
+                vec![energy, sentience_level, tech_level],
                 current_tick,
             );
             
@@ -340,7 +344,7 @@ impl EvolutionEngine {
         let mut report = EvolutionReport::new(current_tick);
         
         // 1. Process autonomous agent decisions
-        let decision_results = self.process_agent_decisions(agents, world_state, current_tick)?;
+        let _decision_results = self.process_agent_decisions(agents, world_state, current_tick)?;
         
         // 2. Process natural selection based on fitness
         let selection_results = self.selection_engine.apply_selection(
@@ -384,7 +388,7 @@ impl EvolutionEngine {
         &self,
         agents: &mut Query<&mut AutonomousAgent>,
         _world_state: &dyn WorldState,
-        current_tick: u64,
+        _current_tick: u64,
     ) -> Result<ReproductionResults> {
         let mut reproduction_count = 0;
         let mut successful_reproductions = Vec::new();
@@ -673,7 +677,7 @@ pub struct ConsciousnessResults {
 
 // Supporting types and implementations
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorldState {
+pub struct WorldStateData {
     pub environment: EnvironmentProfile,
     pub resources: HashMap<ResourceType, f64>,
     pub agents: Vec<AgentState>,
@@ -729,6 +733,10 @@ pub struct SelectionEngine;
 pub struct InnovationEngine;
 pub struct ConsciousnessTracker;
 pub struct DecisionAnalyzer;
+
+impl DecisionAnalyzer {
+    pub fn new() -> Self { Self }
+}
 
 impl LineageTracker {
     pub fn new() -> Self {
@@ -806,7 +814,7 @@ pub type AgentState = String;
 pub type Threat = String;
 pub type Opportunity = String;
 
-impl WorldState {
+impl WorldStateData {
     /// Get local resources available to an agent
     pub fn get_local_resources(&self, _agent_id: Uuid) -> HashMap<ResourceType, f64> {
         // Simplified resource availability
@@ -820,7 +828,20 @@ impl WorldState {
     /// Get nearby agents within a radius
     pub fn get_nearby_agents(&self, _agent_id: Uuid, _radius: f64) -> Vec<AgentInteraction> {
         // Simplified - return some nearby agents
-        vec!["agent_1".to_string(), "agent_2".to_string()]
+        vec![
+            AgentInteraction {
+                agent_id: Uuid::new_v4(),
+                interaction_type: InteractionType::Neutral,
+                strength: 0.5,
+                duration: 1.0,
+            },
+            AgentInteraction {
+                agent_id: Uuid::new_v4(),
+                interaction_type: InteractionType::Cooperative,
+                strength: 0.7,
+                duration: 2.0,
+            }
+        ]
     }
     
     /// Get threats present for an agent
@@ -838,6 +859,15 @@ impl WorldState {
 pub type ShelterType = String;
 
 // These types are already defined earlier in the file, removing duplicates
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Innovation {
+    pub id: Uuid,
+    pub name: String,
+    pub tech_level_requirement: f64,
+    pub benefit_multiplier: f64,
+    pub description: String,
+}
 
 impl AutonomousAgent {
     /// Create a new autonomous agent
@@ -884,7 +914,7 @@ impl AutonomousAgent {
     }
     
     /// Make an autonomous decision based on current state and environment
-    pub fn make_decision(&mut self, world_state: &WorldState, current_tick: u64) -> Result<AgentAction> {
+    pub fn make_decision(&mut self, world_state: &dyn WorldState, current_tick: u64) -> Result<AgentAction> {
         // Gather sensory information
         let nearby_agents = world_state.get_nearby_agents(self.id, self.communication_range);
         let agent_sensory_data: Vec<AgentSensoryData> = nearby_agents.iter()
@@ -920,7 +950,7 @@ impl AutonomousAgent {
     }
     
     /// Execute an action and learn from the results
-    pub fn execute_action(&mut self, action: &AgentAction, world_state: &mut WorldState, current_tick: u64) -> Result<ActionOutcome> {
+    pub fn execute_action(&mut self, action: &AgentAction, world_state: &mut dyn WorldState, current_tick: u64) -> Result<ActionOutcome> {
         let initial_fitness = self.calculate_fitness();
         let energy_cost = action.action_type.energy_cost();
         
@@ -1059,7 +1089,7 @@ impl AutonomousAgent {
     }
     
     /// Convert AI action type to specific agent action with parameters
-    fn convert_to_agent_action(&self, action_type: ActionType, sensory_input: &SensoryInput, world_state: &WorldState) -> AgentAction {
+    fn convert_to_agent_action(&self, action_type: ActionType, _sensory_input: &SensoryInput, world_state: &dyn WorldState) -> AgentAction {
         let mut parameters = HashMap::new();
         
         match action_type {
@@ -1103,7 +1133,7 @@ impl AutonomousAgent {
     }
     
     // Action execution methods
-    fn execute_extract_energy(&mut self, world_state: &mut WorldState) -> Result<ActionOutcome> {
+    fn execute_extract_energy(&mut self, world_state: &mut dyn WorldState) -> Result<ActionOutcome> {
         let available_energy = world_state.get_available_energy_at(self.position);
         let extracted = available_energy.min(10.0) * self.resource_efficiency;
         
@@ -1132,7 +1162,7 @@ impl AutonomousAgent {
         }
     }
     
-    fn execute_extract_matter(&mut self, world_state: &mut WorldState) -> Result<ActionOutcome> {
+    fn execute_extract_matter(&mut self, world_state: &mut dyn WorldState) -> Result<ActionOutcome> {
         let available_matter = world_state.get_available_matter_at(self.position);
         let extracted = available_matter.min(5.0) * self.resource_efficiency;
         
@@ -1161,7 +1191,7 @@ impl AutonomousAgent {
         }
     }
     
-    fn execute_movement(&mut self, parameters: &HashMap<String, Vec<f64>>, _world_state: &WorldState) -> Result<ActionOutcome> {
+    fn execute_movement(&mut self, parameters: &HashMap<String, Vec<f64>>, _world_state: &dyn WorldState) -> Result<ActionOutcome> {
         if let Some(direction) = parameters.get("direction") {
             if direction.len() >= 3 {
                 let speed = parameters.get("speed").and_then(|s| s.first()).unwrap_or(&1.0);
@@ -1192,7 +1222,7 @@ impl AutonomousAgent {
         }
     }
     
-    fn execute_communication(&mut self, parameters: &HashMap<String, Vec<f64>>, world_state: &mut WorldState) -> Result<ActionOutcome> {
+    fn execute_communication(&mut self, parameters: &HashMap<String, Vec<f64>>, world_state: &mut dyn WorldState) -> Result<ActionOutcome> {
         if let Some(target_id_vec) = parameters.get("target_id") {
             if let Some(target_id_f64) = target_id_vec.first() {
                 let target_id = Uuid::from_u128(*target_id_f64 as u128);
@@ -1230,7 +1260,7 @@ impl AutonomousAgent {
         })
     }
     
-    fn execute_cooperation(&mut self, _parameters: &HashMap<String, Vec<f64>>, world_state: &mut WorldState) -> Result<ActionOutcome> {
+    fn execute_cooperation(&mut self, _parameters: &HashMap<String, Vec<f64>>, world_state: &mut dyn WorldState) -> Result<ActionOutcome> {
         let nearby_agents = world_state.get_nearby_agents(self.id, self.communication_range);
         let cooperative_agents: Vec<_> = nearby_agents.iter()
             .filter(|agent| agent.cooperation_tendency > 0.4)
@@ -1261,7 +1291,7 @@ impl AutonomousAgent {
         }
     }
     
-    fn execute_reproduction(&mut self, world_state: &mut WorldState, current_tick: u64) -> Result<ActionOutcome> {
+    fn execute_reproduction(&mut self, world_state: &mut dyn WorldState, current_tick: u64) -> Result<ActionOutcome> {
         // Check reproduction requirements
         if self.energy < 80.0 || self.reproduction_count >= 10 {
             return Ok(ActionOutcome {
@@ -1312,7 +1342,7 @@ impl AutonomousAgent {
         }
     }
     
-    fn execute_innovation(&mut self, _parameters: &HashMap<String, Vec<f64>>, _world_state: &WorldState) -> Result<ActionOutcome> {
+    fn execute_innovation(&mut self, _parameters: &HashMap<String, Vec<f64>>, _world_state: &dyn WorldState) -> Result<ActionOutcome> {
         // Innovation attempt
         let innovation_success = thread_rng().gen::<f64>() < (self.tech_level + 0.1);
         
@@ -1350,7 +1380,7 @@ impl AutonomousAgent {
         }
     }
     
-    fn execute_self_modification(&mut self, _world_state: &WorldState) -> Result<ActionOutcome> {
+    fn execute_self_modification(&mut self, _world_state: &dyn WorldState) -> Result<ActionOutcome> {
         // Evolve the AI core
         self.ai_core.evolve();
         
@@ -1392,7 +1422,7 @@ impl AutonomousAgent {
         }
     }
     
-    fn execute_learning(&mut self, _parameters: &HashMap<String, Vec<f64>>, _world_state: &WorldState) -> Result<ActionOutcome> {
+    fn execute_learning(&mut self, _parameters: &HashMap<String, Vec<f64>>, _world_state: &dyn WorldState) -> Result<ActionOutcome> {
         // Learning improves AI performance and sentience
         self.sentience_level = (self.sentience_level + 0.01).min(1.0);
         
@@ -1425,7 +1455,7 @@ impl AutonomousAgent {
         })
     }
     
-    fn execute_generic_action(&mut self, action_type: &ActionType, _world_state: &WorldState) -> Result<ActionOutcome> {
+    fn execute_generic_action(&mut self, action_type: &ActionType, _world_state: &dyn WorldState) -> Result<ActionOutcome> {
         // Generic action execution for actions not specifically implemented
         let success_chance = match action_type {
             ActionType::Hide => 0.7,

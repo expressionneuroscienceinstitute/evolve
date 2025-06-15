@@ -45,21 +45,47 @@ pub static PARTICLE_DATA: Lazy<HashMap<ParticleType, ParticleProperties>> = Lazy
     ins!(Electron, ELECTRON_MASS, -ELEMENTARY_CHARGE, 0.5, None, false);
     ins!(Positron, ELECTRON_MASS, ELEMENTARY_CHARGE, 0.5, None, false);
     ins!(ElectronNeutrino, 0.0, 0.0, 0.5, None, false);
+    ins!(ElectronAntiNeutrino, 0.0, 0.0, 0.5, None, false);
     ins!(Muon, 105.6583745e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some(2.1969811e-6_f64.recip()), false);
     ins!(MuonNeutrino, 0.0, 0.0, 0.5, None, false);
+    ins!(MuonAntiNeutrino, 0.0, 0.0, 0.5, None, false);
     ins!(Tau, 1.77686e9 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some(2.903e-13_f64.recip()), false);
     ins!(TauNeutrino, 0.0, 0.0, 0.5, None, false);
+    ins!(TauAntiNeutrino, 0.0, 0.0, 0.5, None, false);
 
     // Gauge bosons & scalar
     ins!(Photon, 0.0, 0.0, 1.0, None, false);
     ins!(Gluon, 0.0, 0.0, 1.0, None, true);
     ins!(WBoson, 80.379e9 * 1.78266192e-36, ELEMENTARY_CHARGE, 1.0, Some(3.2e-25_f64.recip()), false);
+    ins!(WBosonMinus, 80.379e9 * 1.78266192e-36, -ELEMENTARY_CHARGE, 1.0, Some(3.2e-25_f64.recip()), false);
     ins!(ZBoson, 91.1876e9 * 1.78266192e-36, 0.0, 1.0, Some(2.6e-25_f64.recip()), false);
     ins!(Higgs, 125.25e9 * 1.78266192e-36, 0.0, 0.0, Some(1.6e-22_f64.recip()), false);
 
     // Composite baryons (approx masses)
     ins!(Proton, PROTON_MASS, ELEMENTARY_CHARGE, 0.5, None, false);
     ins!(Neutron, NEUTRON_MASS, 0.0, 0.5, Some(880.2_f64.recip()), false);
+
+    // Additional light mesons (π, K, η)
+    ins!(PionPlus, 139.57e6 * 1.78266192e-36, ELEMENTARY_CHARGE, 0.0, Some(2.6e-8_f64.recip()), false);
+    ins!(PionMinus, 139.57e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.0, Some(2.6e-8_f64.recip()), false);
+    ins!(PionZero, 134.98e6 * 1.78266192e-36, 0.0, 0.0, Some(8.52e-17_f64.recip()), false);
+    ins!(KaonPlus, 493.68e6 * 1.78266192e-36, ELEMENTARY_CHARGE, 0.0, Some(1.24e-8_f64.recip()), false);
+    ins!(KaonMinus, 493.68e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.0, Some(1.24e-8_f64.recip()), false);
+    ins!(KaonZero, 497.61e6 * 1.78266192e-36, 0.0, 0.0, Some(8.96e-11_f64.recip()), false);
+    ins!(Eta, 547.86e6 * 1.78266192e-36, 0.0, 0.0, Some(1.31e-18_f64.recip()), false);
+
+    // Additional baryons (Λ, Σ, Ξ, Ω)
+    ins!(Lambda, 1115.68e6 * 1.78266192e-36, 0.0, 0.5, Some(2.6e-10_f64.recip()), false);
+    ins!(SigmaPlus, 1189.37e6 * 1.78266192e-36, ELEMENTARY_CHARGE, 0.5, Some(8.02e-11_f64.recip()), false);
+    ins!(SigmaMinus, 1197.45e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some(1.48e-10_f64.recip()), false);
+    ins!(SigmaZero, 1192.64e6 * 1.78266192e-36, 0.0, 0.5, Some(7.4e-20_f64.recip()), false);
+    ins!(XiMinus, 1321.71e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 0.5, Some(1.64e-10_f64.recip()), false);
+    ins!(XiZero, 1314.86e6 * 1.78266192e-36, 0.0, 0.5, Some(2.9e-10_f64.recip()), false);
+    ins!(OmegaMinus, 1672.45e6 * 1.78266192e-36, -ELEMENTARY_CHARGE, 1.5, Some(8.21e-11_f64.recip()), false);
+
+    // Heavy quarkonium states (J/ψ, Υ)
+    ins!(JPsi, 3096.9e6 * 1.78266192e-36, 0.0, 1.0, Some(9.3e-5_f64.recip()), false);
+    ins!(Upsilon, 9460.3e6 * 1.78266192e-36, 0.0, 1.0, Some(5.4e-5_f64.recip()), false);
 
     m
 });

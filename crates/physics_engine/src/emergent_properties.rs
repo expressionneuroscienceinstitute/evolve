@@ -174,11 +174,11 @@ impl EmergenceMonitor {
         
         // Thermal de Broglie wavelength (quantum mechanical length scale)
         let h = 6.626e-34; // Planck constant
-        let lambda_th = h / (2.0 * std::f64::consts::PI * avg_mass * BOLTZMANN * temperature).sqrt();
+        let _lambda_th = h / (2.0 * std::f64::consts::PI * avg_mass * BOLTZMANN * temperature).sqrt();
         
         // Volume density (assume particles are in a cubic volume)
         let volume = 1.0; // Normalized volume - would need actual system volume
-        let number_density = n / volume;
+        let _number_density = n / volume;
         
         // Sackur-Tetrode equation for entropy of an ideal gas (per particle)
         // S = k * ln[(V/N) * (2πmkT/h²)^(3/2) * e^(5/2)]

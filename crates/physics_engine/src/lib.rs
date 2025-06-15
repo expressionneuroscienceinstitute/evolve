@@ -40,19 +40,33 @@ pub enum ParticleType {
     Up, Down, Charm, Strange, Top, Bottom,
     
     // Leptons
-    Electron, ElectronNeutrino, ElectronAntiNeutrino, Muon, MuonNeutrino, Tau, TauNeutrino,
+    Electron, ElectronNeutrino, ElectronAntiNeutrino, 
+    Muon, MuonNeutrino, MuonAntiNeutrino,
+    Tau, TauNeutrino, TauAntiNeutrino,
     
     // Antiparticles
     Positron,
     
     // Gauge bosons
-    Photon, WBoson, ZBoson, Gluon,
+    Photon, WBoson, WBosonMinus, ZBoson, Gluon,
     
     // Scalar bosons
     Higgs,
     
     // Composite particles
     Proton, Neutron, 
+    
+    // Light mesons (π, K, η)
+    PionPlus, PionMinus, PionZero,
+    KaonPlus, KaonMinus, KaonZero,
+    Eta,
+    
+    // Baryons (Λ, Σ, Ξ, Ω)
+    Lambda, SigmaPlus, SigmaMinus, SigmaZero,
+    XiMinus, XiZero, OmegaMinus,
+    
+    // Heavy quarkonium states
+    JPsi, Upsilon,
     
     // Atomic nuclei (by mass number)
     Hydrogen, Helium, Lithium, Carbon, Oxygen, Iron, // ... etc
@@ -575,20 +589,38 @@ impl PhysicsEngine {
     }
     
     /// Comprehensive physics simulation step
-    pub fn step(&mut self, _classical_states: &mut [PhysicsState]) -> Result<()> {
+    pub fn step(&mut self, classical_states: &mut [PhysicsState]) -> Result<()> {
         // Main physics loop
         
-        // 1. Particle interactions
+        // 1. Particle interactions (QED, weak, strong)
         self.process_particle_interactions()?;
         
-        // 2. Decays
+        // 2. Particle decays and radioactivity
         self.process_particle_decays()?;
         
-        // 3. Nuclear processes
+        // 3. Nuclear processes (fusion, fission, nuclear reactions)
         self.process_nuclear_reactions()?;
         
-        // 4. Update temperature based on particle energies
-        self.update_temperature()?;
+        // 4. Molecular dynamics and chemical reactions
+        self.update_molecular_dynamics(classical_states)?;
+        
+        // 5. Phase transitions (gas/liquid/solid/plasma)
+        self.process_phase_transitions()?;
+        
+        // 6. Emergent properties (statistical mechanics)
+        self.update_emergent_properties(classical_states)?;
+        
+        // 7. Update thermodynamic state
+        self.update_thermodynamic_state()?;
+        
+        // 8. Quantum state evolution
+        self.evolve_quantum_state()?;
+        
+        // 9. Update particle energies for consistency
+        self.update_particle_energies()?;
+        
+        // 10. Update current simulation time
+        self.current_time += self.time_step;
         
         Ok(())
     }
@@ -769,16 +801,20 @@ impl PhysicsEngine {
         Ok(())
     }
     
-    /// Update nuclear physics (fusion, fission, nuclear reactions)
+    /// Comprehensive nuclear physics processing (fusion, fission, nuclear reactions)
     fn process_nuclear_reactions(&mut self) -> Result<()> {
-        // This is a legacy placeholder. The main logic is in `process_nuclear_fusion`.
-        // We can use this to periodically trigger high-level nuclear processes.
-
-        // Example: Check for supernova conditions
-        // if self.core_temperature > 5e9 && self.core_density > 1e12 {
-        //     self.trigger_supernova()?;
-        // }
-
+        // Process nuclear fusion reactions (stellar nucleosynthesis)
+        self.process_nuclear_fusion()?;
+        
+        // Process nuclear fission (for heavy nuclei)
+        self.process_nuclear_fission()?;
+        
+        // Update nuclear shell structure
+        self.update_nuclear_shells()?;
+        
+        // Process atomic physics interactions
+        self.update_atomic_physics()?;
+        
         Ok(())
     }
 
@@ -1040,7 +1076,7 @@ impl PhysicsEngine {
     fn select_decay_channel(&self, channels: &[DecayChannel]) -> DecayChannel { channels[0].clone() }
     fn execute_decay(&mut self, index: usize, channel: DecayChannel) -> Result<()> {
         let original_particle = self.particles.swap_remove(index);
-        let mut rng = thread_rng();
+        let _rng = thread_rng();
 
         // Create product particles
         let mut new_particles = Vec::new();
@@ -1108,8 +1144,8 @@ impl PhysicsEngine {
     }
     
     fn execute_fission(&mut self, nucleus_idx: usize) -> Result<()> {
-        let mut nucleus = self.nuclei.remove(nucleus_idx);
-        let mut rng = rand::thread_rng();
+        let nucleus = self.nuclei.remove(nucleus_idx);
+        let _rng = rand::thread_rng();
 
         // Simplified fission model: split into two smaller nuclei + neutrons
         // This is a placeholder for a proper fission model like Wahl's systematics
@@ -1193,7 +1229,7 @@ impl PhysicsEngine {
     }
 
     /// Calculates a potential fusion reaction between two nuclei.
-    fn calculate_fusion_reaction(&self, i: usize, j: usize) -> Result<FusionReaction> {
+    fn calculate_fusion_reaction(&self, _i: usize, _j: usize) -> Result<FusionReaction> {
         // let n1 = &self.nuclei[i];
         // let n2 = &self.nuclei[j];
 
@@ -1219,7 +1255,7 @@ impl PhysicsEngine {
     }
 
     /// Executes a fusion reaction, updating the particle list.
-    fn execute_fusion_reaction(&mut self, reaction: FusionReaction) -> Result<()> {
+    fn execute_fusion_reaction(&mut self, _reaction: FusionReaction) -> Result<()> {
         // Consumes reactants
         // reaction.reactant_indices.iter().rev().for_each(|&idx| {
         //     self.nuclei.remove(idx);
@@ -1541,10 +1577,67 @@ impl PhysicsEngine {
     }
     #[allow(dead_code)]
     fn update_molecular_dynamics(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
-    #[allow(dead_code)]
-    fn process_phase_transitions(&mut self) -> Result<()> { Ok(()) }
-    #[allow(dead_code)]
-    fn update_emergent_properties(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
+    fn process_phase_transitions(&mut self) -> Result<()> {
+        use crate::phase_transitions::*;
+        use crate::emergent_properties::{Temperature, Pressure, Density};
+        
+        // Process phase transitions for each material at current temperature and pressure
+        let pressure = self.calculate_system_pressure();
+        
+        // Calculate density for phase determination
+        let total_mass = self.particles.iter().map(|p| p.mass).sum::<f64>();
+        let density = total_mass / self.volume.max(1e-50);
+        
+        // Check for phase transitions in hydrogen (dominant in early universe)
+        let temp = Temperature::from_kelvin(self.temperature);
+        let pres = Pressure::from_pascals(pressure);
+        let dens = Density::from_kg_per_m3(density);
+        
+        if let Ok(hydrogen_phase) = evaluate_phase_transitions("hydrogen", temp, pres, dens) {
+            // Log phase information (simplified for now)
+            if self.particles.len() > 1000 {
+                log::debug!("Phase transitions: H2 = {:?}, T = {:.2e}K, P = {:.2e}Pa", 
+                           hydrogen_phase, self.temperature, pressure);
+            }
+        }
+        
+        Ok(())
+    }
+    fn update_emergent_properties(&mut self, states: &mut [PhysicsState]) -> Result<()> {
+        use crate::emergent_properties::*;
+        
+        // Calculate emergent statistical mechanics properties
+        let mut monitor = EmergenceMonitor::new();
+        
+        // Update emergent properties from classical states (if any)
+        if !states.is_empty() {
+            monitor.update(states, self.volume)?;
+            
+            // Update engine state with calculated values
+            let calculated_temp = monitor.temperature.as_kelvin();
+            if calculated_temp > 0.0 {
+                self.temperature = calculated_temp;
+            }
+            
+            // Log emergent properties for debugging
+            log::trace!("Emergent properties: T = {:.2e}K, P = {:.2e}Pa, ρ = {:.2e}kg/m³, S = {:.2e}J/K", 
+                       monitor.temperature.as_kelvin(),
+                       monitor.pressure.as_pascals(),
+                       monitor.density.as_kg_per_m3(),
+                       monitor.entropy.as_joules_per_kelvin());
+        } else {
+            // If no classical states, calculate basic properties from particles
+            if !self.particles.is_empty() {
+                let total_mass = self.particles.iter().map(|p| p.mass).sum::<f64>();
+                let density = total_mass / self.volume.max(1e-50);
+                
+                log::trace!("Basic properties from particles: N = {}, ρ = {:.2e}kg/m³, T = {:.2e}K", 
+                           self.particles.len(), density, self.temperature);
+            }
+        }
+        
+        Ok(())
+    }
     #[allow(dead_code)]
     fn update_running_couplings(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
     #[allow(dead_code)]

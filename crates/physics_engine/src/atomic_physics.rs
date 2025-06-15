@@ -454,8 +454,8 @@ mod tests {
     #[test]
     fn test_photoionization_cross_sections() {
         // Test photoionization cross-section for hydrogen.
-        // The threshold energy is ~13.6 eV.
-        let h_ionization_energy = 13.6;
+        // The threshold energy is exactly the Rydberg energy: 13.605693122994 eV
+        let h_ionization_energy = RYDBERG_ENERGY; // Use exact value
 
         // At threshold, the cross-section should be ~6.3e-22 m^2.
         let cs_at_threshold = photoionization_cross_section(1, h_ionization_energy);
@@ -471,7 +471,7 @@ mod tests {
 
         // Test for Helium (Z=2). Ionization energy is 4x hydrogen's.
         // Threshold cross-section should be sigma_L / Z^2
-        let he_ionization_energy = 13.6 * 4.0;
+        let he_ionization_energy = RYDBERG_ENERGY * 4.0;
         let cs_he_threshold = photoionization_cross_section(2, he_ionization_energy);
         assert_relative_eq!(cs_he_threshold, 6.3e-22 / 4.0, epsilon = 1e-24);
     }

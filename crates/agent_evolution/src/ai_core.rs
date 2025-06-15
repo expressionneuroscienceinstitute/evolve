@@ -569,7 +569,7 @@ impl AICore {
     }
     
     /// Main decision-making process
-    pub fn make_decision(&mut self, sensory_input: &SensoryInput, current_tick: u64) -> Result<ActionType> {
+    pub fn make_decision(&mut self, sensory_input: &SensoryInput, _current_tick: u64) -> Result<ActionType> {
         // Update short-term memory with current sensory input
         let input_summary = sensory_input.internal_state.iter().sum::<f64>() / sensory_input.internal_state.len() as f64;
         self.memory.short_term.rotate_right(1);

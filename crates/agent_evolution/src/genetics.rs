@@ -59,10 +59,11 @@ impl Dna {
 }
 
 /// Represents a gene, which is a segment of DNA that codes for a specific trait.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Gene {
     pub id: String,
     pub dna: Dna,
+    pub expression_level: f64,  // 0.0 to 1.0 indicating how actively this gene is expressed
 }
 
 impl Gene {
@@ -71,12 +72,13 @@ impl Gene {
         Gene {
             id: id.to_string(),
             dna: Dna::new_random(rng, dna_length),
+            expression_level: rng.gen_range(0.0..1.0),  // Random initial expression level
         }
     }
 }
 
 /// Represents the complete set of genes for an agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Genome {
     pub genes: Vec<Gene>,
 }

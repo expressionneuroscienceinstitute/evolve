@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -23,6 +23,7 @@ mod rpc;
 #[derive(Clone)]
 struct SharedState {
     sim: Arc<Mutex<UniverseSimulation>>,
+    last_save_time: Option<Instant>,
 }
 
 #[derive(Parser)]
@@ -374,8 +375,8 @@ async fn cmd_start(
     let sim = Arc::new(Mutex::new(sim));
 
     // Start RPC server
-    let shared_state = SharedState { sim: sim.clone() };
-    tokio::spawn(start_rpc_server(rpc_port, shared_state));
+    let shared_state = Arc::new(Mutex::new(SharedState { sim: sim.clone(), last_save_time: None }));
+    tokio::spawn(start_rpc_server(rpc_port, shared_state.clone()));
 
     // Start WebSocket server if requested
     let (tx, _) = broadcast::channel(100);
@@ -405,6 +406,13 @@ async fn cmd_start(
             info!("Auto-saving checkpoint to {:?}", checkpoint_file);
             if let Err(e) = persistence::save_checkpoint(&mut *sim_guard, &checkpoint_file) {
                 error!("Failed to save checkpoint: {}", e);
+            } else {
+                // Update last save time on successful save
+                drop(sim_guard);
+                if let Ok(mut state) = shared_state.lock() {
+                    state.last_save_time = Some(Instant::now());
+                }
+                sim_guard = sim.lock().unwrap();
             }
         }
         
@@ -440,8 +448,39 @@ async fn cmd_start(
 
 async fn cmd_stop() -> Result<()> {
     println!("Stopping simulation...");
-    // TODO: Send stop signal to running simulation
-    println!("Simulation stopped.");
+
+    // Build a JSON-RPC stop request
+    let client = reqwest::Client::new();
+    let req_body = json!({
+        "jsonrpc": "2.0",
+        "method": "stop",
+        "params": {},
+        "id": 3
+    });
+
+    // Attempt to contact the local RPC server (default port 9001)
+    let res = client
+        .post("http://127.0.0.1:9001/rpc")
+        .json(&req_body)
+        .send()
+        .await?;
+
+    // Handle connection failures gracefully so the CLI doesn't crash
+    if !res.status().is_success() {
+        println!("Error: Failed to connect to simulation RPC server.");
+        println!("Is the simulation running with 'universectl start'?\n");
+        return Ok(());
+    }
+
+    // Parse the generic RPC response (payload is not important here)
+    let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+
+    if let Some(error) = rpc_res.error {
+        println!("RPC Error: {} (code: {})", error.message, error.code);
+    } else {
+        println!("Stop command sent successfully. Waiting for simulation to shut down...");
+    }
+
     Ok(())
 }
 
@@ -449,58 +488,306 @@ async fn cmd_map(zoom: f64, layer: &str) -> Result<()> {
     println!("Universe Map (zoom: {:.1}, layer: {})", zoom, layer);
     println!("================================");
     
+    // Try to get real simulation data via RPC
+    let client = reqwest::Client::new();
+    let params = json!({ "zoom": zoom, "layer": layer });
+    let req_body = json!({
+        "jsonrpc": "2.0",
+        "method": "get_map_data",
+        "params": params,
+        "id": 5
+    });
+
     let width = 60;
     let height = 20;
     
+    match client
+        .post("http://127.0.0.1:9001/rpc")
+        .json(&req_body)
+        .send()
+        .await
+    {
+        Ok(res) if res.status().is_success() => {
+            // Try to parse simulation data
+            if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
+                if let Some(map_data) = rpc_res.result {
+                    render_simulation_map(&map_data, width, height, layer)?;
+                    return Ok(());
+                }
+            }
+        }
+        _ => {
+            println!("Warning: Could not connect to simulation. Showing sample data.");
+            println!("Start simulation with 'universectl start' for real data.\n");
+        }
+    }
+    
+    // Fallback to more realistic sample data when simulation isn't running
+    render_sample_map(width, height, layer, zoom);
+    
+    Ok(())
+}
+
+fn render_simulation_map(map_data: &serde_json::Value, width: usize, height: usize, layer: &str) -> Result<()> {
+    // TODO: Parse actual simulation data structure
+    // For now, render based on expected data format
+    
+    if let Some(grid) = map_data.get("density_grid").and_then(|g| g.as_array()) {
+        for y in 0..height {
+            for x in 0..width {
+                let grid_idx = y * width + x;
+                let density = grid.get(grid_idx)
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                
+                let char = density_to_char(density, layer);
+                print!("{}", char);
+            }
+            println!();
+        }
+    } else {
+        // Fallback if data format is unexpected
+        render_sample_map(width, height, layer, 1.0);
+    }
+    
+    print_map_legend(layer);
+    Ok(())
+}
+
+fn render_sample_map(width: usize, height: usize, layer: &str, zoom: f64) {
+
+    
     for y in 0..height {
         for x in 0..width {
-            let density = ((x + y) % 10) as f64 / 10.0;
-            let char = match density {
-                d if d < 0.2 => ' ',
-                d if d < 0.4 => '.',
-                d if d < 0.6 => ':',
-                d if d < 0.8 => '*',
-                _ => '#',
+            // More realistic cosmic structure simulation
+            let nx = (x as f64 / width as f64 - 0.5) * zoom;
+            let ny = (y as f64 / height as f64 - 0.5) * zoom;
+            
+            let density = match layer {
+                "dark_matter" => {
+                    // Simulate dark matter filaments
+                    let filament = (nx * 10.0).sin() * (ny * 10.0).cos();
+                    let halo = (-((nx * nx + ny * ny) * 20.0)).exp();
+                    (filament * 0.3 + halo * 0.7 + 0.1).max(0.0).min(1.0)
+                },
+                "gas" => {
+                    // Simulate gas distribution following dark matter
+                    let shock_fronts = ((nx * 15.0).sin() + (ny * 12.0).cos()) * 0.5 + 0.5;
+                    let void_regions = (-((nx * nx + ny * ny) * 5.0)).exp();
+                    (shock_fronts * 0.6 + void_regions * 0.4).max(0.0).min(1.0)
+                },
+                "stars" => {
+                    // Stellar density peaks in galaxy clusters
+                    let cluster_1 = (-((nx + 0.3).powi(2) + (ny - 0.2).powi(2)) * 30.0).exp();
+                    let cluster_2 = (-((nx - 0.4).powi(2) + (ny + 0.1).powi(2)) * 40.0).exp();
+                    let background = ((nx * 25.0 + ny * 17.0).sin() * 0.1).max(0.0);
+                    (cluster_1 + cluster_2 + background).max(0.0).min(1.0)
+                },
+                "radiation" => {
+                    // Cosmic microwave background + point sources
+                    let cmb = 0.1 + ((nx * 50.0).sin() + (ny * 47.0).cos()) * 0.05;
+                    let agn = (-((nx - 0.1).powi(2) + (ny + 0.3).powi(2)) * 100.0).exp() * 0.8;
+                    (cmb + agn).max(0.0).min(1.0)
+                },
+                _ => {
+                    // Default density pattern
+                    let base = ((nx * 8.0).sin() * (ny * 6.0).cos()).abs();
+                    let structure = (-((nx * nx + ny * ny) * 3.0)).exp();
+                    (base * 0.7 + structure * 0.3).max(0.0).min(1.0)
+                }
             };
+            
+            let char = density_to_char(density, layer);
             print!("{}", char);
         }
         println!();
     }
     
-    println!("\nLegend: [space]=void, .=gas, :=stars, *=dense, #=very dense");
-    
-    Ok(())
+    print_map_legend(layer);
+}
+
+fn density_to_char(density: f64, layer: &str) -> char {
+    match layer {
+        "dark_matter" => {
+            match density {
+                d if d < 0.1 => ' ',
+                d if d < 0.3 => '░',
+                d if d < 0.6 => '▒',
+                d if d < 0.8 => '▓',
+                _ => '█',
+            }
+        },
+        "gas" => {
+            match density {
+                d if d < 0.2 => ' ',
+                d if d < 0.4 => '.',
+                d if d < 0.6 => ':',
+                d if d < 0.8 => '~',
+                _ => '≈',
+            }
+        },
+        "stars" => {
+            match density {
+                d if d < 0.1 => ' ',
+                d if d < 0.3 => '·',
+                d if d < 0.5 => '+',
+                d if d < 0.7 => '*',
+                d if d < 0.9 => '✦',
+                _ => '★',
+            }
+        },
+        "radiation" => {
+            match density {
+                d if d < 0.2 => ' ',
+                d if d < 0.4 => '.',
+                d if d < 0.6 => 'o',
+                d if d < 0.8 => 'O',
+                _ => '◉',
+            }
+        },
+        _ => {
+            match density {
+                d if d < 0.2 => ' ',
+                d if d < 0.4 => '.',
+                d if d < 0.6 => ':',
+                d if d < 0.8 => '*',
+                _ => '#',
+            }
+        }
+    }
+}
+
+fn print_map_legend(layer: &str) {
+    println!();
+    match layer {
+        "dark_matter" => println!("Legend: [space]=void, ░=thin, ▒=moderate, ▓=dense, █=very dense"),
+        "gas" => println!("Legend: [space]=void, .=tenuous, :=moderate, ~=dense, ≈=shock fronts"),
+        "stars" => println!("Legend: [space]=void, ·=sparse, +=moderate, *=dense, ✦=cluster, ★=core"),
+        "radiation" => println!("Legend: [space]=cold, .=CMB, o=warm, O=hot, ◉=AGN/quasars"),
+        _ => println!("Legend: [space]=void, .=gas, :=stars, *=dense, #=very dense"),
+    }
+    println!("Available layers: stars, gas, dark_matter, radiation");
 }
 
 async fn cmd_list_planets(class: Option<String>, habitable: bool) -> Result<()> {
     println!("Planetary Bodies");
     println!("================");
     
-    println!("ID       | Class | Temp (°C) | Water | O2   | Radiation | Habitable");
-    println!("---------|-------|-----------|-------|------|-----------|----------");
+    // Try to get real simulation data via RPC
+    let client = reqwest::Client::new();
+    let params = json!({ 
+        "class_filter": class, 
+        "habitable_only": habitable 
+    });
+    let req_body = json!({
+        "jsonrpc": "2.0",
+        "method": "list_planets",
+        "params": params,
+        "id": 6
+    });
+
+    match client
+        .post("http://127.0.0.1:9001/rpc")
+        .json(&req_body)
+        .send()
+        .await
+    {
+        Ok(res) if res.status().is_success() => {
+            if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
+                if let Some(planets_data) = rpc_res.result {
+                    render_planet_list(&planets_data, &class, habitable)?;
+                    return Ok(());
+                }
+            }
+        }
+        _ => {
+            println!("Warning: Could not connect to simulation. Showing sample data.");
+            println!("Start simulation with 'universectl start' for real data.\n");
+        }
+    }
+    
+    // Fallback to sample data when simulation isn't running
+    render_sample_planets(&class, habitable);
+    
+    Ok(())
+}
+
+fn render_planet_list(planets_data: &serde_json::Value, class_filter: &Option<String>, habitable_only: bool) -> Result<()> {
+    println!("ID         | Class | Temp (°C) | Water | O2   | Radiation | Habitable | Age (Gyr)");
+    println!("-----------|-------|-----------|-------|------|-----------|-----------|----------");
+    
+    if let Some(planets) = planets_data.as_array() {
+        for planet in planets {
+            let id = planet.get("id").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+            let pclass = planet.get("class").and_then(|v| v.as_str()).unwrap_or("?");
+            let temp = planet.get("temperature").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let water = planet.get("water_fraction").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let o2 = planet.get("oxygen_fraction").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let radiation = planet.get("radiation_level").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let habitable = planet.get("habitable").and_then(|v| v.as_bool()).unwrap_or(false);
+            let age = planet.get("age_gyr").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            
+            // Apply filters
+            if let Some(ref filter_class) = class_filter {
+                if pclass != filter_class {
+                    continue;
+                }
+            }
+            
+            if habitable_only && !habitable {
+                continue;
+            }
+            
+            println!("{:<10} | {:<5} | {:<9.1} | {:<5.2} | {:<4.3} | {:<9.3} | {:<9} | {:<.2}", 
+                     id, pclass, temp, water, o2, radiation, 
+                     if habitable { "Yes" } else { "No" }, age);
+        }
+    } else {
+        println!("Error: Unexpected data format from simulation");
+    }
+    
+    Ok(())
+}
+
+fn render_sample_planets(class_filter: &Option<String>, habitable_only: bool) {
+    println!("ID         | Class | Temp (°C) | Water | O2   | Radiation | Habitable | Age (Gyr)");
+    println!("-----------|-------|-----------|-------|------|-----------|-----------|----------");
     
     let planets = [
-        ("SOL-3", "E", "15.0", "0.71", "0.21", "0.002", "Yes"),
-        ("PROX-B", "D", "-60.0", "0.01", "0.001", "0.1", "No"),
-        ("KEPLER-442B", "E", "5.0", "0.45", "0.18", "0.003", "Yes"),
+        ("SOL-3", "E", 15.0, 0.71, 0.21, 0.002, true, 4.54),
+        ("PROX-B", "D", -60.0, 0.01, 0.001, 0.1, false, 4.85),
+        ("KEPLER-442B", "E", 5.0, 0.45, 0.18, 0.003, true, 2.9),
+        ("TRAPPIST-1E", "E", -22.0, 0.3, 0.15, 0.005, true, 7.6),
+        ("HD-40307G", "E", 22.0, 0.6, 0.19, 0.002, true, 4.2),
+        ("GLIESE-667CC", "D", 45.0, 0.1, 0.05, 0.02, false, 6.0),
+        ("K2-18B", "I", -40.0, 0.8, 0.12, 0.01, false, 3.4),
+        ("TOI-715B", "E", 10.0, 0.5, 0.22, 0.001, true, 6.6),
+        ("WASP-96B", "G", 1200.0, 0.0, 0.0, 0.5, false, 1.3),
+        ("55-CANCRI-E", "T", 2000.0, 0.0, 0.0, 1.2, false, 8.2),
     ];
     
-    for (id, pclass, temp, water, o2, rad, hab) in planets {
-        if let Some(ref filter_class) = class {
+    for (id, pclass, temp, water, o2, rad, hab, age) in planets {
+        if let Some(ref filter_class) = class_filter {
             if pclass != filter_class {
                 continue;
             }
         }
         
-        if habitable && hab != "Yes" {
+        if habitable_only && !hab {
             continue;
         }
         
-        println!("{:<8} | {:<5} | {:<9} | {:<5} | {:<4} | {:<9} | {}", 
-                 id, pclass, temp, water, o2, rad, hab);
+        println!("{:<10} | {:<5} | {:<9.1} | {:<5.2} | {:<4.3} | {:<9.3} | {:<9} | {:<.2}", 
+                 id, pclass, temp, water, o2, rad, 
+                 if hab { "Yes" } else { "No" }, age);
     }
     
-    Ok(())
+    println!("\nPlanet Classes:");
+    println!("E = Earth-like (temperate, water, oxygen)");
+    println!("D = Desert (dry, thin atmosphere)");
+    println!("I = Ice (frozen, thick atmosphere)");  
+    println!("T = Toxic (hostile chemistry)");
+    println!("G = Gas dwarf (no solid surface)");
 }
 
 async fn cmd_inspect(target: InspectTarget) -> Result<()> {
@@ -547,42 +834,302 @@ async fn cmd_snapshot(file: PathBuf, _format: Option<String>) -> Result<()> {
 }
 
 async fn cmd_speed(factor: f64) -> Result<()> {
-    println!("Setting simulation speed factor to {}", factor);
-    // TODO: Send speed change command to simulation
-    println!("Speed updated.");
+    println!("Setting simulation speed factor to {}x", factor);
+
+    // Build JSON-RPC request
+    let client = reqwest::Client::new();
+    let params = json!({ "factor": factor });
+    let req_body = json!({
+        "jsonrpc": "2.0",
+        "method": "set_speed",
+        "params": params,
+        "id": 4
+    });
+
+    let res = client
+        .post("http://127.0.0.1:9001/rpc")
+        .json(&req_body)
+        .send()
+        .await?;
+
+    if !res.status().is_success() {
+        println!("Error: Failed to connect to simulation RPC server.");
+        println!("Is the simulation running with 'universectl start'?\n");
+        return Ok(());
+    }
+
+    let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+
+    if let Some(error) = rpc_res.error {
+        println!("RPC Error: {} (code: {})", error.message, error.code);
+    } else {
+        println!("Speed updated successfully.");
+    }
+
     Ok(())
 }
 
 async fn cmd_rewind(ticks: u64) -> Result<()> {
-    println!("Rewinding simulation by {} ticks", ticks);
-    // TODO: Implement rewind functionality
-    println!("Rewind complete.");
+    println!("Rewinding simulation by {} ticks...", ticks);
+
+    // Build JSON-RPC request
+    let client = reqwest::Client::new();
+    let params = json!({ "ticks": ticks });
+    let req_body = json!({
+        "jsonrpc": "2.0",
+        "method": "rewind",
+        "params": params,
+        "id": 5
+    });
+
+    let res = client
+        .post("http://127.0.0.1:9001/rpc")
+        .json(&req_body)
+        .send()
+        .await?;
+
+    if !res.status().is_success() {
+        println!("Error: Failed to connect to simulation RPC server.\nIs the simulation running with 'universectl start'?\n");
+        return Ok(());
+    }
+
+    let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+
+    if let Some(error) = rpc_res.error {
+        println!("RPC Error: {} (code: {})", error.message, error.code);
+    } else {
+        println!("Rewind successful.");
+    }
+
     Ok(())
 }
 
 async fn cmd_godmode(action: GodModeAction) -> Result<()> {
     println!("Executing God-Mode action...");
     match action {
-        GodModeAction::CreateBody { .. } => {
-            // TODO: Implement body creation
+        GodModeAction::CreateBody { mass, body_type, x, y, z } => {
+            println!(
+                "Creating body of type '{}' (mass = {} kg) at ({}, {}, {})",
+                body_type, mass, x, y, z
+            );
+
+            let client = reqwest::Client::new();
+            let params = json!({
+                "mass": mass,
+                "body_type": body_type,
+                "position": { "x": x, "y": y, "z": z }
+            });
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "create_body",
+                "params": params,
+                "id": 10
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("Body creation successful.");
+                }
+            }
         }
-        GodModeAction::DeleteBody { .. } => {
-            // TODO: Implement body deletion
+        GodModeAction::DeleteBody { id } => {
+            println!("Deleting body with ID '{}'", id);
+
+            let client = reqwest::Client::new();
+            let params = json!({ "id": id });
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "delete_body",
+                "params": params,
+                "id": 11
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("Body deletion successful.");
+                }
+            }
         }
-        GodModeAction::SetConstant { .. } => {
-            // TODO: Implement constant modification
+        GodModeAction::SetConstant { name, value } => {
+            println!("Updating constant '{}' to {}", name, value);
+
+            let client = reqwest::Client::new();
+            let params = json!({ "name": name, "value": value });
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "set_constant",
+                "params": params,
+                "id": 12
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("Constant updated successfully.");
+                }
+            }
         }
-        GodModeAction::SpawnLineage { .. } => {
-            // TODO: Implement lineage spawning
+        GodModeAction::SpawnLineage { code_hash, planet_id } => {
+            println!("Spawning lineage with code hash {} on planet {}", code_hash, planet_id);
+
+            let client = reqwest::Client::new();
+            let params = json!({ "code_hash": code_hash, "planet_id": planet_id });
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "spawn_lineage",
+                "params": params,
+                "id": 13
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("Lineage spawned successfully.");
+                }
+            }
         }
-        GodModeAction::Miracle { .. } => {
-            // TODO: Implement miracles
+        GodModeAction::Miracle { planet_id, miracle_type, duration, intensity } => {
+            println!("Performing miracle '{}' on planet {}", miracle_type, planet_id);
+            
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "perform_miracle",
+                "params": {
+                    "planet_id": planet_id,
+                    "miracle_type": miracle_type,
+                    "duration": duration,
+                    "intensity": intensity
+                },
+                "id": 16
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<String> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("Divine miracle '{}' successfully enacted upon planet {}", miracle_type, planet_id);
+                    if let Some(dur) = duration {
+                        println!("Miracle will last for {} ticks", dur);
+                    }
+                    if let Some(int) = intensity {
+                        println!("Miracle intensity: {}", int);
+                    }
+                }
+            }
         }
-        GodModeAction::TimeWarp { .. } => {
-            // TODO: Implement time warp
+        GodModeAction::TimeWarp { factor } => {
+            println!("Applying time warp with factor: {}", factor);
+            
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "time_warp",
+                "params": {
+                    "factor": factor
+                },
+                "id": 17
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<String> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("Time warp applied successfully. Reality is now accelerated by {}x", factor);
+                }
+            }
         }
-        GodModeAction::InspectEval { .. } => {
-            // TODO: Implement expression evaluation
+        GodModeAction::InspectEval { expression } => {
+            println!("Evaluating expression: {}", expression);
+            
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "inspect_eval",
+                "params": {
+                    "expression": expression
+                },
+                "id": 18
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<String> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else if let Some(result) = rpc_res.result {
+                    println!("Expression result: {}", result);
+                } else {
+                    println!("Expression evaluated successfully (no return value)");
+                }
+            }
         }
     }
     println!("God-Mode action completed.");
@@ -592,20 +1139,132 @@ async fn cmd_godmode(action: GodModeAction) -> Result<()> {
 async fn cmd_resources(action: ResourceAction) -> Result<()> {
     match action {
         ResourceAction::Queue => {
-            println!("Pending resource requests:");
-            // TODO: Show pending resource requests
+            println!("Fetching pending resource requests...");
+
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "resources_queue",
+                "params": {},
+                "id": 20
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<Vec<rpc::ResourceRequest>> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else if let Some(queue) = rpc_res.result {
+                    if queue.is_empty() {
+                        println!("No pending requests.");
+                    } else {
+                        println!("ID       | Resource | Amount | Requested By | Expires");
+                        println!("---------|----------|--------|--------------|--------");
+                        for r in queue {
+                            println!("{:<8} | {:<8} | {:<6} | {:<12} | {}", r.id, r.resource, r.amount, r.requester, r.expires.unwrap_or_else(|| "N/A".into()));
+                        }
+                    }
+                }
+            }
         }
         ResourceAction::Grant { id, expires } => {
             println!("Granting resource request {} (expires: {:?})", id, expires);
-            // TODO: Implement resource granting
+            
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "resources_grant",
+                "params": {
+                    "id": id,
+                    "expires": expires
+                },
+                "id": 22
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<String> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("Resource request {} granted successfully", id);
+                }
+            }
         }
         ResourceAction::Status => {
-            println!("Current resource usage:");
-            // TODO: Show current resource usage
+            println!("Fetching current resource usage...");
+
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "resources_status",
+                "params": {},
+                "id": 21
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<rpc::ResourceStatus> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else if let Some(status) = rpc_res.result {
+                    println!("Resource | In-Use | Limit");
+                    println!("---------|--------|------");
+                    for (res_name, usage) in status.usage.iter() {
+                        let limit = status.limits.get(res_name).cloned().unwrap_or(0);
+                        println!("{:<8} | {:<6} | {}", res_name, usage, limit);
+                    }
+                }
+            }
         }
         ResourceAction::Reload => {
             println!("Reloading resource limits...");
-            // TODO: Implement resource reload
+            
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "resources_reload",
+                "params": {},
+                "id": 23
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<String> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("Resource limits reloaded successfully");
+                }
+            }
         }
     }
     Ok(())
@@ -614,16 +1273,110 @@ async fn cmd_resources(action: ResourceAction) -> Result<()> {
 async fn cmd_oracle(action: OracleAction) -> Result<()> {
     match action {
         OracleAction::Inbox => {
-            println!("Pending messages from agents:");
-            // TODO: Show pending messages from agents
+            println!("Fetching pending messages from agents...");
+
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "oracle_inbox",
+                "params": {},
+                "id": 30
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<Vec<rpc::Petition>> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else if let Some(petitions) = rpc_res.result {
+                    if petitions.is_empty() {
+                        println!("No pending petitions.");
+                    } else {
+                        println!("ID       | Agent | Subject | Received");
+                        println!("---------|-------|---------|--------");
+                        for p in petitions {
+                            println!("{:<8} | {:<5} | {:<7} | {}", p.id, p.agent_id, p.subject, p.received_at);
+                        }
+                    }
+                }
+            }
         }
-        OracleAction::Reply { .. } => {
-            println!("Replying to agent petition...");
-            // TODO: Implement reply functionality
+        OracleAction::Reply { petition_id, action, message } => {
+            println!("Replying to petition {} with action: {}", petition_id, action);
+            
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "oracle_reply",
+                "params": {
+                    "petition_id": petition_id,
+                    "action": action,
+                    "message": message
+                },
+                "id": 31
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<String> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("Reply sent successfully to agent petition {}", petition_id);
+                }
+            }
         }
         OracleAction::Stats => {
-            println!("Communication statistics:");
-            // TODO: Show communication statistics
+            println!("Fetching communication statistics...");
+            
+            let client = reqwest::Client::new();
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "oracle_stats",
+                "params": {},
+                "id": 32
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else if let Some(stats) = rpc_res.result {
+                    println!("Communication Statistics:");
+                    println!("=======================");
+                    if let Some(stats_obj) = stats.as_object() {
+                        for (key, value) in stats_obj {
+                            println!("{}: {}", key, value);
+                        }
+                    } else {
+                        println!("{}", stats);
+                    }
+                } else {
+                    println!("No communication statistics available");
+                }
+            }
         }
     }
     Ok(())
@@ -664,12 +1417,15 @@ async fn handle_rpc_request(
     state: Arc<Mutex<SharedState>>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let response_id = request.id;
-    let shared_state = state.lock().unwrap();
+    let mut shared_state = state.lock().unwrap();
 
     let response = match request.method.as_str() {
         "status" => {
             let mut sim_guard = shared_state.sim.lock().unwrap();
             let stats = sim_guard.get_stats();
+
+            let save_file_age_sec = shared_state.last_save_time
+                .map(|save_time| save_time.elapsed().as_secs());
 
             let response_data = rpc::StatusResponse {
                 status: "running".to_string(),
@@ -678,7 +1434,7 @@ async fn handle_rpc_request(
                 universe_age_gyr: stats.universe_age_gyr,
                 cosmic_era: format!("{:?}", stats.cosmic_era),
                 lineage_count: stats.lineage_count as u64,
-                save_file_age_sec: None, // TODO
+                save_file_age_sec,
             };
 
             let rpc_response: rpc::RpcResponse<rpc::StatusResponse> = rpc::RpcResponse {
@@ -698,10 +1454,28 @@ async fn handle_rpc_request(
 
             match serde_json::from_value::<SnapshotParams>(request.params) {
                 Ok(params) => {
-                    let mut sim_guard = shared_state.sim.lock().unwrap();
-                    match persistence::save_checkpoint(&mut *sim_guard, &params.path) {
-                        Ok(_) => {
-                            let stats = sim_guard.get_stats();
+                    let stats = {
+                        let mut sim_guard = shared_state.sim.lock().unwrap();
+                        match persistence::save_checkpoint(&mut *sim_guard, &params.path) {
+                            Ok(_) => sim_guard.get_stats(),
+                            Err(e) => {
+                                let error = rpc::RpcError {
+                                    code: rpc::INTERNAL_ERROR,
+                                    message: format!("Failed to save snapshot: {}", e),
+                                };
+                                let rpc_response: rpc::RpcResponse<rpc::StatusResponse> = rpc::RpcResponse {
+                                    jsonrpc: "2.0".to_string(),
+                                    result: None,
+                                    error: Some(error),
+                                    id: response_id,
+                                };
+                                return Ok(warp::reply::json(&rpc_response));
+                            }
+                        }
+                    };
+                    
+                    // Update save time after releasing the sim lock
+                    shared_state.last_save_time = Some(Instant::now());
                             let response_data = rpc::StatusResponse {
                                 status: format!("Snapshot saved to {:?}", params.path),
                                 tick: stats.current_tick,
@@ -718,21 +1492,6 @@ async fn handle_rpc_request(
                                 id: response_id,
                             };
                             Ok(warp::reply::json(&rpc_response))
-                        }
-                        Err(e) => {
-                            let error = rpc::RpcError {
-                                code: rpc::INTERNAL_ERROR,
-                                message: format!("Failed to save snapshot: {}", e),
-                            };
-                            let rpc_response: rpc::RpcResponse<rpc::StatusResponse> = rpc::RpcResponse {
-                                jsonrpc: "2.0".to_string(),
-                                result: None,
-                                error: Some(error),
-                                id: response_id,
-                            };
-                            Ok(warp::reply::json(&rpc_response))
-                        }
-                    }
                 }
                 Err(e) => {
                     let error = rpc::RpcError {
@@ -750,10 +1509,236 @@ async fn handle_rpc_request(
             }
         }
 
+        "get_map_data" => {
+            #[derive(Deserialize)]
+            struct MapParams {
+                zoom: Option<f64>,
+                layer: Option<String>,
+            }
+
+            match serde_json::from_value::<MapParams>(request.params) {
+                Ok(params) => {
+                    let zoom = params.zoom.unwrap_or(1.0);
+                    let layer = params.layer.as_deref().unwrap_or("stars");
+                    
+                    // TODO: Generate real map data from simulation
+                    // For now, return synthetic data that matches the CLI expectations
+                    let width = 60;
+                    let height = 20;
+                    let mut density_grid = Vec::new();
+                    
+                    for y in 0..height {
+                        for x in 0..width {
+                            let nx = (x as f64 / width as f64 - 0.5) * zoom;
+                            let ny = (y as f64 / height as f64 - 0.5) * zoom;
+                            
+                            let density = match layer {
+                                "stars" => {
+                                    let cluster_1 = (-((nx + 0.3).powi(2) + (ny - 0.2).powi(2)) * 30.0).exp();
+                                    let cluster_2 = (-((nx - 0.4).powi(2) + (ny + 0.1).powi(2)) * 40.0).exp();
+                                    (cluster_1 + cluster_2).max(0.0).min(1.0)
+                                },
+                                "gas" => {
+                                    let shock_fronts = ((nx * 15.0).sin() + (ny * 12.0).cos()) * 0.5 + 0.5;
+                                    let void_regions = (-((nx * nx + ny * ny) * 5.0)).exp();
+                                    (shock_fronts * 0.6 + void_regions * 0.4).max(0.0).min(1.0)
+                                },
+                                "dark_matter" => {
+                                    let filament = (nx * 10.0).sin() * (ny * 10.0).cos();
+                                    let halo = (-((nx * nx + ny * ny) * 20.0)).exp();
+                                    (filament * 0.3 + halo * 0.7 + 0.1).max(0.0).min(1.0)
+                                },
+                                _ => 0.1
+                            };
+                            density_grid.push(density);
+                        }
+                    }
+                    
+                    let response_data = json!({
+                        "density_grid": density_grid,
+                        "width": width,
+                        "height": height,
+                        "layer": layer,
+                        "zoom": zoom,
+                        "generated_at": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                    });
+                    
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: Some(response_data),
+                        error: None,
+                        id: response_id,
+                    };
+                    
+                    Ok(warp::reply::json(&rpc_response))
+                }
+                Err(_) => {
+                    let error = rpc::RpcError {
+                        code: rpc::INVALID_PARAMS,
+                        message: "Invalid map parameters".to_string(),
+                    };
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(error),
+                        id: response_id,
+                    };
+                    Ok(warp::reply::json(&rpc_response))
+                }
+            }
+        }
+
+        "list_planets" => {
+            #[derive(Deserialize)]
+            struct PlanetParams {
+                class_filter: Option<String>,
+                habitable_only: Option<bool>,
+            }
+
+            match serde_json::from_value::<PlanetParams>(request.params) {
+                Ok(params) => {
+                    let habitable_only = params.habitable_only.unwrap_or(false);
+                    
+                    // TODO: Get actual planet data from simulation
+                    // For now, return realistic synthetic data
+                    let mut planets = vec![
+                        json!({
+                            "id": "SIM-001",
+                            "class": "E",
+                            "temperature": 18.5,
+                            "water_fraction": 0.67,
+                            "oxygen_fraction": 0.19,
+                            "radiation_level": 0.003,
+                            "habitable": true,
+                            "age_gyr": 3.2,
+                            "mass_earth": 1.1,
+                            "radius_earth": 1.05
+                        }),
+                        json!({
+                            "id": "SIM-002", 
+                            "class": "D",
+                            "temperature": -45.0,
+                            "water_fraction": 0.02,
+                            "oxygen_fraction": 0.001,
+                            "radiation_level": 0.08,
+                            "habitable": false,
+                            "age_gyr": 5.1,
+                            "mass_earth": 0.8,
+                            "radius_earth": 0.9
+                        }),
+                        json!({
+                            "id": "SIM-003",
+                            "class": "E", 
+                            "temperature": 12.0,
+                            "water_fraction": 0.43,
+                            "oxygen_fraction": 0.16,
+                            "radiation_level": 0.004,
+                            "habitable": true,
+                            "age_gyr": 2.8,
+                            "mass_earth": 0.95,
+                            "radius_earth": 0.98
+                        }),
+                        json!({
+                            "id": "SIM-004",
+                            "class": "I",
+                            "temperature": -120.0,
+                            "water_fraction": 0.85,
+                            "oxygen_fraction": 0.08,
+                            "radiation_level": 0.012,
+                            "habitable": false,
+                            "age_gyr": 4.6,
+                            "mass_earth": 1.3,
+                            "radius_earth": 1.15
+                        }),
+                    ];
+                    
+                    // Apply filters
+                    if let Some(ref filter_class) = params.class_filter {
+                        planets.retain(|planet| {
+                            planet.get("class").and_then(|v| v.as_str()).unwrap_or("") == filter_class
+                        });
+                    }
+                    
+                    if habitable_only {
+                        planets.retain(|planet| {
+                            planet.get("habitable").and_then(|v| v.as_bool()).unwrap_or(false)
+                        });
+                    }
+                    
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: Some(json!(planets)),
+                        error: None,
+                        id: response_id,
+                    };
+                    
+                    Ok(warp::reply::json(&rpc_response))
+                }
+                Err(_) => {
+                    let error = rpc::RpcError {
+                        code: rpc::INVALID_PARAMS,
+                        message: "Invalid planet parameters".to_string(),
+                    };
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(error),
+                        id: response_id,
+                    };
+                    Ok(warp::reply::json(&rpc_response))
+                }
+            }
+        }
+
         "stop" => {
-            // TODO: Implement graceful shutdown
-            info!("Received stop command via RPC. Exiting...");
-            std::process::exit(0);
+            info!("Received stop command via RPC. Performing graceful shutdown...");
+            
+            // Save final checkpoint before shutdown
+            let (final_checkpoint, save_success) = {
+                let mut sim_guard = shared_state.sim.lock().unwrap();
+                let final_checkpoint = format!("final_checkpoint_{}.bin", sim_guard.current_tick);
+                
+                let save_success = match persistence::save_checkpoint(&mut *sim_guard, &PathBuf::from(&final_checkpoint)) {
+                    Ok(_) => {
+                        info!("Final checkpoint saved to {}", final_checkpoint);
+                        true
+                    },
+                    Err(e) => {
+                        error!("Failed to save final checkpoint: {}", e);
+                        false
+                    }
+                };
+                (final_checkpoint, save_success)
+            };
+            
+            if save_success {
+                shared_state.last_save_time = Some(Instant::now());
+            }
+            
+            let response_data = json!({
+                "status": "stopping",
+                "message": "Graceful shutdown initiated",
+                "final_checkpoint": final_checkpoint
+            });
+            
+            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: Some(response_data),
+                error: None,
+                id: response_id,
+            };
+            
+            // Give the response a moment to be sent before exiting
+            tokio::spawn(async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                info!("Graceful shutdown complete. Exiting...");
+                std::process::exit(0);
+            });
+            
+            Ok(warp::reply::json(&rpc_response))
         }
 
         _ => {
@@ -774,8 +1759,7 @@ async fn handle_rpc_request(
     response
 }
 
-async fn start_rpc_server(port: u16, state: SharedState) {
-    let state = Arc::new(Mutex::new(state));
+async fn start_rpc_server(port: u16, state: Arc<Mutex<SharedState>>) {
     let rpc_route = warp::path("rpc")
         .and(warp::post())
         .and(warp::body::json())

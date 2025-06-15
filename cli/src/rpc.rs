@@ -46,4 +46,32 @@ pub struct StatusResponse {
     pub cosmic_era: String,
     pub lineage_count: u64,
     pub save_file_age_sec: Option<u64>,
+}
+
+/// Pending resource request entry returned by `resources_queue` RPC
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ResourceRequest {
+    pub id: String,
+    pub resource: String,
+    pub amount: u64,
+    pub requester: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>, // ISO-8601 string or "N/A"
+}
+
+/// Petition/Message sent by an in-simulation agent to the Oracle
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Petition {
+    pub id: String,
+    pub agent_id: String,
+    pub subject: String,
+    pub body: String,
+    pub received_at: String, // ISO-8601 timestamp
+}
+
+/// Aggregate resource usage vs limits returned by `resources_status` RPC
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ResourceStatus {
+    pub usage: std::collections::HashMap<String, u64>,
+    pub limits: std::collections::HashMap<String, u64>,
 } 

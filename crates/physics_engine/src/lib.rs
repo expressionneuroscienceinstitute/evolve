@@ -953,11 +953,259 @@ impl PhysicsEngine {
         
         Ok(())
     }
-    fn process_nuclear_fission(&mut self) -> Result<()> { Ok(()) }
-    fn update_nuclear_shells(&mut self) -> Result<()> { Ok(()) }
-    fn can_fuse(&self, _n1: &AtomicNucleus, _n2: &AtomicNucleus) -> Result<bool> { Ok(false) }
-    fn calculate_fusion_reaction(&self, _i: usize, _j: usize) -> Result<FusionReaction> { Ok(FusionReaction::default()) }
-    fn execute_fusion_reaction(&mut self, _reaction: FusionReaction) -> Result<()> { Ok(()) }
+    fn process_nuclear_fission(&mut self) -> Result<()> {
+        // Process nuclear fission for heavy unstable nuclei
+        let mut fission_events = Vec::new();
+        
+        for (i, nucleus) in self.nuclei.iter().enumerate() {
+            // Check if nucleus is fissile (simplified - check if Z > 90 and unstable)
+            if nucleus.atomic_number > 90 && nucleus.mass_number > 230 {
+                // Simplified fission probability based on excitation energy
+                let fission_probability = (nucleus.excitation_energy / 1e-12).min(0.01);
+                
+                if rand::random::<f64>() < fission_probability {
+                    fission_events.push(i);
+                }
+            }
+        }
+        
+        // Execute fission events
+        for &nucleus_idx in fission_events.iter().rev() {
+            self.execute_fission(nucleus_idx)?;
+        }
+        
+        Ok(())
+    }
+    
+    fn execute_fission(&mut self, nucleus_idx: usize) -> Result<()> {
+        if nucleus_idx >= self.nuclei.len() {
+            return Ok(());
+        }
+        
+        let original_nucleus = self.nuclei[nucleus_idx].clone();
+        
+        // Simplified fission: split into two fragments plus neutrons
+        let fragment1_mass = original_nucleus.mass_number / 2 + (rand::random::<i32>() % 20 - 10) as u32;
+        let fragment2_mass = original_nucleus.mass_number - fragment1_mass;
+        let fragment1_z = original_nucleus.atomic_number / 2 + (rand::random::<i32>() % 10 - 5) as u32;
+        let fragment2_z = original_nucleus.atomic_number - fragment1_z;
+        
+        // Create fission fragments
+        let mut fragment1 = AtomicNucleus {
+            mass_number: fragment1_mass,
+            atomic_number: fragment1_z,
+            protons: Vec::new(), // Simplified
+            neutrons: Vec::new(), // Simplified
+            binding_energy: -8.0e-13 * fragment1_mass as f64, // Approximate
+            nuclear_spin: Vector3::zeros(),
+            magnetic_moment: Vector3::zeros(),
+            electric_quadrupole_moment: 0.0,
+            nuclear_radius: 1.2e-15 * (fragment1_mass as f64).powf(1.0/3.0),
+            shell_model_state: HashMap::new(),
+            position: original_nucleus.position + Vector3::new(1e-14, 0.0, 0.0),
+            momentum: Vector3::new(1e-20, 0.0, 0.0), // Kinetic energy from fission
+            excitation_energy: 5e-13, // Highly excited
+        };
+        
+        let mut fragment2 = AtomicNucleus {
+            mass_number: fragment2_mass,
+            atomic_number: fragment2_z,
+            protons: Vec::new(),
+            neutrons: Vec::new(),
+            binding_energy: -8.0e-13 * fragment2_mass as f64,
+            nuclear_spin: Vector3::zeros(),
+            magnetic_moment: Vector3::zeros(),
+            electric_quadrupole_moment: 0.0,
+            nuclear_radius: 1.2e-15 * (fragment2_mass as f64).powf(1.0/3.0),
+            shell_model_state: HashMap::new(),
+            position: original_nucleus.position - Vector3::new(1e-14, 0.0, 0.0),
+            momentum: Vector3::new(-1e-20, 0.0, 0.0),
+            excitation_energy: 5e-13,
+        };
+        
+        // Remove original nucleus and add fragments
+        self.nuclei.swap_remove(nucleus_idx);
+        self.nuclei.push(fragment1);
+        self.nuclei.push(fragment2);
+        
+        // Create neutrons (simplified - usually 2-3 neutrons released)
+        let neutron_count = 2 + (rand::random::<u32>() % 2);
+        for _ in 0..neutron_count {
+            let neutron = FundamentalParticle {
+                particle_type: ParticleType::Neutron,
+                position: original_nucleus.position + Vector3::new(
+                    (rand::random::<f64>() - 0.5) * 2e-14,
+                    (rand::random::<f64>() - 0.5) * 2e-14,
+                    (rand::random::<f64>() - 0.5) * 2e-14,
+                ),
+                momentum: Vector3::new(
+                    (rand::random::<f64>() - 0.5) * 2e-21,
+                    (rand::random::<f64>() - 0.5) * 2e-21,
+                    (rand::random::<f64>() - 0.5) * 2e-21,
+                ),
+                spin: Vector3::new(0.5, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
+                color_charge: None,
+                electric_charge: 0.0,
+                mass: NEUTRON_MASS,
+                energy: NEUTRON_MASS * C_SQUARED,
+                creation_time: self.current_time,
+                decay_time: Some(self.current_time + 881.5), // Neutron lifetime
+                quantum_state: QuantumState::new(),
+                interaction_history: Vec::new(),
+            };
+            self.particles.push(neutron);
+        }
+        
+        Ok(())
+    }
+    
+    fn update_nuclear_shells(&mut self) -> Result<()> {
+        // Update nuclear shell model states based on excitation
+        for nucleus in &mut self.nuclei {
+            // Decay excitation energy over time
+            nucleus.excitation_energy *= 0.999; // Simple exponential decay
+            
+            // Update shell model state based on current excitation
+            if nucleus.excitation_energy > 1e-13 {
+                nucleus.shell_model_state.insert("excited".to_string(), 1.0);
+            } else {
+                nucleus.shell_model_state.insert("ground".to_string(), 1.0);
+            }
+        }
+        Ok(())
+    }
+    
+    fn can_fuse(&self, n1: &AtomicNucleus, n2: &AtomicNucleus) -> Result<bool> {
+        // Check if two nuclei can undergo fusion
+        // Simplified Coulomb barrier calculation
+        
+        let r12 = (n1.position - n2.position).norm();
+        let z1 = n1.atomic_number as f64;
+        let z2 = n2.atomic_number as f64;
+        
+        // Coulomb barrier height (simplified)
+        let coulomb_barrier = K_E * z1 * z2 * E_CHARGE / r12;
+        
+        // Kinetic energy from relative motion
+        let reduced_mass = (n1.mass_number * n2.mass_number) as f64 / (n1.mass_number + n2.mass_number) as f64 * PROTON_MASS;
+        let relative_velocity = (n1.momentum / n1.mass_number as f64 - n2.momentum / n2.mass_number as f64).norm();
+        let kinetic_energy = 0.5 * reduced_mass * relative_velocity.powi(2);
+        
+        // Quantum tunneling probability (simplified)
+        let tunneling_prob = (-2.0 * (coulomb_barrier - kinetic_energy).max(0.0) / (HBAR * C)).exp();
+        
+        // Fusion cross-section (simplified - depends on nuclear properties)
+        let fusion_cross_section = if z1 <= 2.0 && z2 <= 2.0 {
+            1e-28 * tunneling_prob // Light nuclei like H, He
+        } else {
+            1e-32 * tunneling_prob // Heavier nuclei
+        };
+        
+        // Check if fusion should occur this timestep
+        let interaction_rate = fusion_cross_section * relative_velocity / (4.0 * std::f64::consts::PI * r12.powi(2));
+        let fusion_probability = interaction_rate * self.time_step;
+        
+        Ok(rand::random::<f64>() < fusion_probability)
+    }
+    
+    fn calculate_fusion_reaction(&self, i: usize, j: usize) -> Result<FusionReaction> {
+        if i >= self.nuclei.len() || j >= self.nuclei.len() {
+            return Ok(FusionReaction::default());
+        }
+        
+        let n1 = &self.nuclei[i];
+        let n2 = &self.nuclei[j];
+        
+        // Create fusion reaction based on reactants
+        let product_mass = n1.mass_number + n2.mass_number;
+        let product_z = n1.atomic_number + n2.atomic_number;
+        
+        // Q-value calculation (simplified)
+        let binding_energy_reactants = n1.binding_energy + n2.binding_energy;
+        let binding_energy_product = -8.0e-13 * product_mass as f64; // Simplified
+        let q_value = binding_energy_product - binding_energy_reactants;
+        
+        Ok(FusionReaction {
+            reactant_indices: vec![i, j],
+            product_mass_number: product_mass,
+            product_atomic_number: product_z,
+            q_value,
+            cross_section: 1e-28,
+            requires_catalysis: product_z > 6, // Heavy products need catalysis
+        })
+    }
+    
+    fn execute_fusion_reaction(&mut self, reaction: FusionReaction) -> Result<()> {
+        if reaction.reactant_indices.len() != 2 {
+            return Ok(());
+        }
+        
+        let i = reaction.reactant_indices[0];
+        let j = reaction.reactant_indices[1];
+        
+        if i >= self.nuclei.len() || j >= self.nuclei.len() || i == j {
+            return Ok(());
+        }
+        
+        // Get reactant nuclei (need to handle the case where j might be shifted after removing i)
+        let (n1, n2) = if i < j {
+            let n1 = self.nuclei[i].clone();
+            let n2 = self.nuclei[j].clone();
+            self.nuclei.swap_remove(j);
+            self.nuclei.swap_remove(i);
+            (n1, n2)
+        } else {
+            let n2 = self.nuclei[j].clone();
+            let n1 = self.nuclei[i].clone();
+            self.nuclei.swap_remove(i);
+            self.nuclei.swap_remove(j);
+            (n1, n2)
+        };
+        
+        // Create fusion product
+        let product_position = (n1.position + n2.position) / 2.0;
+        let product_momentum = n1.momentum + n2.momentum;
+        
+        let fusion_product = AtomicNucleus {
+            mass_number: reaction.product_mass_number,
+            atomic_number: reaction.product_atomic_number,
+            protons: Vec::new(), // Simplified
+            neutrons: Vec::new(), // Simplified
+            binding_energy: reaction.q_value,
+            nuclear_spin: Vector3::zeros(),
+            magnetic_moment: Vector3::zeros(),
+            electric_quadrupole_moment: 0.0,
+            nuclear_radius: 1.2e-15 * (reaction.product_mass_number as f64).powf(1.0/3.0),
+            shell_model_state: HashMap::new(),
+            position: product_position,
+            momentum: product_momentum,
+            excitation_energy: reaction.q_value.max(0.0), // Excess energy becomes excitation
+        };
+        
+        self.nuclei.push(fusion_product);
+        
+        // Release energy as photons or particles if Q > 0
+        if reaction.q_value > 0.0 {
+            // Create a high-energy photon
+            let photon = FundamentalParticle {
+                particle_type: ParticleType::Photon,
+                position: product_position,
+                momentum: Vector3::new(reaction.q_value / C, 0.0, 0.0),
+                spin: Vector3::new(1.0, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
+                color_charge: None,
+                electric_charge: 0.0,
+                mass: 0.0,
+                energy: reaction.q_value,
+                creation_time: self.current_time,
+                decay_time: None, // Photons are stable
+                quantum_state: QuantumState::new(),
+                interaction_history: Vec::new(),
+            };
+            self.particles.push(photon);
+        }
+        
+        Ok(())
+    }
     #[allow(dead_code)]
     fn update_atomic_physics(&mut self) -> Result<()> { Ok(()) }
     #[allow(dead_code)]
@@ -1006,8 +1254,28 @@ pub struct DecayChannel {
     pub decay_constant: f64,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct FusionReaction;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FusionReaction {
+    pub reactant_indices: Vec<usize>,
+    pub product_mass_number: u32,
+    pub product_atomic_number: u32,
+    pub q_value: f64, // Energy released (J)
+    pub cross_section: f64, // Cross-section (m²)
+    pub requires_catalysis: bool,
+}
+
+impl Default for FusionReaction {
+    fn default() -> Self {
+        Self {
+            reactant_indices: Vec::new(),
+            product_mass_number: 0,
+            product_atomic_number: 0,
+            q_value: 0.0,
+            cross_section: 0.0,
+            requires_catalysis: false,
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InteractionMatrix;

@@ -3,6 +3,7 @@
 use nalgebra::Vector3;
 use rand::Rng;
 use std::f64::consts::PI;
+use nalgebra::Complex;
 
 use crate::{FundamentalParticle, ParticleType};
 use crate::constants::*;
@@ -241,7 +242,12 @@ pub fn pair_produce(
         energy: electron_energy,
         mass: ELECTRON_MASS,
         electric_charge: -ELEMENTARY_CHARGE,
-        spin: Vector3::zeros(), // TODO: proper spin
+        // Spin vector as complex components (helicity approximation, magnitude ħ/2).
+        spin: Vector3::new(
+            Complex::new(electron_dir.x * 0.5, 0.0),
+            Complex::new(electron_dir.y * 0.5, 0.0),
+            Complex::new(electron_dir.z * 0.5, 0.0),
+        ),
         color_charge: None,
         creation_time: photon.creation_time, // Will be updated by engine
         decay_time: None,
@@ -254,6 +260,11 @@ pub fn pair_produce(
     positron.momentum = positron_dir * positron_momentum_mag;
     positron.energy = positron_energy;
     positron.electric_charge = ELEMENTARY_CHARGE;
+    positron.spin = Vector3::new(
+        Complex::new(positron_dir.x * 0.5, 0.0),
+        Complex::new(positron_dir.y * 0.5, 0.0),
+        Complex::new(positron_dir.z * 0.5, 0.0),
+    );
     
     Some((electron, positron))
 }

@@ -385,6 +385,14 @@ impl World {
             rng.gen_range(-0.1..0.1) * orbital_radius  // Small Z component
         );
         
+        // --- Orbital velocity calculation ---
+        // v = sqrt(G * M_star / r)
+        // Direction is perpendicular to the radius vector in the XY plane.
+        const G: f64 = 6.67430e-11; // m^3 kg^-1 s^-2
+        let orbital_speed = (G * star.mass / orbital_radius).sqrt();
+        let velocity_direction = Vector3::new(-angle.sin(), angle.cos(), 0.0);
+        let planet_velocity = velocity_direction * orbital_speed;
+
         // Simplified temperature calculation based on stellar luminosity and orbital radius
         let au = 1.496e11; // Astronomical Unit in meters
         let _distance_au = orbital_radius / au;
@@ -394,7 +402,7 @@ impl World {
             id: planet_id,
             body_type: CelestialBodyType::Planet { planet_class: planet_class.clone() },
             position: planet_position,
-            velocity: Vector3::zeros(),  // TODO: Calculate orbital velocity
+            velocity: planet_velocity,
             mass: planet_mass,
             radius: planet_radius,
             temperature,

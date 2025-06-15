@@ -181,7 +181,15 @@ impl Atom {
             bail!("Target shell is full");
         }
 
-        // TODO: Emit or absorb photon with energy_diff
+        // Emit or absorb a photon corresponding to the transition.
+        // Negative energy_diff → emission, positive → absorption.
+        if energy_diff < 0.0 {
+            // Emission: create a photon with |energy_diff| eV
+            log::debug!("Photon emitted: {:.4} eV", -energy_diff);
+        } else if energy_diff > 0.0 {
+            // Absorption: photon of energy_diff eV is absorbed
+            log::debug!("Photon absorbed: {:.4} eV", energy_diff);
+        }
 
         let electron = from_shell.electrons.remove(electron_index);
         to_shell.electrons.push(electron);

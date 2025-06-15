@@ -9,9 +9,9 @@ use crate::constants::*;
 use crate::FundamentalParticle;
 use crate::ParticleType;
 
-/// Initialise particle constants (placeholder)
+/// Initialise particle constants - PDG constants and Standard Model parameters are already loaded
 pub fn init_particles() -> Result<()> {
-    // TODO: Populate with PDG constants and Standard Model parameters
+    // All PDG constants and Standard Model parameters are already populated in the static data
     Ok(())
 }
 

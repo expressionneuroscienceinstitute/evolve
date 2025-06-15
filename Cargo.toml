@@ -11,9 +11,7 @@ members = [
 ]
 resolver = "2"
 
-# Optional web dashboard crate built only when the `dashboard` feature is enabled
-[workspace.optional]
-dashboard = ["viz_web"]
+# Note: viz_web is always included in the workspace
 
 [workspace.dependencies]
 # Core simulation

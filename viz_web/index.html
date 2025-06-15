@@ -585,7 +585,7 @@
     </div>
 
     <script type="module">
-        import init, { EvolutionMonitor } from './viz_web-911b1a6f8a827577.js';
+        // WASM bindings will be available after TrunkApplicationStarted event
 
         let monitor = null;
         let animationId = null;
@@ -594,7 +594,16 @@
 
         async function initializeSimulation() {
             try {
-                await init();
+                // Wait for Trunk's WASM initialization
+                await new Promise((resolve) => {
+                    if (window.wasmBindings) {
+                        resolve();
+                    } else {
+                        addEventListener("TrunkApplicationStarted", resolve, { once: true });
+                    }
+                });
+                
+                const { EvolutionMonitor } = window.wasmBindings;
                 console.log('WASM module loaded successfully');
                 
                 monitor = new EvolutionMonitor('simulation-canvas');

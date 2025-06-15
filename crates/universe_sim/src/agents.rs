@@ -457,8 +457,8 @@ impl AgentManager {
     /// Get statistics about agent population
     pub fn get_stats(&self) -> AgentStats {
         let mut total_fitness = 0.0;
-        let mut sentient_count = 0;
-        let mut immortal_count = 0;
+        let sentient_count = 0;
+        let immortal_count = 0;
         
         for agent in self.agents.values() {
             total_fitness += agent.fitness();

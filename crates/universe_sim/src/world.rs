@@ -578,7 +578,7 @@ impl World {
     pub fn get_stats(&self) -> WorldStats {
         let mut star_count = 0;
         let mut planet_count = 0;
-        let mut system_count = self.star_systems.len();
+        let system_count = self.star_systems.len();
         
         for body in self.celestial_bodies.values() {
             match body.body_type {

@@ -1188,18 +1188,20 @@ impl NuclearCrossSectionDatabase {
         let gamow_peak = 1.22 * (data.coulomb_barrier.powf(2.0) * kt_kev).powf(1.0/3.0);
         
         // Improved Gamow factor for stellar conditions
-        let tau = (data.coulomb_barrier / kt_kev).sqrt();
-        let gamow_factor = (temperature / 1e7).powf(1.0/3.0) * (-tau).exp(); // T^(1/3) dependence
+        // The exponential factor dominates the temperature dependence
+        let tau = 3.0 * (data.coulomb_barrier / kt_kev).sqrt(); // More realistic Gamow parameter
+        let gamow_factor = (-tau).exp(); // Pure exponential suppression
         
         // S-factor approach with proper energy scaling
         let effective_energy = gamow_peak.max(kt_kev); // Use whichever is larger
         let cross_section_barns = data.s_factor * gamow_factor / effective_energy;
         
-        // Temperature-dependent enhancement factor for higher temperatures
-        let temp_factor = if temperature > 1e7 { (temperature / 1e7).powf(0.5) } else { 1.0 };
+        // Strong temperature-dependent enhancement factor (exponential for nuclear reactions)
+        // Nuclear reaction rates typically go as exp(-B/T) where B is the Gamow peak
+        let temp_enhancement = (temperature / 1e7).powf(4.0); // Strong T^4 dependence for pp chain
         
-        let final_cross_section = cross_section_barns * temp_factor;
-        Some(final_cross_section.max(1e-50) * 1e-24) // Convert barns to m²
+        let final_cross_section = cross_section_barns * temp_enhancement;
+        Some(final_cross_section.max(1e-100) * 1e-24) // Convert barns to m²
     }
     
     /// Get nuclear reaction cross-section for given energy
@@ -1233,33 +1235,35 @@ impl NuclearCrossSectionDatabase {
     /// Estimate cross-section for unknown nuclear reactions using systematics
     pub fn estimate_fusion_cross_section(&self, z1: u32, a1: u32, z2: u32, a2: u32, temperature: f64) -> f64 {
         // Nuclear systematics for estimating unknown cross-sections
-        let coulomb_barrier = 1.44 * (z1 * z2) as f64 / (2.4e-15 * ((a1 as f64).powf(1.0/3.0) + (a2 as f64).powf(1.0/3.0))); // MeV
-        let barrier_joules = coulomb_barrier * 1e6 * 1.602176634e-19; // Convert to J
-        let kt = BOLTZMANN * temperature;
+        let coulomb_barrier = 1.44 * (z1 * z2) as f64 / (1.2 * ((a1 as f64).powf(1.0/3.0) + (a2 as f64).powf(1.0/3.0))); // MeV
+        let barrier_kev = coulomb_barrier * 1000.0; // Convert to keV
         
-        // Gamow suppression
-        let gamow_factor = (-barrier_joules / kt).exp();
+        // Thermal energy in keV
+        let kt_kev = BOLTZMANN * temperature / (1.602176634e-19 * 1000.0);
         
-        // Geometric cross-section estimate
-        let r1 = 1.2e-15 * (a1 as f64).powf(1.0/3.0); // Nuclear radius
-        let r2 = 1.2e-15 * (a2 as f64).powf(1.0/3.0);
-        let _geometric_cross_section = std::f64::consts::PI * (r1 + r2).powi(2);
+        // Gamow peak energy for optimal tunneling
+        let gamow_peak = 1.22 * (barrier_kev.powf(2.0) * kt_kev).powf(1.0/3.0);
         
-        // S-factor estimate (typical values 1e-3 to 1e-10 barns·keV)
-        // Light nuclei have higher cross-sections due to lower Coulomb barriers
+        // S-factor estimate (higher for lighter nuclei)
         let z_avg = (z1 + z2) as f64 / 2.0;
-        let s_factor_estimate = if z_avg <= 2.0 {
-            1e-3 // Light nuclei (higher cross-sections)
-        } else if z_avg <= 6.0 {
-            1e-6 // Intermediate 
+        let s_factor_base = if z_avg <= 3.0 {
+            10.0 // Light nuclei (H, He, Li)
+        } else if z_avg <= 8.0 {
+            1.0  // Intermediate (Be, B, C, N, O)  
         } else {
-            1e-10 // Heavy nuclei (lower cross-sections)
+            0.1  // Heavy nuclei
         };
         
-        let energy_kev = 3.0 * temperature / 1e3 * BOLTZMANN / 1.602176634e-19; // Thermal energy in keV
-        let cross_section = s_factor_estimate * gamow_factor / energy_kev * 1e-24; // barns to m²
+        // Include mass dependence - lighter nuclei tunnel more easily
+        let mass_factor = 1.0 / (a1 as f64 + a2 as f64).sqrt();
+        let s_factor = s_factor_base * mass_factor;
         
-        cross_section.max(1e-50) // Minimum cross-section
+        // Cross-section calculation with Gamow suppression
+        let gamow_suppression = (-2.0 * (barrier_kev / kt_kev).sqrt()).exp();
+        let cross_section_barns = s_factor * gamow_suppression / gamow_peak.max(kt_kev);
+        
+        // Convert barns to m² and ensure minimum value
+        (cross_section_barns * 1e-24).max(1e-50)
     }
 }
 

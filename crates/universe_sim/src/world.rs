@@ -297,15 +297,21 @@ impl World {
         
         let star_mass = rng.gen_range(0.08..50.0); // 0.08 to 50 solar masses
         
+        // Calculate realistic stellar properties based on mass
+        let stellar_class = self.classify_star_by_mass(star_mass);
+        let stellar_radius = self.calculate_stellar_radius(star_mass);
+        let stellar_temp = self.calculate_stellar_temperature(star_mass);
+        let stellar_luminosity = self.calculate_stellar_luminosity(star_mass);
+
         let new_star = CelestialBodyData {
             id: star_id,
-            body_type: CelestialBodyType::Star { stellar_class: StellarClass::G }, // Placeholder
+            body_type: CelestialBodyType::Star { stellar_class },
             position: Vector3::new(x as f64, y as f64, 0.0),
             velocity: Vector3::zeros(),
             mass: star_mass * 1.98847e30, // Convert to kg
-            radius: 6.957e8, // Placeholder
-            temperature: 5778.0, // Placeholder
-            luminosity: 3.828e26, // Placeholder
+            radius: stellar_radius,
+            temperature: stellar_temp,
+            luminosity: stellar_luminosity,
             age: 0.0,
             composition: self.generate_stellar_composition(star_mass),
             planets: Vec::new(),
@@ -316,14 +322,93 @@ impl World {
         Ok(star_id)
     }
     
+    /// Classify star by mass using Harvard stellar classification
+    fn classify_star_by_mass(&self, mass_solar: f64) -> StellarClass {
+        match mass_solar {
+            m if m >= 15.0 => StellarClass::O,  // Blue supergiants (15-90 M☉)
+            m if m >= 2.1  => StellarClass::B,  // Blue main sequence (2.1-16 M☉)
+            m if m >= 1.4  => StellarClass::A,  // White main sequence (1.4-2.1 M☉)
+            m if m >= 1.04 => StellarClass::F,  // Yellow-white main sequence (1.04-1.4 M☉)
+            m if m >= 0.8  => StellarClass::G,  // Yellow main sequence (0.8-1.04 M☉) - like Sun
+            m if m >= 0.45 => StellarClass::K,  // Orange main sequence (0.45-0.8 M☉)
+            m if m >= 0.08 => StellarClass::M,  // Red dwarfs (0.08-0.45 M☉)
+            _ => StellarClass::BH,  // Below hydrogen burning limit -> failed star
+        }
+    }
+
+    /// Calculate stellar radius using mass-radius relationships
+    fn calculate_stellar_radius(&self, mass_solar: f64) -> f64 {
+        let solar_radius = 6.957e8; // meters
+        
+        // Mass-radius relation depends on stellar mass range
+        let radius_ratio = if mass_solar > 1.0 {
+            // High mass stars: R ~ M^0.8 (radiation pressure dominates)
+            mass_solar.powf(0.8)
+        } else {
+            // Low mass stars: R ~ M^0.9 (more sensitive to mass)
+            mass_solar.powf(0.9)
+        };
+        
+        solar_radius * radius_ratio
+    }
+
+    /// Calculate stellar temperature using mass-temperature relationships
+    fn calculate_stellar_temperature(&self, mass_solar: f64) -> f64 {
+        // Main sequence temperature-mass relation: T ~ M^0.5 for nuclear burning
+        let _solar_temp = 5778.0; // Kelvin
+        
+        match mass_solar {
+            m if m >= 15.0 => 30000.0 + (m - 15.0) * 2000.0, // O-type: 30,000-50,000 K
+            m if m >= 2.1  => 10000.0 + (m - 2.1) * 1540.0,  // B-type: 10,000-30,000 K
+            m if m >= 1.4  => 7500.0 + (m - 1.4) * 3571.0,   // A-type: 7,500-10,000 K
+            m if m >= 1.04 => 6000.0 + (m - 1.04) * 4167.0,  // F-type: 6,000-7,500 K
+            m if m >= 0.8  => 5200.0 + (m - 0.8) * 3333.0,   // G-type: 5,200-6,000 K
+            m if m >= 0.45 => 3700.0 + (m - 0.45) * 4286.0,  // K-type: 3,700-5,200 K
+            m if m >= 0.08 => 2400.0 + (m - 0.08) * 3514.0,  // M-type: 2,400-3,700 K
+            _ => 2000.0, // Brown dwarfs
+        }
+    }
+
+    /// Calculate stellar luminosity using mass-luminosity relationships
+    fn calculate_stellar_luminosity(&self, mass_solar: f64) -> f64 {
+        let solar_luminosity = 3.828e26; // Watts
+        
+        // Mass-luminosity relation: L ~ M^α where α depends on mass
+        let luminosity_ratio = if mass_solar > 0.43 {
+            // Main sequence stars: L ~ M^4 (CNO cycle dominates for high mass)
+            if mass_solar > 1.5 {
+                mass_solar.powf(3.5) // Slightly less steep for massive stars
+            } else {
+                mass_solar.powf(4.0) // Steep dependence for intermediate mass
+            }
+        } else {
+            // Low mass stars: L ~ M^2.3 (pp-chain, convective cores)
+            mass_solar.powf(2.3)
+        };
+        
+        solar_luminosity * luminosity_ratio
+    }
+
     /// Generate composition for a new star
-    fn generate_stellar_composition(&self, _mass: f64) -> ElementTable {
-        // Simplified: higher mass stars have slightly higher metallicity
+    fn generate_stellar_composition(&self, mass: f64) -> ElementTable {
+        // Higher mass stars form from slightly more metal-rich gas due to galactic evolution
+        let metallicity_factor = (mass / 10.0).min(2.0).max(0.5); // 0.5x to 2x solar metallicity
+        
         let mut composition = ElementTable::new();
-        composition.set_abundance(1, 730_000); // 73% H
-        composition.set_abundance(2, 250_000); // 25% He
-        composition.set_abundance(8, 10_000);  // 1% O
-        composition.set_abundance(6, 5_000);   // 0.5% C
+        composition.set_abundance(1, 730_000);  // 73% H (constant)
+        composition.set_abundance(2, 250_000);  // 25% He (constant)
+        
+        // Metals scale with mass (galactic chemical evolution effect)
+        let base_metals = 20_000; // 2% metals total
+        let metal_abundance = (base_metals as f64 * metallicity_factor) as u32;
+        
+        // Distribute metals among common elements
+        composition.set_abundance(8, metal_abundance / 2);  // Oxygen (most abundant metal)
+        composition.set_abundance(6, metal_abundance / 4);  // Carbon
+        composition.set_abundance(10, metal_abundance / 8); // Neon
+        composition.set_abundance(26, metal_abundance / 16); // Iron
+        composition.set_abundance(14, metal_abundance / 16); // Silicon
+        
         composition
     }
     

@@ -23,6 +23,19 @@ pub mod config;
 
 pub use physics_engine;
 
+/// Calculate relativistic total energy from momentum and mass
+/// E = sqrt((pc)^2 + (mc^2)^2) where c = speed of light
+fn calculate_relativistic_energy(momentum: &Vector3<f64>, mass: f64) -> f64 {
+    const C: f64 = 299_792_458.0; // Speed of light in m/s
+    
+    let momentum_magnitude = momentum.magnitude();
+    let rest_energy = mass * C * C;
+    let momentum_energy = momentum_magnitude * C;
+    
+    // Total relativistic energy
+    (momentum_energy * momentum_energy + rest_energy * rest_energy).sqrt()
+}
+
 /// Core universe simulation structure
 pub struct UniverseSimulation {
     pub world: World,                          // ECS world
@@ -1166,7 +1179,7 @@ impl UniverseSimulation {
                 color_charge: None,
                 electric_charge: state.charge,
                 mass: state.mass,
-                energy: 0.0, // TODO: Calculate from momentum and mass
+                energy: calculate_relativistic_energy(&(state.velocity * state.mass), state.mass),
                 creation_time: 0.0,
                 decay_time: None,
                 quantum_state,

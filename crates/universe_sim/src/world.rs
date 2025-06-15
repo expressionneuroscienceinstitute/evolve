@@ -663,7 +663,7 @@ mod tests {
         world.grid.cells[50][50].density = 1e-20;  // High density
         world.grid.cells[50][50].temperature = 50.0;  // Cold
         
-        let stars = world.process_star_formation().unwrap();
+        let _stars = world.process_star_formation().unwrap();
         // Star formation is probabilistic, so we can't guarantee results
         // but the function should run without error
     }

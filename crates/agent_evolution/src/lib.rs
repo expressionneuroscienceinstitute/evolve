@@ -530,13 +530,34 @@ impl EvolutionEngine {
     }
     
     /// Analyze decision impact and generate report
-    fn analyze_decision_impact(&self, _agent: &AutonomousAgent, _decision: &Decision, _outcome: &DecisionOutcome) -> Result<DecisionReport> {
-        unimplemented!()
+    fn analyze_decision_impact(&self, agent: &AutonomousAgent, decision: &Decision, outcome: &DecisionOutcome) -> Result<DecisionReport> {
+        // Compute a very simple fitness change proportional to the declared fitness impact.
+        // In the future this can be extended with more sophisticated analytics, but this
+        // suffices to remove the stub while providing meaningful behaviour.
+        let fitness_change = outcome.fitness_impact;
+
+        Ok(DecisionReport {
+            agent_id: agent.id,
+            decision: decision.clone(),
+            outcome: outcome.clone(),
+            learning_update: LearningUpdate::default(),
+            fitness_change,
+        })
     }
     
     /// Update agent learning based on decision outcome
-    fn update_agent_learning(&self, _agent: &mut AutonomousAgent, _decision: &Decision, _outcome: &DecisionOutcome) -> Result<()> {
-        unimplemented!()
+    fn update_agent_learning(&self, agent: &mut AutonomousAgent, _decision: &Decision, outcome: &DecisionOutcome) -> Result<()> {
+        // Very naive learning-rate adjustment: reward positive fitness impact, penalise negative.
+        if outcome.fitness_impact.is_sign_positive() {
+            agent.learning_rate *= 1.05;
+        } else {
+            agent.learning_rate *= 0.95;
+        }
+
+        // Clamp the learning rate to a sensible range to avoid runaway behaviour.
+        agent.learning_rate = agent.learning_rate.clamp(0.0001, 1.0);
+
+        Ok(())
     }
     
     /// Process reproduction events

@@ -204,7 +204,7 @@ impl UniverseSimulation {
         
         self.cosmic_era = match age_gyr {
             x if x < 0.0003 => cosmic_era::CosmicEra::ParticleSoup,
-            x if x < 1.0 => cosmic_era::CosmicEra::Starbirth,
+            x if x <= 1.0 => cosmic_era::CosmicEra::Starbirth,
             x if x < 5.0 => cosmic_era::CosmicEra::PlanetaryAge,
             x if x < 10.0 => cosmic_era::CosmicEra::Biogenesis,
             x if x < 13.0 => cosmic_era::CosmicEra::DigitalEvolution,

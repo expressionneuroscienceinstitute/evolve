@@ -54,7 +54,7 @@ impl QuantumField {
         let std_dev = self.calculate_fluctuation_amplitude(temperature);
         let dist = Normal::new(0.0, std_dev)?;
 
-        for val in self.field.iter_mut().flatten().flatten() {
+        for val in self.field.iter_mut() {
             *val += dist.sample(&mut rng);
         }
 
@@ -66,7 +66,7 @@ impl QuantumField {
         let mut rng = thread_rng();
         // The energy is distributed as a Gaussian pulse.
         let dist = Normal::new(0.0, energy.sqrt()).unwrap();
-        self.field.iter_mut().flatten().flatten().for_each(|v| *v += dist.sample(&mut rng));
+        self.field.iter_mut().for_each(|v| *v += dist.sample(&mut rng));
     }
     
     /// Calculates the amplitude of vacuum fluctuations based on temperature.

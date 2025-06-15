@@ -11,7 +11,6 @@ use anyhow::Result;
 use uuid::Uuid;
 
 pub mod world;
-pub mod agents;
 pub mod cosmic_era;
 pub mod evolution;
 pub mod persistence;

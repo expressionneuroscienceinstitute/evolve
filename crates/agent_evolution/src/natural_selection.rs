@@ -5,6 +5,7 @@
 //! performance and determines their reproductive success.
 
 use anyhow::Result;
+use rand::prelude::SliceRandom;
 use crate::genetics::Genome;
 use std::collections::HashMap;
 use uuid::Uuid;

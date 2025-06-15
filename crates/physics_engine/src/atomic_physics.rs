@@ -8,7 +8,7 @@ use nalgebra::Vector3;
 use rand::Rng;
 
 use crate::constants::RYDBERG_CONSTANT;
-use crate::{Electron, FundamentalParticle};
+use crate::Electron;
 use crate::nuclear_physics::Nucleus;
 
 /// Represents an electron shell in an atom.
@@ -41,6 +41,11 @@ impl ElectronShell {
         2 * (self.quantum_number as usize).pow(2)
     }
 
+    /// Checks if the shell is at its maximum capacity.
+    pub fn is_full(&self) -> bool {
+        self.electrons.len() >= self.capacity()
+    }
+
     /// Adds an electron to the shell if there is capacity.
     pub fn add_electron(&mut self, electron: Electron) -> Result<()> {
         if self.electrons.len() < self.capacity() {
@@ -67,11 +72,16 @@ impl Atom {
         let mut n = 1;
 
         while remaining_electrons > 0 {
-            let mut shell = ElectronShell { quantum_number: n, electrons: Vec::new(), energy_level: 0.0 };
-            let capacity = shell.capacity();
-            let electrons_to_add = remaining_electrons.min(capacity as u32);
-            shell.electrons = (0..electrons_to_add).map(|_| Electron::new(n as f64)).collect();
-            atom.shells.push(shell);
+            if n as usize > atom.shells.len() {
+                atom.shells.push(ElectronShell::new(n, nucleus.protons));
+            }
+            let shell = &mut atom.shells[(n - 1) as usize];
+            let electrons_to_add = remaining_electrons.min(shell.capacity() as u32 - shell.electrons.len() as u32);
+            
+            for _ in 0..electrons_to_add {
+                shell.add_electron(Electron::default()).unwrap();
+            }
+
             remaining_electrons -= electrons_to_add;
             n += 1;
         }
@@ -105,17 +115,28 @@ impl Atom {
             return Err(anyhow!("Electron must transition to a lower energy shell."));
         }
 
-        let from_shell = self.shells.get_mut((from_shell_n - 1) as usize);
-        let to_shell = self.shells.get_mut((to_shell_n - 1) as usize);
+        let from_idx = (from_shell_n - 1) as usize;
+        let to_idx = (to_shell_n - 1) as usize;
 
-        if let (Some(from), Some(to)) = (from_shell, to_shell) {
-            if !from.electrons.is_empty() && !to.is_full() {
-                let energy = to.energy_level - from.energy_level;
-                let electron = from.electrons.pop().ok_or_else(|| anyhow!("Electron not found in from_shell"))?;
-                to.electrons.push(electron);
-                return Ok(energy);
-            }
+        if from_idx >= self.shells.len() || to_idx >= self.shells.len() {
+            bail!("Shell index out of bounds");
         }
+        
+        // Use split_at_mut to safely get two mutable references
+        let (shells1, shells2) = self.shells.split_at_mut(from_idx.max(to_idx));
+        let (from_shell, to_shell) = if from_idx < to_idx {
+            (&mut shells1[from_idx], &mut shells2[0])
+        } else {
+            (&mut shells2[0], &mut shells1[to_idx])
+        };
+
+        if !from_shell.electrons.is_empty() && !to_shell.is_full() {
+            let energy = to_shell.energy_level - from_shell.energy_level;
+            let electron = from_shell.electrons.pop().ok_or_else(|| anyhow!("Electron not found in from_shell"))?;
+            to_shell.electrons.push(electron);
+            return Ok(energy);
+        }
+        
         Err(anyhow!("Invalid shell transition for spectral emission."))
     }
 

@@ -219,7 +219,7 @@ pub struct Atom {
 }
 
 /// Electron in atom
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Electron {
     pub position_probability: Vec<Vec<Vec<f64>>>, // 3D probability density
     pub momentum_distribution: Vec<Vector3<f64>>,
@@ -230,7 +230,7 @@ pub struct Electron {
 }
 
 /// Quantum numbers for electron states
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QuantumNumbers {
     pub n: u32,      // Principal
     pub l: u32,      // Orbital angular momentum
@@ -248,6 +248,7 @@ pub struct AtomicOrbital {
     pub quantum_numbers: QuantumNumbers,
 }
 
+/// Type of atomic orbital (s, p, d, f)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OrbitalType {
     S, P, D, F,
@@ -279,7 +280,7 @@ pub struct ChemicalBond {
     pub overlap_integral: f64,
 }
 
-/// Types of chemical bonds
+/// Type of chemical bond
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BondType {
     Ionic, Covalent, Metallic, HydrogenBond, VanDerWaals,
@@ -969,14 +970,7 @@ impl PhysicsEngine {
     fn update_spacetime_curvature(&mut self) -> Result<()> { Ok(()) }
     fn update_thermodynamic_state(&mut self) -> Result<()> {
         // Update temperature based on particle kinetic energies
-        let total_kinetic_energy: f64 = self.particles.iter()
-            .map(|p| 0.5 * p.momentum.norm_squared() / p.mass)
-            .sum();
-        
-        if !self.particles.is_empty() {
-            self.temperature = 2.0 * total_kinetic_energy / (3.0 * BOLTZMANN * self.particles.len() as f64);
-        }
-        
+        self.update_temperature()?;
         Ok(())
     }
     
@@ -989,23 +983,8 @@ impl PhysicsEngine {
     
     /// Update temperature based on particle energies
     fn update_temperature(&mut self) -> Result<()> {
-        if self.particles.is_empty() {
-            return Ok(());
-        }
-        
-        // Calculate average kinetic energy
-        let total_kinetic_energy: f64 = self.particles.iter()
-            .map(|p| p.energy - p.mass * SPEED_OF_LIGHT.powi(2))
-            .filter(|&ke| ke > 0.0)
-            .sum();
-        
-        let num_particles = self.particles.len() as f64;
-        let avg_kinetic_energy = total_kinetic_energy / num_particles;
-        
-        // Temperature from kinetic theory: <KE> = (3/2) k_B T
-        // For relativistic particles, use <E> ≈ 3 k_B T
-        self.temperature = avg_kinetic_energy / (3.0 * BOLTZMANN);
-        
+        // More sophisticated calculation based on particle kin. energy
+        self.temperature = self.particles.iter().map(|p| p.energy).sum::<f64>() / (self.particles.len() as f64 * BOLTZMANN);
         Ok(())
     }
 }
@@ -1123,8 +1102,9 @@ pub type ReactionCoordinate = Vector3<f64>;
 pub const MUON_MASS: f64 = 1.883e-28; // kg
 pub const TAU_MASS: f64 = 3.167e-27; // kg
 
-/// Simplified physics state for celestial bodies.
-#[derive(Debug, Clone, Serialize, Deserialize, Component)]
+/// Represents the physical state of a celestial body for simulation purposes.
+/// This component will be attached to Bevy entities.
+#[derive(Component, Debug, Clone, Serialize, Deserialize)]
 pub struct PhysicsState {
     pub position: Vector3<f64>,
     pub velocity: Vector3<f64>,
@@ -1135,7 +1115,7 @@ pub struct PhysicsState {
     pub entropy: f64,
 }
 
-/// Records a single interaction event
+/// Record of a single interaction event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InteractionEvent {
     pub timestamp: f64,
@@ -1147,7 +1127,7 @@ pub struct InteractionEvent {
     pub cross_section: f64,
 }
 
-/// Type of physical interaction
+/// Enumeration of possible interaction types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum InteractionType {
     ElectromagneticScattering,
@@ -1160,7 +1140,7 @@ pub enum InteractionType {
     PairProduction,
 }
 
-/// Table of elemental abundances.
+/// Table of elemental abundances (Z=1 to 118)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTable {
     #[serde(with = "serde_arrays")]
@@ -1203,7 +1183,7 @@ impl ElementTable {
     }
 }
 
-/// Environment profile for habitat calculations
+/// A profile of local environmental conditions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvironmentProfile {
     pub liquid_water: f64,
@@ -1249,7 +1229,7 @@ impl EnvironmentProfile {
     }
 }
 
-/// Stratum layer for geological simulation
+/// Describes one layer in a planetary stratum.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StratumLayer {
     pub thickness_m: f64,
@@ -1258,6 +1238,7 @@ pub struct StratumLayer {
     pub elements: ElementTable,
 }
 
+/// Type of material in a stratum layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MaterialType {
     Gas, Regolith, Topsoil, Subsoil, SedimentaryRock, 

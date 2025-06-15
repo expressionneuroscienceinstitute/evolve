@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::sleep;
+use tracing::{error, info};
 use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
@@ -140,7 +141,7 @@ enum Commands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum InspectTarget {
     Planet { id: String },
     Lineage { id: String },
@@ -346,12 +347,12 @@ async fn cmd_status() -> Result<()> {
 async fn cmd_start(
     mut config: SimulationConfig,
     load: Option<PathBuf>,
-    preset: Option<String>,
+    _preset: Option<String>,
     tick_span: Option<f64>,
     low_mem: bool,
     serve_dash: Option<u16>,
     rpc_port: u16,
-    allow_net: bool,
+    _allow_net: bool,
 ) -> Result<()> {
     if let Some(ts) = tick_span {
         config.tick_span_years = ts;
@@ -384,57 +385,57 @@ async fn cmd_start(
 
     println!("Simulation started. Press Ctrl+C to stop.");
 
-    let mut last_tick_time = std::time::Instant::now();
-    let mut tick_counter = 0;
-    let mut ups = 0.0;
-
+    let mut _ups = 0.0;
     loop {
+        let start_time = tokio::time::Instant::now();
         let mut sim_guard = sim.lock().unwrap();
-        sim_guard.tick()?;
-        let current_tick = sim_guard.current_tick;
-        let stats = sim_guard.get_stats();
-        drop(sim_guard); // Release lock before sleeping
 
-        // Auto-save logic
-        if config.auto_save_interval > 0
-            && current_tick % config.auto_save_interval == 0
-            && current_tick > 0
-        {
-            let path = Path::new(&config.auto_save_path);
-            println!("Auto-saving checkpoint to {:?}...", path);
-            let sim_guard = sim.lock().unwrap();
-            if let Err(e) = persistence::save_checkpoint(&sim_guard, path) {
-                eprintln!("Failed to auto-save checkpoint: {}", e);
-            }
+        if let Err(e) = sim_guard.tick() {
+            eprintln!("Error during simulation tick: {}", e);
+            break;
         }
 
-        tick_counter += 1;
-        let elapsed = last_tick_time.elapsed();
-        if elapsed >= Duration::from_secs(1) {
-            ups = tick_counter as f64 / elapsed.as_secs_f64();
-            tick_counter = 0;
-            last_tick_time = std::time::Instant::now();
+        // Auto-saving logic
+        if config.auto_save_interval > 0 && sim_guard.current_tick % config.auto_save_interval == 0 {
+            let save_path = PathBuf::from(&config.auto_save_path);
+            if !save_path.exists() {
+                std::fs::create_dir_all(&save_path)?;
+            }
+            let checkpoint_file = save_path.join(format!("snapshot_{}.bin", sim_guard.current_tick));
+            info!("Auto-saving checkpoint to {:?}", checkpoint_file);
+            if let Err(e) = persistence::save_checkpoint(&mut *sim_guard, &checkpoint_file) {
+                error!("Failed to save checkpoint: {}", e);
+            }
+        }
+        
+        let stats = sim_guard.get_stats();
 
+        drop(sim_guard); // Release lock before sleeping
+
+        // Frame limiting
+        let elapsed = start_time.elapsed();
+        if elapsed >= Duration::from_secs(1) {
             let status_json = json!({
                 "type": "status",
                 "tick": stats.current_tick,
-                "ups": ups,
+                "ups": stats.target_ups,
                 "age": stats.universe_age_gyr,
                 "era": format!("{:?}", stats.cosmic_era),
                 "lineages": stats.lineage_count,
-            })
-            .to_string();
+            });
 
-            if tx.send(status_json).is_err() {
-                // No active receivers, but that's fine.
+            if tx.send(status_json.to_string()).is_err() {
+                // All receivers are gone, no point in continuing
             }
         }
 
-        sleep(Duration::from_millis(
-            (1000.0 / config.target_ups) as u64,
-        ))
-        .await;
+        let tick_duration = Duration::from_secs_f64(1.0 / config.target_ups);
+        if let Some(sleep_duration) = tick_duration.checked_sub(elapsed) {
+            sleep(sleep_duration).await;
+        }
     }
+
+    Ok(())
 }
 
 async fn cmd_stop() -> Result<()> {
@@ -663,29 +664,32 @@ async fn handle_rpc_request(
     state: Arc<Mutex<SharedState>>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let response_id = request.id;
+    let shared_state = state.lock().unwrap();
 
     let response = match request.method.as_str() {
-        "get_status" => {
-            let sim_guard = state.lock().unwrap().sim.lock().unwrap();
+        "status" => {
+            let mut sim_guard = shared_state.sim.lock().unwrap();
             let stats = sim_guard.get_stats();
-            // This is a simplification; in reality, UPS would need to be tracked.
-            // We'll leave it at 0.0 for the RPC response for now.
-            let status = rpc::StatusResponse {
+
+            let response_data = rpc::StatusResponse {
                 status: "running".to_string(),
                 tick: stats.current_tick,
-                ups: 0.0, // UPS is tracked in the loop, not here.
+                ups: stats.target_ups,
                 universe_age_gyr: stats.universe_age_gyr,
                 cosmic_era: format!("{:?}", stats.cosmic_era),
                 lineage_count: stats.lineage_count as u64,
-                save_file_age_sec: None, // Could be implemented by checking file metadata
+                save_file_age_sec: None, // TODO
             };
-            rpc::RpcResponse {
+
+            let rpc_response: rpc::RpcResponse<rpc::StatusResponse> = rpc::RpcResponse {
                 jsonrpc: "2.0".to_string(),
-                result: Some(status),
+                result: Some(response_data),
                 error: None,
                 id: response_id,
-            }
+            };
+            Ok(warp::reply::json(&rpc_response))
         }
+
         "snapshot" => {
             #[derive(Deserialize)]
             struct SnapshotParams {
@@ -694,48 +698,80 @@ async fn handle_rpc_request(
 
             match serde_json::from_value::<SnapshotParams>(request.params) {
                 Ok(params) => {
-                    let sim_guard = state.lock().unwrap().sim.lock().unwrap();
-                    match persistence::save_checkpoint(&sim_guard, &params.path) {
-                        Ok(_) => rpc::RpcResponse {
-                            jsonrpc: "2.0".to_string(),
-                            result: Some(format!("Snapshot saved to {:?}", params.path)),
-                            error: None,
-                            id: response_id,
-                        },
-                        Err(e) => rpc::RpcResponse {
-                            jsonrpc: "2.0".to_string(),
-                            result: None,
-                            error: Some(rpc::RpcError {
+                    let mut sim_guard = shared_state.sim.lock().unwrap();
+                    match persistence::save_checkpoint(&mut *sim_guard, &params.path) {
+                        Ok(_) => {
+                            let stats = sim_guard.get_stats();
+                            let response_data = rpc::StatusResponse {
+                                status: format!("Snapshot saved to {:?}", params.path),
+                                tick: stats.current_tick,
+                                ups: stats.target_ups,
+                                universe_age_gyr: stats.universe_age_gyr,
+                                cosmic_era: format!("{:?}", stats.cosmic_era),
+                                lineage_count: stats.lineage_count as u64,
+                                save_file_age_sec: Some(0),
+                            };
+                            let rpc_response: rpc::RpcResponse<rpc::StatusResponse> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: Some(response_data),
+                                error: None,
+                                id: response_id,
+                            };
+                            Ok(warp::reply::json(&rpc_response))
+                        }
+                        Err(e) => {
+                            let error = rpc::RpcError {
                                 code: rpc::INTERNAL_ERROR,
                                 message: format!("Failed to save snapshot: {}", e),
-                            }),
-                            id: response_id,
-                        },
+                            };
+                            let rpc_response: rpc::RpcResponse<rpc::StatusResponse> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: None,
+                                error: Some(error),
+                                id: response_id,
+                            };
+                            Ok(warp::reply::json(&rpc_response))
+                        }
                     }
                 }
-                Err(e) => rpc::RpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(rpc::RpcError {
+                Err(e) => {
+                    let error = rpc::RpcError {
                         code: rpc::INVALID_PARAMS,
                         message: format!("Invalid parameters for snapshot: {}", e),
-                    }),
-                    id: response_id,
-                },
+                    };
+                    let rpc_response: rpc::RpcResponse<rpc::StatusResponse> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(error),
+                        id: response_id,
+                    };
+                    Ok(warp::reply::json(&rpc_response))
+                }
             }
         }
-        _ => rpc::RpcResponse {
-            jsonrpc: "2.0".to_string(),
-            result: None,
-            error: Some(rpc::RpcError {
+
+        "stop" => {
+            // TODO: Implement graceful shutdown
+            info!("Received stop command via RPC. Exiting...");
+            std::process::exit(0);
+        }
+
+        _ => {
+            let error = rpc::RpcError {
                 code: rpc::METHOD_NOT_FOUND,
                 message: format!("Method '{}' not found", request.method),
-            }),
-            id: response_id,
-        },
+            };
+            let rpc_response: rpc::RpcResponse<()> = rpc::RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: None,
+                error: Some(error),
+                id: response_id,
+            };
+            Ok(warp::reply::json(&rpc_response))
+        }
     };
 
-    Ok(warp::reply::json(&response))
+    response
 }
 
 async fn start_rpc_server(port: u16, state: SharedState) {

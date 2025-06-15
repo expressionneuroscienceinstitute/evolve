@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 
-use crate::PhysicsState;
+use crate::{constants::BOLTZMANN, PhysicsState};
 // use crate::particles::Particle;
 
 /// Represents temperature in Kelvin.
@@ -48,27 +48,26 @@ impl EmergenceMonitor {
     }
 
     /// Update all emergent properties from the states of the particles.
-    pub fn update(&mut self, _states: &[PhysicsState]) -> Result<()> {
-        // self.temperature = self.calculate_temperature(particles);
-        // self.pressure = self.calculate_pressure(particles);
-        // self.entropy = self.calculate_entropy(particles);
+    pub fn update(&mut self, states: &[PhysicsState]) -> Result<()> {
+        self.temperature = self.calculate_temperature(states);
+        self.pressure = self.calculate_pressure(states);
+        // self.entropy = self.calculate_entropy(states);
         Ok(())
     }
 
-    /*
     /// Calculate the temperature from the kinetic energy of the particles.
-    fn calculate_temperature(&self, particles: &[Particle]) -> Temperature {
+    fn calculate_temperature(&self, particles: &[PhysicsState]) -> Temperature {
         let total_kinetic_energy: f64 = particles
             .iter()
             .map(|p| 0.5 * p.mass * p.velocity.norm_squared())
             .sum();
         let temperature =
-            (2.0 / 3.0) * total_kinetic_energy / (particles.len() as f64 * BOLTZMANN_CONSTANT);
+            (2.0 / 3.0) * total_kinetic_energy / (particles.len() as f64 * BOLTZMANN);
         Temperature(temperature)
     }
 
     /// Calculate the pressure using the virial theorem.
-    fn calculate_pressure(&self, particles: &[Particle]) -> Pressure {
+    fn calculate_pressure(&self, particles: &[PhysicsState]) -> Pressure {
         let kinetic_energy: f64 = particles
             .iter()
             .map(|p| 0.5 * p.mass * p.velocity.norm_squared())
@@ -83,17 +82,16 @@ impl EmergenceMonitor {
     /// Calculate the entropy.
     /// This is a placeholder and would require a more complex statistical
     /// mechanics calculation.
-    fn calculate_entropy(&self, _particles: &[Particle]) -> Entropy {
+    fn calculate_entropy(&self, _particles: &[PhysicsState]) -> Entropy {
         // A proper implementation would likely involve phase space volume, which is
         // very complex to calculate.
         Entropy(0.0)
     }
-    */
 }
 
 /// Main function to update and log emergent properties.
-pub fn update_emergent_properties(monitor: &mut EmergenceMonitor, particles: &[&Particle], volume: f64) -> Result<()> {
-    monitor.update(particles, volume);
+pub fn update_emergent_properties(monitor: &mut EmergenceMonitor, particles: &[PhysicsState], _volume: f64) -> Result<()> {
+    monitor.update(particles)?;
     log::info!(
         "Emergent Properties Updated: Temp={:.2} K, Pressure={:.2} Pa",
         monitor.temperature.as_kelvin(),

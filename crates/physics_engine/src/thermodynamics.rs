@@ -48,7 +48,7 @@ impl ThermoSolver {
         // In reality, this would involve detailed balance equations
         
         let kinetic_energy = 0.5 * state.mass * state.velocity.magnitude_squared();
-        let entropy_increase = kinetic_energy * 1e-23 / (constants.k_B * state.temperature);
+        let entropy_increase = kinetic_energy * 1e-23 / (constants.k_b * state.temperature);
         
         // Entropy must increase (second law)
         if entropy_increase > 0.0 {
@@ -64,7 +64,7 @@ impl ThermoSolver {
         let kinetic_energy = 0.5 * state.mass * state.velocity.magnitude_squared();
         
         // Assuming monatomic particles
-        let new_temperature = (2.0 * kinetic_energy) / (3.0 * constants.k_B);
+        let new_temperature = (2.0 * kinetic_energy) / (3.0 * constants.k_b);
         
         // Temperature cannot be negative
         state.temperature = new_temperature.max(0.1); // Minimum 0.1 K
@@ -104,7 +104,7 @@ impl ThermoSolver {
     /// Calculate thermal velocity distribution (Maxwell-Boltzmann)
     pub fn thermal_velocity(&self, state: &PhysicsState, constants: &PhysicsConstants) -> f64 {
         // v_thermal = sqrt(3kT/m)
-        (3.0 * constants.k_B * state.temperature / state.mass).sqrt()
+        (3.0 * constants.k_b * state.temperature / state.mass).sqrt()
     }
 
     /// Calculate heat capacity

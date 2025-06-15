@@ -40,7 +40,7 @@ struct SerializableEntity {
 }
 
 /// Saves the complete state of the simulation to a checkpoint file.
-pub fn save_checkpoint(sim: &UniverseSimulation, path: &Path) -> Result<()> {
+pub fn save_checkpoint(sim: &mut UniverseSimulation, path: &Path) -> Result<()> {
     let mut serializable_entities = Vec::new();
     let mut query = sim.world.query::<(
         Entity,
@@ -56,7 +56,7 @@ pub fn save_checkpoint(sim: &UniverseSimulation, path: &Path) -> Result<()> {
         celestial_body,
         planetary_environment,
         agent_lineage
-    ) in query.iter(&sim.world) {
+    ) in query.iter_mut(&mut sim.world) {
         serializable_entities.push(SerializableEntity {
             physics_state: physics_state.cloned(),
             celestial_body: celestial_body.cloned(),

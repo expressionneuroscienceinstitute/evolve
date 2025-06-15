@@ -60,7 +60,7 @@ impl QuantumSolver {
     /// Update quantum transitions (simplified)
     fn update_quantum_transitions(&self, state: &mut PhysicsState, constants: &PhysicsConstants) -> Result<()> {
         // Simplified quantum transition based on temperature
-        let thermal_energy = constants.k_B * state.temperature;
+        let thermal_energy = constants.k_b * state.temperature;
         let photon_energy = thermal_energy; // Simplified
         
         // Check if photon energy can cause transitions

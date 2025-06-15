@@ -6,37 +6,25 @@
 //! time, giving a view of the dynamical evolution of the system.
 
 use anyhow::Result;
+use nalgebra::Vector3;
 
-use crate::PhysicsState;
+use crate::{PhysicsState, constants::{ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY}};
 
-/// Struct for managing Molecular Dynamics simulations.
-#[derive(Debug, Default)]
-pub struct MolecularDynamics {
-    // pub force_field: ForceField,
-    pub temperature: f64,
-    pub time_step: f64,
+/// Represents the parameters for a force field, e.g., Lennard-Jones.
+#[derive(Debug, Clone, Default)]
+pub struct ForceField {
+    pub epsilon: f64, // Depth of the potential well
+    pub sigma: f64,   // Finite distance at which the inter-particle potential is zero
 }
 
-impl MolecularDynamics {
-    /// Creates a new Molecular Dynamics manager.
-    pub fn new(/*force_field: ForceField,*/ temperature: f64, time_step: f64) -> Self {
-        Self {
-            // force_field,
-            temperature,
-            time_step,
-        }
+impl ForceField {
+    /// Creates a new `ForceField` with default parameters.
+    pub fn new(epsilon: f64, sigma: f64) -> Self {
+        Self { epsilon, sigma }
     }
 
-    /// Update particle states based on molecular forces.
-    pub fn update(&self, _states: &mut [PhysicsState]) -> Result<()> {
-        // let forces = self.calculate_forces(particles);
-        // self.integrate(particles, &forces);
-        Ok(())
-    }
-
-    /*
     /// Calculate forces on each particle using the force field.
-    fn calculate_forces(&self, particles: &[Particle]) -> Vec<Vector3<f64>> {
+    fn calculate_forces(&self, particles: &[PhysicsState]) -> Vec<Vector3<f64>> {
         let mut forces = vec![Vector3::zeros(); particles.len()];
 
         for i in 0..particles.len() {
@@ -44,20 +32,19 @@ impl MolecularDynamics {
                 let r_ij = particles[j].position - particles[i].position;
                 let dist = r_ij.norm();
 
-                // Lennard-Jones potential
-                let lj_force = self.force_field.lennard_jones_force(dist);
-                let force_vec = lj_force * r_ij.normalize();
+                if dist < 1e-9 { continue; } // Avoid singularity
 
-                forces[i] += force_vec;
-                forces[j] -= force_vec;
-
-                // Electrostatic forces
-                let electrostatic_force = self.force_field.electrostatic_force(
+                // Lennard-Jones potential force
+                let lj_force = self.lennard_jones_force(dist);
+                
+                // Electrostatic force (Coulomb's Law)
+                let electrostatic_force = self.electrostatic_force(
                     particles[i].charge,
                     particles[j].charge,
                     dist,
                 );
-                let force_vec = electrostatic_force * r_ij.normalize();
+                
+                let force_vec = (lj_force + electrostatic_force) * r_ij.normalize();
 
                 forces[i] += force_vec;
                 forces[j] -= force_vec;
@@ -65,21 +52,58 @@ impl MolecularDynamics {
         }
         forces
     }
+    
+    /// Calculates the magnitude of the Lennard-Jones force.
+    fn lennard_jones_force(&self, distance: f64) -> f64 {
+        let sigma_over_r_6 = (self.sigma / distance).powi(6);
+        let sigma_over_r_12 = sigma_over_r_6.powi(2);
+        24.0 * self.epsilon / distance * (2.0 * sigma_over_r_12 - sigma_over_r_6)
+    }
+
+    /// Calculates the magnitude of the electrostatic force.
+    fn electrostatic_force(&self, q1: f64, q2: f64, distance: f64) -> f64 {
+        (q1 * ELEMENTARY_CHARGE) * (q2 * ELEMENTARY_CHARGE) / (4.0 * std::f64::consts::PI * VACUUM_PERMITTIVITY * distance.powi(2))
+    }
+}
+
+/// Struct for managing Molecular Dynamics simulations.
+#[derive(Debug, Default)]
+pub struct MolecularDynamics {
+    pub force_field: ForceField,
+    pub temperature: f64,
+    pub time_step: f64,
+}
+
+impl MolecularDynamics {
+    /// Creates a new Molecular Dynamics manager.
+    pub fn new(force_field: ForceField, temperature: f64, time_step: f64) -> Self {
+        Self {
+            force_field,
+            temperature,
+            time_step,
+        }
+    }
+
+    /// Update particle states based on molecular forces.
+    pub fn update(&self, states: &mut [PhysicsState]) -> Result<()> {
+        let forces = self.force_field.calculate_forces(states);
+        self.integrate(states, &forces);
+        Ok(())
+    }
 
     /// Integrate equations of motion (e.g., Verlet integration).
-    fn integrate(&self, particles: &mut [Particle], forces: &[Vector3<f64>]) {
+    fn integrate(&self, particles: &mut [PhysicsState], forces: &[Vector3<f64>]) {
         for (p, f) in particles.iter_mut().zip(forces.iter()) {
             let acceleration = f / p.mass;
             p.position += p.velocity * self.time_step + 0.5 * acceleration * self.time_step.powi(2);
             p.velocity += acceleration * self.time_step;
         }
     }
-    */
 }
 
 /// A convenience function to run a single step of a molecular dynamics simulation.
 pub fn step_molecular_dynamics(
-    particles: &mut Vec<Particle>,
+    particles: &mut Vec<PhysicsState>,
     force_field: &ForceField,
     time_step: f64,
 ) -> Result<()> {

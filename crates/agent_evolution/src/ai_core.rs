@@ -10,7 +10,7 @@ use crate::genetics::Genome;
 
 /// Represents the sensory inputs available to an agent.
 /// This could include data from the environment, internal state, etc.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct SensoryInput {
     pub vision: Vec<f64>,
     pub audio: Vec<f64>,

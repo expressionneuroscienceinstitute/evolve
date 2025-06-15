@@ -35,6 +35,7 @@ pub struct SimulationConfig {
     pub memory_limit_gb: f64,          // Memory usage limit
     pub cpu_limit_percent: f64,        // CPU usage limit (0-100)
     pub auto_save_interval: u64,       // Ticks between autosaves
+    pub auto_save_path: String,        // Path for autosaved checkpoints
     pub checkpoint_retention: u32,     // Number of checkpoints to keep
     
     /// God-mode parameters
@@ -82,6 +83,7 @@ impl Default for SimulationConfig {
             memory_limit_gb: 4.0,           // 4 GB default
             cpu_limit_percent: 70.0,        // 70% CPU usage
             auto_save_interval: 10000,      // Every 10k ticks
+            auto_save_path: "./checkpoints/".to_string(), // Default save path
             checkpoint_retention: 10,       // Keep 10 checkpoints
             
             // God-mode
@@ -154,6 +156,7 @@ impl SimulationConfig {
             memory_limit_gb: 0.5,          // 512 MB limit
             target_ups: 100.0,             // Lower UPS target
             auto_save_interval: 1000,      // More frequent saves
+            auto_save_path: "./checkpoints_low_mem/".to_string(),
             checkpoint_retention: 3,       // Fewer checkpoints
             strict_physics_validation: false, // Less validation overhead
             ..Default::default()
@@ -180,6 +183,7 @@ impl SimulationConfig {
             initial_particle_count: 1000,
             target_ups: f64::INFINITY,     // Max speed
             auto_save_interval: u64::MAX,  // No autosaves
+            auto_save_path: "".to_string(), // No autosave path for benchmark
             strict_physics_validation: false,
             enable_safety_guards: false,
             simulation_seed: Some(42),     // Reproducible

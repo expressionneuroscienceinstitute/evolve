@@ -60,10 +60,11 @@ pub fn perform_self_modification(genome: &mut Genome, mutation_rate: f64) -> Res
     let candidate_genes = Introspection::analyze_genome(genome);
 
     if let Some(target_gene) = candidate_genes.first() {
+        let target_gene_id = target_gene.id.clone();
         // 2. Agent decides to modify the identified gene.
         let mut rng = thread_rng();
-        SelfModification::targeted_mutation(&mut rng, genome, &target_gene.id, mutation_rate)?;
-        log::info!("Agent performed self-modification on gene: {}", target_gene.id);
+        SelfModification::targeted_mutation(&mut rng, genome, &target_gene_id, mutation_rate)?;
+        log::info!("Agent performed self-modification on gene: {}", target_gene_id);
     }
 
     Ok(())

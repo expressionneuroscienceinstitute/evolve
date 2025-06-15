@@ -11,10 +11,10 @@ pub struct PhysicsConstants {
     pub c: f64,              // Speed of light (m/s)
     pub h: f64,              // Planck constant (J⋅s)
     pub hbar: f64,           // Reduced Planck constant (J⋅s)
-    pub G: f64,              // Gravitational constant (m³⋅kg⁻¹⋅s⁻²)
-    pub k_B: f64,            // Boltzmann constant (J/K)
-    pub N_A: f64,            // Avogadro constant (mol⁻¹)
-    pub R: f64,              // Gas constant (J⋅mol⁻¹⋅K⁻¹)
+    pub g: f64,              // Gravitational constant (m³⋅kg⁻¹⋅s⁻²)
+    pub k_b: f64,            // Boltzmann constant (J/K)
+    pub n_a: f64,            // Avogadro constant (mol⁻¹)
+    pub r: f64,              // Gas constant (J⋅mol⁻¹⋅K⁻¹)
     
     // Electromagnetic constants
     pub epsilon_0: f64,      // Vacuum permittivity (F/m)
@@ -29,15 +29,15 @@ pub struct PhysicsConstants {
     pub u: f64,              // Atomic mass unit (kg)
     
     // Astronomical constants
-    pub M_sun: f64,          // Solar mass (kg)
-    pub R_sun: f64,          // Solar radius (m)
-    pub L_sun: f64,          // Solar luminosity (W)
-    pub AU: f64,             // Astronomical unit (m)
+    pub m_sun: f64,          // Solar mass (kg)
+    pub r_sun: f64,          // Solar radius (m)
+    pub l_sun: f64,          // Solar luminosity (W)
+    pub au: f64,             // Astronomical unit (m)
     pub pc: f64,             // Parsec (m)
     
     // Earth reference values
-    pub M_earth: f64,        // Earth mass (kg)
-    pub R_earth: f64,        // Earth radius (m)
+    pub m_earth: f64,        // Earth mass (kg)
+    pub r_earth: f64,        // Earth radius (m)
     pub g_earth: f64,        // Earth surface gravity (m/s²)
     
     // Fusion thresholds
@@ -56,10 +56,10 @@ impl Default for PhysicsConstants {
             c: 299_792_458.0,
             h: 6.626_070_15e-34,
             hbar: 1.054_571_817e-34,
-            G: 6.674_30e-11,
-            k_B: 1.380_649e-23,
-            N_A: 6.022_140_76e23,
-            R: 8.314_462_618,
+            g: 6.674_30e-11,
+            k_b: 1.380_649e-23,
+            n_a: 6.022_140_76e23,
+            r: 8.314_462_618,
             
             // Electromagnetic constants
             epsilon_0: 8.854_187_8128e-12,
@@ -74,15 +74,15 @@ impl Default for PhysicsConstants {
             u: 1.660_538_921e-27,
             
             // Astronomical constants
-            M_sun: 1.988_47e30,
-            R_sun: 6.957e8,
-            L_sun: 3.828e26,
-            AU: 1.495_978_707e11,
+            m_sun: 1.988_47e30,
+            r_sun: 6.957e8,
+            l_sun: 3.828e26,
+            au: 1.495_978_707e11,
             pc: 3.085_677_581e16,
             
             // Earth reference
-            M_earth: 5.972_168e24,
-            R_earth: 6.371e6,
+            m_earth: 5.972_168e24,
+            r_earth: 6.371e6,
             g_earth: 9.806_65,
             
             // Stellar evolution thresholds
@@ -102,7 +102,7 @@ impl PhysicsConstants {
     
     /// Calculate gravitational force between two masses
     pub fn gravitational_force(&self, m1: f64, m2: f64, r: f64) -> f64 {
-        self.G * m1 * m2 / (r * r)
+        self.g * m1 * m2 / (r * r)
     }
     
     /// Calculate Coulomb force between two charges
@@ -122,22 +122,22 @@ impl PhysicsConstants {
     
     /// Calculate Schwarzschild radius
     pub fn schwarzschild_radius(&self, mass: f64) -> f64 {
-        2.0 * self.G * mass / (self.c * self.c)
+        2.0 * self.g * mass / (self.c * self.c)
     }
     
     /// Calculate escape velocity
     pub fn escape_velocity(&self, mass: f64, radius: f64) -> f64 {
-        (2.0 * self.G * mass / radius).sqrt()
+        (2.0 * self.g * mass / radius).sqrt()
     }
     
     /// Calculate thermal velocity for given temperature and mass
     pub fn thermal_velocity(&self, temperature: f64, mass: f64) -> f64 {
-        (3.0 * self.k_B * temperature / mass).sqrt()
+        (3.0 * self.k_b * temperature / mass).sqrt()
     }
     
     /// Calculate blackbody temperature from luminosity and radius
     pub fn blackbody_temperature(&self, luminosity: f64, radius: f64) -> f64 {
-        let sigma = 2.0 * std::f64::consts::PI.powi(5) * self.k_B.powi(4) 
+        let sigma = 2.0 * std::f64::consts::PI.powi(5) * self.k_b.powi(4) 
                     / (15.0 * self.h.powi(3) * self.c.powi(2)); // Stefan-Boltzmann constant
         (luminosity / (4.0 * std::f64::consts::PI * radius * radius * sigma)).powf(0.25)
     }
@@ -163,10 +163,15 @@ pub const GRAVITATIONAL_CONSTANT: f64 = 6.674_30e-11;   // m³⋅kg⁻¹⋅s⁻�
 pub const BOLTZMANN: f64 = 1.380_649e-23;               // J/K
 pub const ELEMENTARY_CHARGE: f64 = 1.602_176_634e-19;   // C
 pub const FINE_STRUCTURE_CONSTANT: f64 = 7.297_352_5693e-3;
+pub const VACUUM_PERMITTIVITY: f64 = 8.854_187_8128e-12; // F/m
 
 pub const ELECTRON_MASS: f64 = 9.109_383_7015e-31;      // kg
 pub const PROTON_MASS: f64 = 1.672_621_923_69e-27;      // kg
 pub const NEUTRON_MASS: f64 = 1.674_927_498_04e-27;     // kg
+
+/// Rydberg constant in m⁻¹
+pub const RYDBERG_CONSTANT: f64 = (ELECTRON_MASS * ELEMENTARY_CHARGE * ELEMENTARY_CHARGE * ELEMENTARY_CHARGE * ELEMENTARY_CHARGE) 
+    / (8.0 * VACUUM_PERMITTIVITY * VACUUM_PERMITTIVITY * PLANCK_CONSTANT * PLANCK_CONSTANT * PLANCK_CONSTANT * SPEED_OF_LIGHT);
 
 #[cfg(test)]
 mod tests {
@@ -196,7 +201,7 @@ mod tests {
         
         // Test Earth-Moon system
         let earth_moon_force = constants.gravitational_force(
-            constants.M_earth, 
+            constants.m_earth, 
             7.342e22, // Moon mass
             3.844e8   // Earth-Moon distance
         );

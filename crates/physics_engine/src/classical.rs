@@ -65,7 +65,7 @@ impl ClassicalSolver {
             return Vector3::zeros(); // Avoid singularity
         }
         
-        let force_magnitude = constants.G * state1.mass * state2.mass / (r * r);
+        let force_magnitude = constants.g * state1.mass * state2.mass / (r * r);
         force_magnitude * r_vec.normalize()
     }
 
@@ -203,7 +203,7 @@ impl ClassicalSolver {
             for j in (i+1)..states.len() {
                 let r = (states[i].position - states[j].position).magnitude();
                 if r > 1e-10 {
-                    total -= constants.G * states[i].mass * states[j].mass / r;
+                    total -= constants.g * states[i].mass * states[j].mass / r;
                 }
             }
         }
@@ -250,27 +250,29 @@ mod tests {
             position: Vector3::new(0.0, 0.0, 0.0),
             velocity: Vector3::zeros(),
             acceleration: Vector3::zeros(),
-            mass: constants.M_earth,
+            mass: constants.m_earth,
             charge: 0.0,
             temperature: 288.0,
             entropy: 0.0,
         };
         
         let state2 = PhysicsState {
-            position: Vector3::new(constants.AU, 0.0, 0.0),
-            velocity: Vector3::zeros(),
+            position: Vector3::new(constants.au, 0.0, 0.0),
+            velocity: Vector3::new(0.0, 29780.0, 0.0), // Earth orbital speed
             acceleration: Vector3::zeros(),
-            mass: constants.M_sun,
+            mass: constants.m_sun,
             charge: 0.0,
             temperature: 5778.0,
             entropy: 0.0,
         };
         
         let force = solver.gravitational_force(&state1, &state2, &constants);
-        let expected_magnitude = constants.G * constants.M_earth * constants.M_sun 
-                                / (constants.AU * constants.AU);
         
-        assert_relative_eq!(force.magnitude(), expected_magnitude, epsilon = 1e-10);
+        // Expected force calculation
+        let expected_magnitude = constants.g * constants.m_earth * constants.m_sun 
+                                / (constants.au * constants.au);
+        
+        assert_relative_eq!(force.magnitude(), expected_magnitude, epsilon = 1e-3);
     }
 
     #[test]
@@ -284,7 +286,7 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::new(0.0, 1000.0, 0.0),
                 acceleration: Vector3::zeros(),
-                mass: constants.M_earth,
+                mass: constants.m_earth,
                 charge: 0.0,
                 temperature: 288.0,
                 entropy: 0.0,

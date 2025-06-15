@@ -5,14 +5,12 @@
 //! Designed to be the most advanced AI evolution simulation ever created.
 
 use bevy_ecs::prelude::*;
-use nalgebra::{Vector3, Matrix3};
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use uuid::Uuid;
 use std::collections::{HashMap, VecDeque};
-use std::time::{SystemTime, UNIX_EPOCH};
 use rand::{Rng, thread_rng};
-use physics_engine::{PhysicsState, EnvironmentProfile};
+use physics_engine::EnvironmentProfile;
 
 pub mod ai_core;
 pub mod decision_tracking;

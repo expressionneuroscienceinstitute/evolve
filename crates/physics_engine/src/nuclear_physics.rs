@@ -526,7 +526,7 @@ impl StellarNucleosynthesis {
 
     /// Update which burning stages are active based on temperature
     pub fn update_burning_stages(&mut self, temperature: f64) {
-        self.pp_chain_active = temperature > 4e6 && temperature < 2e7;
+        self.pp_chain_active = temperature > 4e6;  // Remove upper limit - pp-chain operates at all stellar core temperatures
         self.cno_cycle_active = temperature > 1.5e7;
         self.helium_burning_active = temperature >= 1e8;  // Include the boundary condition
         self.advanced_burning_active = temperature > 5e8;

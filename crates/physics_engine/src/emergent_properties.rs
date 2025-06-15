@@ -11,7 +11,7 @@ use crate::{constants::BOLTZMANN, PhysicsState};
 // use crate::particles::Particle;
 
 /// Represents temperature in Kelvin.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct Temperature(pub f64);
 
 impl Temperature {
@@ -25,7 +25,7 @@ impl Temperature {
 }
 
 /// Represents pressure in Pascals.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct Pressure(pub f64);
 
 impl Pressure {
@@ -39,7 +39,7 @@ impl Pressure {
 }
 
 /// Represents density in kilograms per cubic meter.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct Density(pub f64);
 
 impl Density {

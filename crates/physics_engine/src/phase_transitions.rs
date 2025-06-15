@@ -46,8 +46,8 @@ impl PhaseTransitionModel {
                 critical_point_pres: 2.2064e7, // Pa (220.64 bar)
                 sublimation_const: 23.32,
                 sublimation_slope: 6111.9,
-                vaporization_const: 13.7,
-                vaporization_slope: 5120.0,
+                vaporization_const: 23.2,
+                vaporization_slope: 3816.4,
                 melting_slope: -1.35e7, // Pa/K (negative slope for water)
                 melting_ref_point: (273.15, 101325.0),
             }),

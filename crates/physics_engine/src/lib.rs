@@ -996,6 +996,12 @@ impl PhysicsEngine {
             ParticleType::Higgs => 2.2e-25,   // ~125 GeV/c²
             ParticleType::Photon | ParticleType::Gluon => 0.0,
             ParticleType::ElectronNeutrino | ParticleType::MuonNeutrino | ParticleType::TauNeutrino => 1e-36,
+            // Molecular masses (atomic mass units converted to kg)
+            ParticleType::H2 => 3.34e-27,   // 2.016 u
+            ParticleType::H2O => 2.99e-26,  // 18.015 u
+            ParticleType::CO2 => 7.31e-26,  // 44.01 u
+            ParticleType::CH4 => 2.66e-26,  // 16.043 u
+            ParticleType::NH3 => 2.83e-26,  // 17.031 u
             _ => 0.0,
         }
     }
@@ -1576,7 +1582,235 @@ impl PhysicsEngine {
         Ok(())
     }
     #[allow(dead_code)]
-    fn update_molecular_dynamics(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
+    fn update_molecular_dynamics(&mut self, states: &mut [PhysicsState]) -> Result<()> {
+        // Use atomic collision results to form simple molecules
+        self.process_molecular_formation(states)?;
+        
+        // Apply molecular forces using Lennard-Jones potential and electrostatics
+        let force_field = molecular_dynamics::ForceField::new(1e-21, 3e-10); // Typical values for atmospheric molecules
+        molecular_dynamics::step_molecular_dynamics(&mut states.to_vec(), &force_field, self.time_step)?;
+        
+        // Process chemical reactions between molecules
+        self.process_chemical_reactions()?;
+        
+        Ok(())
+    }
+
+    fn process_molecular_formation(&mut self, _states: &mut [PhysicsState]) -> Result<()> {
+        // Look for atom pairs that can form molecules
+        let mut molecules_to_create = Vec::new();
+        let mut atoms_to_remove = Vec::new();
+        
+        for i in 0..self.atoms.len() {
+            for j in (i + 1)..self.atoms.len() {
+                let atom1 = &self.atoms[i];
+                let atom2 = &self.atoms[j];
+                
+                let distance = (atom1.position - atom2.position).norm();
+                let bond_threshold = (atom1.atomic_radius + atom2.atomic_radius) * 1.2; // 20% larger than sum of radii
+                
+                if distance < bond_threshold && self.can_form_molecule(atom1, atom2) {
+                    let molecule_type = self.determine_molecule_type(atom1, atom2);
+                    if let Some(mol_type) = molecule_type {
+                        molecules_to_create.push((i, j, mol_type));
+                    }
+                }
+            }
+        }
+        
+        // Process molecule formation (remove atoms, create molecules)
+        for (i, j, molecule_type) in molecules_to_create.into_iter().rev() {
+            self.create_molecule_from_atoms(i, j, molecule_type)?;
+            atoms_to_remove.push(j); // Remove in reverse order to maintain indices
+            atoms_to_remove.push(i);
+        }
+        
+        // Remove atoms that were consumed in molecule formation
+        atoms_to_remove.sort_unstable();
+        atoms_to_remove.dedup();
+        for &idx in atoms_to_remove.iter().rev() {
+            if idx < self.atoms.len() {
+                self.atoms.swap_remove(idx);
+            }
+        }
+        
+        Ok(())
+    }
+
+    pub fn can_form_molecule(&self, atom1: &Atom, atom2: &Atom) -> bool {
+        // Check if atoms can chemically bond based on their electron configurations
+        // This is a simplified model based on electron availability
+        
+        let z1 = atom1.nucleus.atomic_number;
+        let z2 = atom2.nucleus.atomic_number;
+        
+        // Common molecular combinations
+        matches!((z1, z2), 
+            (1, 1) | // H + H → H₂
+            (1, 8) | (8, 1) | // H + O → water precursor
+            (6, 8) | (8, 6) | // C + O → CO
+            (7, 1) | (1, 7) | // N + H → ammonia precursor
+            (6, 1) | (1, 6)   // C + H → hydrocarbon precursor
+        )
+    }
+
+    pub fn determine_molecule_type(&self, atom1: &Atom, atom2: &Atom) -> Option<ParticleType> {
+        let z1 = atom1.nucleus.atomic_number;
+        let z2 = atom2.nucleus.atomic_number;
+        
+        match (z1, z2) {
+            (1, 1) => Some(ParticleType::H2),
+            (1, 8) | (8, 1) => {
+                // Check if there's another hydrogen nearby for H₂O formation
+                // For now, just create H₂O directly when H and O meet
+                Some(ParticleType::H2O)
+            },
+            (6, 8) | (8, 6) => Some(ParticleType::CO2), // Simplified - would need another O
+            (7, 1) | (1, 7) => Some(ParticleType::NH3), // Simplified - would need more H
+            (6, 1) | (1, 6) => Some(ParticleType::CH4), // Simplified - would need more H
+            _ => None,
+        }
+    }
+
+    fn create_molecule_from_atoms(&mut self, atom1_idx: usize, atom2_idx: usize, molecule_type: ParticleType) -> Result<()> {
+        if atom1_idx >= self.atoms.len() || atom2_idx >= self.atoms.len() {
+            return Ok(()); // Invalid indices
+        }
+        
+        let atom1 = &self.atoms[atom1_idx];
+        let atom2 = &self.atoms[atom2_idx];
+        
+        // Create molecule at center of mass
+        let com_position = (atom1.position + atom2.position) * 0.5;
+        let total_mass = self.get_particle_mass(molecule_type);
+        
+        // Create fundamental particle representing the molecule
+        let molecule_particle = FundamentalParticle {
+            particle_type: molecule_type,
+            position: com_position,
+            momentum: Vector3::zeros(), // Start at rest
+            spin: Vector3::zeros(),
+            color_charge: None,
+            electric_charge: 0.0, // Most molecules are neutral
+            mass: total_mass,
+            energy: total_mass * C_SQUARED * C_SQUARED, // Rest energy
+            creation_time: self.current_time,
+            decay_time: None, // Molecules are generally stable
+            quantum_state: QuantumState::new(),
+            interaction_history: Vec::new(),
+        };
+        
+        self.particles.push(molecule_particle);
+        Ok(())
+    }
+
+    fn process_chemical_reactions(&mut self) -> Result<()> {
+        // Process chemical reactions between existing molecules
+        // This is a simplified reaction network for common atmospheric/water chemistry
+        
+        let mut reactions_to_process = Vec::new();
+        
+        // Look for molecules that can react
+        for i in 0..self.particles.len() {
+            for j in (i + 1)..self.particles.len() {
+                let p1 = &self.particles[i];
+                let p2 = &self.particles[j];
+                
+                // Check if particles are molecules and close enough to react
+                if self.is_molecule(p1.particle_type) && self.is_molecule(p2.particle_type) {
+                    let distance = (p1.position - p2.position).norm();
+                    let reaction_threshold = 5e-10; // 5 Angstroms
+                    
+                    if distance < reaction_threshold {
+                        let reaction = self.check_chemical_reaction(p1.particle_type, p2.particle_type);
+                        if let Some(products) = reaction {
+                            reactions_to_process.push((i, j, products));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Process reactions (in reverse order to maintain indices)
+        for (i, j, products) in reactions_to_process.into_iter().rev() {
+            self.execute_chemical_reaction(i, j, products)?;
+        }
+        
+        Ok(())
+    }
+
+    pub fn is_molecule(&self, particle_type: ParticleType) -> bool {
+        matches!(particle_type, 
+            ParticleType::H2 | ParticleType::H2O | ParticleType::CO2 | 
+            ParticleType::CH4 | ParticleType::NH3
+        )
+    }
+
+    pub fn check_chemical_reaction(&self, mol1: ParticleType, mol2: ParticleType) -> Option<Vec<ParticleType>> {
+        // Simple chemical reaction network
+        match (mol1, mol2) {
+            // Combustion reactions
+            (ParticleType::CH4, ParticleType::H2O) | (ParticleType::H2O, ParticleType::CH4) => {
+                // CH₄ + H₂O → CO + 3H₂ (steam reforming)
+                Some(vec![ParticleType::CO2, ParticleType::H2, ParticleType::H2])
+            },
+            // Photosynthesis-like reaction (simplified)
+            (ParticleType::CO2, ParticleType::H2O) | (ParticleType::H2O, ParticleType::CO2) => {
+                // CO₂ + H₂O → CH₄ + O₂ (simplified)
+                Some(vec![ParticleType::CH4, ParticleType::H2O])
+            },
+            _ => None,
+        }
+    }
+
+    fn execute_chemical_reaction(&mut self, mol1_idx: usize, mol2_idx: usize, products: Vec<ParticleType>) -> Result<()> {
+        if mol1_idx >= self.particles.len() || mol2_idx >= self.particles.len() {
+            return Ok(());
+        }
+        
+        // Get reaction center position
+        let reaction_position = (self.particles[mol1_idx].position + self.particles[mol2_idx].position) * 0.5;
+        
+        // Create product molecules
+        for product_type in products {
+            let mass = self.get_particle_mass(product_type);
+            let momentum = self.sample_thermal_momentum(product_type, self.temperature);
+            
+            let product = FundamentalParticle {
+                particle_type: product_type,
+                position: reaction_position + Vector3::new(
+                    (rand::random::<f64>() - 0.5) * 1e-10,
+                    (rand::random::<f64>() - 0.5) * 1e-10,
+                    (rand::random::<f64>() - 0.5) * 1e-10,
+                ), // Small random displacement
+                momentum,
+                spin: Vector3::zeros(),
+                color_charge: None,
+                electric_charge: 0.0,
+                mass,
+                energy: (mass * mass * C_SQUARED * C_SQUARED + momentum.norm_squared() * C_SQUARED).sqrt(),
+                creation_time: self.current_time,
+                decay_time: None,
+                quantum_state: QuantumState::new(),
+                interaction_history: Vec::new(),
+            };
+            
+            self.particles.push(product);
+        }
+        
+        // Remove reactant molecules (in reverse order to maintain indices)
+        let mut indices = vec![mol1_idx, mol2_idx];
+        indices.sort_unstable();
+        indices.reverse();
+        
+        for &idx in &indices {
+            if idx < self.particles.len() {
+                self.particles.swap_remove(idx);
+            }
+        }
+        
+        Ok(())
+    }
     fn process_phase_transitions(&mut self) -> Result<()> {
         use crate::phase_transitions::*;
         use crate::emergent_properties::{Temperature, Pressure, Density};

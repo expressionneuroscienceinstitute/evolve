@@ -4,6 +4,7 @@ use physics_engine::nuclear_physics::*;
 use physics_engine::interactions::*;
 use approx::assert_relative_eq;
 use nalgebra::Vector3;
+use std::collections::HashMap;
 
 /// Test comprehensive particle database coverage
 #[test]
@@ -433,4 +434,104 @@ fn test_particle_creation_comprehensive() {
                 !particle.quantum_state.wave_function.is_empty());
         assert_eq!(particle.creation_time, 0.0);
     }
+}
+
+/// Test molecular dynamics functionality including formation and reactions
+#[test]
+fn test_molecular_dynamics_comprehensive() {
+    let mut physics_engine = PhysicsEngine::new(1e-10).unwrap();
+    
+    // Create hydrogen and oxygen atoms using the physics engine's Atom type
+    let h_nucleus = AtomicNucleus {
+        mass_number: 1,
+        atomic_number: 1,
+        protons: vec![],
+        neutrons: vec![],
+        binding_energy: 0.0,
+        nuclear_spin: Vector3::zeros(),
+        magnetic_moment: Vector3::zeros(),
+        electric_quadrupole_moment: 0.0,
+        nuclear_radius: 1e-15,
+        shell_model_state: HashMap::new(),
+        position: Vector3::new(0.0, 0.0, 0.0),
+        momentum: Vector3::zeros(),
+        excitation_energy: 0.0,
+    };
+    
+    let o_nucleus = AtomicNucleus {
+        mass_number: 16,
+        atomic_number: 8,
+        protons: vec![],
+        neutrons: vec![],
+        binding_energy: 0.0,
+        nuclear_spin: Vector3::zeros(),
+        magnetic_moment: Vector3::zeros(),
+        electric_quadrupole_moment: 0.0,
+        nuclear_radius: 3e-15,
+        shell_model_state: HashMap::new(),
+        position: Vector3::new(2e-10, 0.0, 0.0),
+        momentum: Vector3::zeros(),
+        excitation_energy: 0.0,
+    };
+    
+    let h_atom = Atom {
+        nucleus: h_nucleus,
+        electrons: vec![],
+        electron_orbitals: vec![],
+        total_energy: 0.0,
+        ionization_energy: 13.6 * 1.602e-19, // eV to J
+        electron_affinity: 0.0,
+        atomic_radius: 5.29e-11, // Bohr radius
+        position: Vector3::new(0.0, 0.0, 0.0),
+        velocity: Vector3::zeros(),
+        electronic_state: HashMap::new(),
+    };
+    
+    let o_atom = Atom {
+        nucleus: o_nucleus,
+        electrons: vec![],
+        electron_orbitals: vec![],
+        total_energy: 0.0,
+        ionization_energy: 13.6 * 1.602e-19,
+        electron_affinity: 1.46 * 1.602e-19,
+        atomic_radius: 6.6e-11,
+        position: Vector3::new(2e-10, 0.0, 0.0),
+        velocity: Vector3::zeros(),
+        electronic_state: HashMap::new(),
+    };
+    
+    physics_engine.atoms.push(h_atom);
+    physics_engine.atoms.push(o_atom);
+    
+    // Test molecular formation capability
+    assert!(physics_engine.can_form_molecule(&physics_engine.atoms[0], &physics_engine.atoms[1]));
+    
+    // Test molecule type determination  
+    let molecule_type = physics_engine.determine_molecule_type(&physics_engine.atoms[0], &physics_engine.atoms[1]);
+    assert_eq!(molecule_type, Some(ParticleType::H2O));
+    
+    // Test molecular mass values
+    assert_eq!(physics_engine.get_particle_mass(ParticleType::H2), 3.34e-27);
+    assert_eq!(physics_engine.get_particle_mass(ParticleType::H2O), 2.99e-26);
+    assert_eq!(physics_engine.get_particle_mass(ParticleType::CO2), 7.31e-26);
+    assert_eq!(physics_engine.get_particle_mass(ParticleType::CH4), 2.66e-26);
+    assert_eq!(physics_engine.get_particle_mass(ParticleType::NH3), 2.83e-26);
+    
+    // Test ordering (lighter molecules should have smaller masses)
+    assert!(physics_engine.get_particle_mass(ParticleType::H2) < physics_engine.get_particle_mass(ParticleType::H2O));
+    assert!(physics_engine.get_particle_mass(ParticleType::H2O) < physics_engine.get_particle_mass(ParticleType::CO2));
+    
+    // Test molecular recognition
+    assert!(physics_engine.is_molecule(ParticleType::H2));
+    assert!(physics_engine.is_molecule(ParticleType::H2O));
+    assert!(physics_engine.is_molecule(ParticleType::CO2));
+    assert!(!physics_engine.is_molecule(ParticleType::Proton));
+    assert!(!physics_engine.is_molecule(ParticleType::Electron));
+    
+    // Test chemical reaction identification
+    let reaction = physics_engine.check_chemical_reaction(ParticleType::CH4, ParticleType::H2O);
+    assert!(reaction.is_some());
+    let products = reaction.unwrap();
+    assert!(products.contains(&ParticleType::CO2));
+    assert!(products.contains(&ParticleType::H2));
 } 

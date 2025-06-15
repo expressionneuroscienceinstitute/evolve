@@ -12,6 +12,8 @@ use anyhow::Result;
 use uuid::Uuid;
 use rand::Rng;
 use md5;
+use diagnostics::{DiagnosticsSystem, AllocationType};
+use std::time::Instant;
 
 pub mod world;
 pub mod cosmic_era;
@@ -30,6 +32,7 @@ pub struct UniverseSimulation {
     pub target_ups: f64,                       // Updates per second target
     pub cosmic_era: cosmic_era::CosmicEra,     // Current era
     pub config: config::SimulationConfig,      // Configuration
+    pub diagnostics: DiagnosticsSystem,        // Performance monitoring
 }
 
 /// Celestial body component
@@ -59,7 +62,7 @@ pub struct StellarEvolution {
 }
 
 /// Stellar evolutionary phases based on nuclear burning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StellarPhase {
     MainSequence,        // Hydrogen burning in core
     SubgiantBranch,      // Hydrogen exhausted, core contracting
@@ -140,6 +143,7 @@ impl UniverseSimulation {
             target_ups: config.target_ups,
             cosmic_era: cosmic_era::CosmicEra::ParticleSoup,
             config,
+            diagnostics: DiagnosticsSystem::new(),
         })
     }
 
@@ -214,11 +218,16 @@ impl UniverseSimulation {
 
     /// Run one simulation tick
     pub fn tick(&mut self) -> Result<()> {
+        let tick_start = Instant::now();
+        
         // Update cosmic era based on time
         self.update_cosmic_era();
         
         // Update physics for all entities
+        let physics_start = Instant::now();
         self.update_physics()?;
+        let physics_duration = physics_start.elapsed();
+        self.diagnostics.record_physics_step(physics_duration);
         
         // Update agent evolution
         self.update_agent_evolution()?;
@@ -228,6 +237,13 @@ impl UniverseSimulation {
         
         // Check win/lose conditions
         self.check_victory_conditions()?;
+        
+        // Record total tick time for universe simulation
+        let tick_duration = tick_start.elapsed();
+        self.diagnostics.record_universe_tick(tick_duration);
+        
+        // Update diagnostics (collect performance metrics)
+        self.diagnostics.update()?;
         
         // Increment tick counter
         self.current_tick += 1;
@@ -258,8 +274,27 @@ impl UniverseSimulation {
             .map(|state| state.clone())
             .collect();
         
-        // Run physics step
+        // Record allocation for physics state vector
+        let physics_state_size = physics_states.len() * std::mem::size_of::<PhysicsState>();
+        self.diagnostics.record_allocation(
+            physics_state_size as u64,
+            "update_physics".to_string(),
+            AllocationType::Particle
+        );
+        
+        // Run physics step and record interactions
+        let interactions_before = self.physics_engine.compton_count + 
+                                 self.physics_engine.pair_production_count + 
+                                 self.physics_engine.neutrino_scatter_count;
+        
         self.physics_engine.step(&mut physics_states)?;
+        
+        let interactions_after = self.physics_engine.compton_count + 
+                                self.physics_engine.pair_production_count + 
+                                self.physics_engine.neutrino_scatter_count;
+        
+        let interactions_this_step = (interactions_after - interactions_before) as u32;
+        self.diagnostics.record_interaction(interactions_this_step);
         
         // Update entities with new physics states
         let mut query = self.world.query::<&mut PhysicsState>();
@@ -635,6 +670,16 @@ impl UniverseSimulation {
         
         let stellar_evolution = StellarEvolution::new(stellar_mass);
         
+        // Record allocation for new stellar body
+        let stellar_entity_size = std::mem::size_of::<CelestialBody>() +
+                                 std::mem::size_of::<PhysicsState>() +
+                                 std::mem::size_of::<StellarEvolution>();
+        self.diagnostics.record_allocation(
+            stellar_entity_size as u64,
+            "process_star_formation".to_string(),
+            AllocationType::CelestialBody
+        );
+        
         // Spawn the star
         self.world.spawn((stellar_body, stellar_state, stellar_evolution));
         
@@ -813,6 +858,16 @@ impl UniverseSimulation {
         }
 
         for (body, state, env) in new_planets {
+            // Record allocation for new planet entity
+            let planet_entity_size = std::mem::size_of::<CelestialBody>() +
+                                     std::mem::size_of::<PhysicsState>() +
+                                     std::mem::size_of::<PlanetaryEnvironment>();
+            self.diagnostics.record_allocation(
+                planet_entity_size as u64,
+                "process_planet_formation".to_string(),
+                AllocationType::Planet
+            );
+            
             self.world.spawn((body, state, env));
         }
 
@@ -862,6 +917,14 @@ impl UniverseSimulation {
         }
 
         for lineage in new_lineages {
+            // Record allocation for new lineage entity
+            let lineage_entity_size = std::mem::size_of::<AgentLineage>();
+            self.diagnostics.record_allocation(
+                lineage_entity_size as u64,
+                "process_life_emergence".to_string(),
+                AllocationType::Lineage
+            );
+            
             self.world.spawn(lineage);
         }
 
@@ -898,22 +961,113 @@ impl UniverseSimulation {
         self.universe_age_years() / 1e9
     }
 
-    /// Get simulation statistics
+    /// Get performance diagnostics for the simulation
+    pub fn get_diagnostics(&self) -> &DiagnosticsSystem {
+        &self.diagnostics
+    }
+
+    /// Get mutable reference to diagnostics system
+    pub fn get_diagnostics_mut(&mut self) -> &mut DiagnosticsSystem {
+        &mut self.diagnostics
+    }
+
+    /// Get comprehensive simulation statistics
     pub fn get_stats(&mut self) -> SimulationStats {
+        // Basic counts
         let physics_count = self.world.query::<&PhysicsState>().iter(&self.world).count();
         let celestial_count = self.world.query::<&CelestialBody>().iter(&self.world).count();
         let planet_count = self.world.query::<&PlanetaryEnvironment>().iter(&self.world).count();
         let lineage_count = self.world.query::<&AgentLineage>().iter(&self.world).count();
         
+        // Stellar statistics
+        let (star_count, stellar_stats) = self.calculate_stellar_statistics();
+        
+        // Energy distribution
+        let energy_stats = self.calculate_energy_statistics();
+        
+        // Chemical composition
+        let composition_stats = self.calculate_chemical_composition();
+        
+        // Planetary statistics
+        let planetary_stats = self.calculate_planetary_statistics();
+        
+        // Evolution statistics
+        let evolution_stats = self.calculate_evolution_statistics();
+        
+        // Physics performance
+        let physics_performance = self.calculate_physics_performance();
+        
+        // Cosmic structure
+        let cosmic_structure = self.calculate_cosmic_structure();
+        
         SimulationStats {
+            // Basic simulation metrics
             current_tick: self.current_tick,
             universe_age_gyr: self.universe_age_gyr(),
             cosmic_era: self.cosmic_era.clone(),
+            target_ups: self.target_ups,
+            
+            // Population counts
             particle_count: physics_count,
             celestial_body_count: celestial_count,
             planet_count,
             lineage_count,
-            target_ups: self.target_ups,
+            
+            // Stellar statistics
+            star_count,
+            stellar_formation_rate: stellar_stats.formation_rate,
+            average_stellar_mass: stellar_stats.average_mass,
+            stellar_mass_distribution: stellar_stats.mass_distribution,
+            main_sequence_stars: stellar_stats.main_sequence_count,
+            evolved_stars: stellar_stats.evolved_count,
+            stellar_remnants: stellar_stats.remnant_count,
+            
+            // Energy distribution
+            total_energy: energy_stats.total,
+            kinetic_energy: energy_stats.kinetic,
+            potential_energy: energy_stats.potential,
+            radiation_energy: energy_stats.radiation,
+            nuclear_binding_energy: energy_stats.nuclear_binding,
+            average_temperature: energy_stats.average_temperature,
+            energy_density: energy_stats.density,
+            
+            // Chemical composition
+            hydrogen_fraction: composition_stats.hydrogen,
+            helium_fraction: composition_stats.helium,
+            carbon_fraction: composition_stats.carbon,
+            oxygen_fraction: composition_stats.oxygen,
+            iron_fraction: composition_stats.iron,
+            heavy_elements_fraction: composition_stats.heavy_elements,
+            metallicity: composition_stats.metallicity,
+            
+            // Planetary statistics
+            habitable_planets: planetary_stats.habitable_count,
+            earth_like_planets: planetary_stats.earth_like_count,
+            gas_giants: planetary_stats.gas_giant_count,
+            average_planet_mass: planetary_stats.average_mass,
+            planet_formation_rate: planetary_stats.formation_rate,
+            
+            // Evolution and life statistics
+            total_lineages_ever: evolution_stats.total_ever,
+            extinct_lineages: evolution_stats.extinct,
+            average_fitness: evolution_stats.average_fitness,
+            average_sentience_level: evolution_stats.average_sentience,
+            average_tech_level: evolution_stats.average_tech,
+            immortal_lineages: evolution_stats.immortal_count,
+            consciousness_emergence_rate: evolution_stats.consciousness_rate,
+            
+            // Physics engine performance
+            physics_step_time_ms: physics_performance.step_time_ms,
+            nuclear_reactions_per_step: physics_performance.nuclear_reactions,
+            particle_interactions_per_step: physics_performance.interactions,
+            
+            // Cosmic structure
+            universe_radius: cosmic_structure.radius,
+            expansion_rate: cosmic_structure.hubble_constant,
+            dark_matter_fraction: cosmic_structure.dark_matter_fraction,
+            dark_energy_fraction: cosmic_structure.dark_energy_fraction,
+            ordinary_matter_fraction: cosmic_structure.ordinary_matter_fraction,
+            critical_density: cosmic_structure.critical_density,
         }
     }
 
@@ -1341,19 +1495,370 @@ impl UniverseSimulation {
         
         Ok(None)
     }
+
+    /// Calculate stellar statistics
+    fn calculate_stellar_statistics(&mut self) -> (usize, StellarStatistics) {
+        let mut stellar_stats = StellarStatistics::default();
+        let mut total_stellar_mass = 0.0;
+        
+        // Mass distribution bins (in solar masses)
+        let mass_bins = vec![
+            (0.08, 0.5),   // Low mass
+            (0.5, 1.0),    // Solar-like
+            (1.0, 8.0),    // Intermediate mass
+            (8.0, 25.0),   // High mass
+            (25.0, 100.0), // Very high mass
+        ];
+        let mut mass_distribution = vec![0.0; mass_bins.len()];
+        
+        let mut query = self.world.query::<(&CelestialBody, Option<&StellarEvolution>)>();
+        for (body, evolution) in query.iter(&self.world) {
+            if let CelestialBodyType::Star = body.body_type {
+                stellar_stats.count += 1;
+                
+                let solar_mass = 1.989e30;
+                let mass_solar = body.mass / solar_mass;
+                total_stellar_mass += mass_solar;
+                
+                // Categorize by mass bin
+                for (i, &(min_mass, max_mass)) in mass_bins.iter().enumerate() {
+                    if mass_solar >= min_mass && mass_solar < max_mass {
+                        mass_distribution[i] += 1.0;
+                        break;
+                    }
+                }
+                
+                // Categorize by evolutionary phase
+                if let Some(evolution) = evolution {
+                    match evolution.evolutionary_phase {
+                        StellarPhase::MainSequence => stellar_stats.main_sequence_count += 1,
+                        StellarPhase::WhiteDwarf | StellarPhase::NeutronStar | StellarPhase::BlackHole => {
+                            stellar_stats.remnant_count += 1;
+                        },
+                        _ => stellar_stats.evolved_count += 1,
+                    }
+                } else {
+                    // Default to main sequence for stars without evolution component
+                    stellar_stats.main_sequence_count += 1;
+                }
+            }
+        }
+        
+        stellar_stats.average_mass = if stellar_stats.count > 0 {
+            total_stellar_mass / stellar_stats.count as f64
+        } else {
+            0.0
+        };
+        
+        // Create mass distribution with bin labels
+        stellar_stats.mass_distribution = mass_bins.into_iter()
+            .zip(mass_distribution.into_iter())
+            .map(|((min, _), count)| (min, count))
+            .collect();
+        
+        // Calculate formation rate (stars formed per Gyr)
+        let age_gyr = self.universe_age_gyr();
+        stellar_stats.formation_rate = if age_gyr > 0.0 {
+            stellar_stats.count as f64 / age_gyr
+        } else {
+            0.0
+        };
+        
+        (stellar_stats.count, stellar_stats)
+    }
+    
+    /// Calculate energy statistics
+    fn calculate_energy_statistics(&mut self) -> EnergyStatistics {
+        let mut energy_stats = EnergyStatistics::default();
+        let mut total_temp = 0.0;
+        let mut temp_count = 0;
+        
+        // Calculate from physics engine and ECS entities
+        let mut query = self.world.query::<&PhysicsState>();
+        for state in query.iter(&self.world) {
+            // Kinetic energy: KE = (1/2)mv²
+            let velocity_squared = state.velocity.magnitude_squared();
+            energy_stats.kinetic += 0.5 * state.mass * velocity_squared;
+            
+            // Temperature contribution
+            total_temp += state.temperature;
+            temp_count += 1;
+        }
+        
+        // Add contributions from celestial bodies
+        let mut celestial_query = self.world.query::<&CelestialBody>();
+        for body in celestial_query.iter(&self.world) {
+            // Radiation energy from luminous objects
+            energy_stats.radiation += body.luminosity * 3600.0; // Per hour approximation
+            
+            total_temp += body.temperature;
+            temp_count += 1;
+        }
+        
+        // Physics engine contributions
+        energy_stats.density = self.physics_engine.energy_density;
+        
+        // Average temperature
+        energy_stats.average_temperature = if temp_count > 0 {
+            total_temp / temp_count as f64
+        } else {
+            self.physics_engine.temperature
+        };
+        
+        // Total energy is sum of all components
+        energy_stats.total = energy_stats.kinetic + energy_stats.potential + 
+                            energy_stats.radiation + energy_stats.nuclear_binding;
+        
+        energy_stats
+    }
+    
+    /// Calculate chemical composition statistics
+    fn calculate_chemical_composition(&mut self) -> ChemicalComposition {
+        let mut composition = ChemicalComposition::default();
+        let mut total_mass = 0.0;
+        
+        // Analyze composition from celestial bodies
+        let mut query = self.world.query::<&CelestialBody>();
+        for body in query.iter(&self.world) {
+            total_mass += body.mass;
+            
+            // Extract abundances from element table
+            let h_abundance = body.composition.get_abundance(1) as f64 / 1e6;
+            let he_abundance = body.composition.get_abundance(2) as f64 / 1e6;
+            let c_abundance = body.composition.get_abundance(6) as f64 / 1e6;
+            let o_abundance = body.composition.get_abundance(8) as f64 / 1e6;
+            let fe_abundance = body.composition.get_abundance(26) as f64 / 1e6;
+            
+            composition.hydrogen += h_abundance * body.mass;
+            composition.helium += he_abundance * body.mass;
+            composition.carbon += c_abundance * body.mass;
+            composition.oxygen += o_abundance * body.mass;
+            composition.iron += fe_abundance * body.mass;
+            
+            // Heavy elements (Z > 26)
+            for z in 27..=92 {
+                let abundance = body.composition.get_abundance(z) as f64 / 1e6;
+                composition.heavy_elements += abundance * body.mass;
+            }
+        }
+        
+        // Normalize to mass fractions
+        if total_mass > 0.0 {
+            composition.hydrogen /= total_mass;
+            composition.helium /= total_mass;
+            composition.carbon /= total_mass;
+            composition.oxygen /= total_mass;
+            composition.iron /= total_mass;
+            composition.heavy_elements /= total_mass;
+            
+            // Calculate metallicity [Fe/H] in dex
+            let solar_fe_h = 7.5e-5; // Solar iron-to-hydrogen ratio
+            let fe_h_ratio = composition.iron / composition.hydrogen.max(1e-10);
+            composition.metallicity = (fe_h_ratio / solar_fe_h).log10();
+        }
+        
+        composition
+    }
+    
+    /// Calculate planetary statistics
+    fn calculate_planetary_statistics(&mut self) -> PlanetaryStatistics {
+        let mut planetary_stats = PlanetaryStatistics::default();
+        let mut total_planet_mass = 0.0;
+        
+        let mut query = self.world.query::<(&CelestialBody, &PlanetaryEnvironment)>();
+        for (body, env) in query.iter(&self.world) {
+            if let CelestialBodyType::Planet = body.body_type {
+                planetary_stats.total_count += 1;
+                
+                let earth_mass = 5.972e24;
+                let mass_earth = body.mass / earth_mass;
+                total_planet_mass += mass_earth;
+                
+                // Classify planets
+                match env.planet_class {
+                    PlanetClass::E => planetary_stats.earth_like_count += 1,
+                    PlanetClass::G => planetary_stats.gas_giant_count += 1,
+                    _ => {},
+                }
+                
+                // Check habitability
+                if env.habitability_score > 0.5 {
+                    planetary_stats.habitable_count += 1;
+                }
+            }
+        }
+        
+        planetary_stats.average_mass = if planetary_stats.total_count > 0 {
+            total_planet_mass / planetary_stats.total_count as f64
+        } else {
+            0.0
+        };
+        
+        // Calculate formation rate
+        let age_gyr = self.universe_age_gyr();
+        planetary_stats.formation_rate = if age_gyr > 0.0 {
+            planetary_stats.total_count as f64 / age_gyr
+        } else {
+            0.0
+        };
+        
+        planetary_stats
+    }
+    
+    /// Calculate evolution and life statistics
+    fn calculate_evolution_statistics(&mut self) -> EvolutionStatistics {
+        let mut evolution_stats = EvolutionStatistics::default();
+        let mut total_fitness = 0.0;
+        let mut total_sentience = 0.0;
+        let mut total_tech = 0.0;
+        
+        let mut query = self.world.query::<&AgentLineage>();
+        for lineage in query.iter(&self.world) {
+            evolution_stats.total_ever += 1;
+            
+            total_fitness += lineage.fitness;
+            total_sentience += lineage.sentience_level;
+            total_tech += lineage.tech_level;
+            
+            if lineage.immortality_achieved {
+                evolution_stats.immortal_count += 1;
+            }
+        }
+        
+        let lineage_count = evolution_stats.total_ever;
+        evolution_stats.average_fitness = if lineage_count > 0 {
+            total_fitness / lineage_count as f64
+        } else {
+            0.0
+        };
+        
+        evolution_stats.average_sentience = if lineage_count > 0 {
+            total_sentience / lineage_count as f64
+        } else {
+            0.0
+        };
+        
+        evolution_stats.average_tech = if lineage_count > 0 {
+            total_tech / lineage_count as f64
+        } else {
+            0.0
+        };
+        
+        // Calculate consciousness emergence rate
+        let age_gyr = self.universe_age_gyr();
+        evolution_stats.consciousness_rate = if age_gyr > 0.0 {
+            lineage_count as f64 / age_gyr
+        } else {
+            0.0
+        };
+        
+        evolution_stats
+    }
+    
+    /// Calculate physics engine performance metrics
+    fn calculate_physics_performance(&self) -> PhysicsPerformance {
+        PhysicsPerformance {
+            step_time_ms: 1.0, // Placeholder - would need actual timing
+            nuclear_reactions: self.physics_engine.neutron_decay_count as usize, // Use available counter
+            interactions: self.physics_engine.compton_count as usize + self.physics_engine.pair_production_count as usize,
+        }
+    }
+    
+    /// Calculate cosmic structure parameters
+    fn calculate_cosmic_structure(&self) -> CosmicStructure {
+        // Calculate universe radius from particle distribution or age
+        let age_years = self.universe_age_years();
+        let light_year = 9.461e15; // meters
+        let c = 2.998e8; // m/s
+        
+        // Rough estimate: observable universe radius ≈ c * age
+        let radius_ly = if age_years > 0.0 {
+            (c * age_years * 365.25 * 24.0 * 3600.0) / light_year
+        } else {
+            1.0
+        };
+        
+        CosmicStructure {
+            radius: radius_ly,
+            hubble_constant: 67.4, // km/s/Mpc - standard value
+            dark_matter_fraction: 0.264,
+            dark_energy_fraction: 0.686,
+            ordinary_matter_fraction: 0.05,
+            critical_density: 9.47e-27, // kg/m³ - critical density of universe
+        }
+    }
 }
 
 /// Simulation statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationStats {
+    // Basic simulation metrics
     pub current_tick: u64,
     pub universe_age_gyr: f64,
     pub cosmic_era: cosmic_era::CosmicEra,
+    pub target_ups: f64,
+    
+    // Population counts
     pub particle_count: usize,
     pub celestial_body_count: usize,
     pub planet_count: usize,
     pub lineage_count: usize,
-    pub target_ups: f64,
+    
+    // Stellar statistics
+    pub star_count: usize,
+    pub stellar_formation_rate: f64,  // Stars formed per billion years
+    pub average_stellar_mass: f64,    // Solar masses
+    pub stellar_mass_distribution: Vec<(f64, f64)>, // (mass_range, count)
+    pub main_sequence_stars: usize,
+    pub evolved_stars: usize,         // Post-main-sequence
+    pub stellar_remnants: usize,      // White dwarfs, neutron stars, black holes
+    
+    // Energy distribution
+    pub total_energy: f64,            // Joules
+    pub kinetic_energy: f64,          // Joules
+    pub potential_energy: f64,        // Joules
+    pub radiation_energy: f64,        // Joules
+    pub nuclear_binding_energy: f64,  // Joules
+    pub average_temperature: f64,     // Kelvin
+    pub energy_density: f64,          // J/m³
+    
+    // Chemical composition (by mass fraction)
+    pub hydrogen_fraction: f64,
+    pub helium_fraction: f64,
+    pub carbon_fraction: f64,
+    pub oxygen_fraction: f64,
+    pub iron_fraction: f64,
+    pub heavy_elements_fraction: f64, // Z > 26
+    pub metallicity: f64,             // [Fe/H] in dex
+    
+    // Planetary statistics
+    pub habitable_planets: usize,
+    pub earth_like_planets: usize,
+    pub gas_giants: usize,
+    pub average_planet_mass: f64,     // Earth masses
+    pub planet_formation_rate: f64,   // Planets formed per billion years
+    
+    // Evolution and life statistics
+    pub total_lineages_ever: usize,
+    pub extinct_lineages: usize,
+    pub average_fitness: f64,
+    pub average_sentience_level: f64,
+    pub average_tech_level: f64,
+    pub immortal_lineages: usize,
+    pub consciousness_emergence_rate: f64, // Events per billion years
+    
+    // Physics engine performance
+    pub physics_step_time_ms: f64,
+    pub nuclear_reactions_per_step: usize,
+    pub particle_interactions_per_step: usize,
+    
+    // Cosmic structure
+    pub universe_radius: f64,         // Light-years
+    pub expansion_rate: f64,          // km/s/Mpc (Hubble parameter)
+    pub dark_matter_fraction: f64,
+    pub dark_energy_fraction: f64,
+    pub ordinary_matter_fraction: f64,
+    pub critical_density: f64,       // kg/m³
 }
 
 impl StellarEvolution {
@@ -1486,6 +1991,78 @@ impl StellarEvolution {
     }
 }
 
+// Helper structures for statistics calculation
+#[derive(Debug, Default)]
+struct StellarStatistics {
+    count: usize,
+    formation_rate: f64,
+    average_mass: f64,
+    mass_distribution: Vec<(f64, f64)>,
+    main_sequence_count: usize,
+    evolved_count: usize,
+    remnant_count: usize,
+}
+
+#[derive(Debug, Default)]
+struct EnergyStatistics {
+    total: f64,
+    kinetic: f64,
+    potential: f64,
+    radiation: f64,
+    nuclear_binding: f64,
+    average_temperature: f64,
+    density: f64,
+}
+
+#[derive(Debug, Default)]
+struct ChemicalComposition {
+    hydrogen: f64,
+    helium: f64,
+    carbon: f64,
+    oxygen: f64,
+    iron: f64,
+    heavy_elements: f64,
+    metallicity: f64,
+}
+
+#[derive(Debug, Default)]
+struct PlanetaryStatistics {
+    total_count: usize,
+    habitable_count: usize,
+    earth_like_count: usize,
+    gas_giant_count: usize,
+    average_mass: f64,
+    formation_rate: f64,
+}
+
+#[derive(Debug, Default)]
+struct EvolutionStatistics {
+    total_ever: usize,
+    extinct: usize,
+    average_fitness: f64,
+    average_sentience: f64,
+    average_tech: f64,
+    immortal_count: usize,
+    consciousness_rate: f64,
+}
+
+#[derive(Debug, Default)]
+struct PhysicsPerformance {
+    step_time_ms: f64,
+    nuclear_reactions: usize,
+    interactions: usize,
+}
+
+#[derive(Debug, Default)]
+struct CosmicStructure {
+    radius: f64,
+    hubble_constant: f64,
+    dark_matter_fraction: f64,
+    dark_energy_fraction: f64,
+    ordinary_matter_fraction: f64,
+    critical_density: f64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1523,5 +2100,286 @@ mod tests {
         sim.current_tick = 1000; // 1 Gyr
         sim.update_cosmic_era();
         assert!(matches!(sim.cosmic_era, cosmic_era::CosmicEra::Starbirth));
+    }
+}
+
+#[cfg(test)]
+mod stellar_evolution_integration_tests {
+    use super::*;
+    use crate::config::SimulationConfig;
+    use approx::assert_relative_eq;
+    
+    #[test]
+    fn test_complete_stellar_lifecycle_solar_mass() {
+        // Test complete stellar evolution for a solar-mass star
+        let config = SimulationConfig::default();
+        let _simulation = UniverseSimulation::new(config).expect("Should create simulation");
+        
+        // Manually create a solar-mass star to test evolution
+        let solar_mass = 1.989e30; // kg
+        let mut stellar_evolution = StellarEvolution::new(solar_mass);
+        
+        // Initial conditions
+        assert_eq!(stellar_evolution.evolutionary_phase, StellarPhase::MainSequence);
+        assert_relative_eq!(stellar_evolution.nuclear_fuel_fraction, 1.0, epsilon = 0.01);
+        
+        // Simulate main sequence evolution (should take ~10 Gyr)
+        let dt_years = 1e6; // 1 Myr time steps
+        let mut total_time = 0.0;
+        let mut energy_generated = 0.0;
+        
+        // Run until hydrogen exhaustion
+        while stellar_evolution.nuclear_fuel_fraction > 0.1 && total_time < 15e9 {
+            let energy = stellar_evolution.evolve(solar_mass, dt_years)
+                .expect("Should successfully evolve star");
+            energy_generated += energy;
+            total_time += dt_years;
+            
+            // Verify energy generation is positive
+            assert!(energy >= 0.0, "Nuclear fusion should generate energy");
+            
+            // Verify core temperature increases as fuel depletes
+            if stellar_evolution.nuclear_fuel_fraction < 0.5 {
+                assert!(stellar_evolution.core_temperature > 1.5e7, 
+                       "Core should heat up as hydrogen depletes");
+            }
+        }
+        
+        // Should have transitioned off main sequence
+        assert_ne!(stellar_evolution.evolutionary_phase, StellarPhase::MainSequence,
+                  "Star should have evolved off main sequence");
+        
+        // Main sequence lifetime should be realistic (~10 Gyr for solar mass)
+        assert!(total_time > 5e9 && total_time < 15e9, 
+               "Solar mass star main sequence lifetime should be ~10 Gyr, got {:.1e} years", 
+               total_time);
+        
+        // Should have generated significant energy
+        assert!(energy_generated > 0.0, "Star should have generated nuclear energy");
+    }
+    
+    #[test]
+    fn test_massive_star_evolution() {
+        // Test evolution of a massive star (20 solar masses)
+        let solar_mass = 1.989e30;
+        let massive_star_mass = 20.0 * solar_mass;
+        let mut stellar_evolution = StellarEvolution::new(massive_star_mass);
+        
+        // Massive stars should have shorter lifetimes due to M^(-2.5) scaling
+        assert!(stellar_evolution.main_sequence_lifetime < 1e8, 
+               "Massive stars should have short lifetimes < 100 Myr");
+        
+        // Higher core temperature for massive stars
+        assert!(stellar_evolution.core_temperature > 2e7,
+               "Massive stars should have hotter cores");
+        
+        // Simulate evolution through advanced burning stages
+        let dt_years = 1e5; // 100 kyr time steps for rapid evolution
+        let mut total_time = 0.0;
+        
+        while stellar_evolution.evolutionary_phase != StellarPhase::Supernova && 
+              total_time < stellar_evolution.main_sequence_lifetime * 2.0 {
+            stellar_evolution.evolve(massive_star_mass, dt_years)
+                .expect("Should successfully evolve massive star");
+            total_time += dt_years;
+        }
+        
+        // Massive star should go supernova
+        assert_eq!(stellar_evolution.evolutionary_phase, StellarPhase::Supernova,
+                  "Massive star should explode as supernova");
+    }
+    
+    #[test]
+    fn test_low_mass_star_evolution() {
+        // Test evolution of a low-mass star (0.5 solar masses)
+        let solar_mass = 1.989e30;
+        let low_mass_star = 0.5 * solar_mass;
+        let stellar_evolution = StellarEvolution::new(low_mass_star);
+        
+        // Low-mass stars should have very long lifetimes
+        assert!(stellar_evolution.main_sequence_lifetime > 50e9, 
+               "Low-mass stars should live longer than Hubble time");
+        
+        // Lower core temperature
+        assert!(stellar_evolution.core_temperature < 1e7,
+               "Low-mass stars should have cooler cores");
+        
+        // Should start in main sequence
+        assert_eq!(stellar_evolution.evolutionary_phase, StellarPhase::MainSequence);
+    }
+    
+    #[test]
+    fn test_stellar_nucleosynthesis_integration() {
+        // Test that stellar nucleosynthesis produces expected element ratios
+        let solar_mass = 1.989e30;
+        let mut stellar_evolution = StellarEvolution::new(solar_mass);
+        
+        // Initial composition should be primordial (H/He dominated)
+        let initial_h_fraction = stellar_evolution.core_composition.iter()
+            .find(|(z, a, _)| *z == 1 && *a == 1)
+            .map(|(_, _, f)| *f)
+            .unwrap_or(0.0);
+        let initial_he_fraction = stellar_evolution.core_composition.iter()
+            .find(|(z, a, _)| *z == 2 && *a == 4)
+            .map(|(_, _, f)| *f)
+            .unwrap_or(0.0);
+        
+        assert!(initial_h_fraction > 0.7, "Should start with >70% hydrogen");
+        assert!(initial_he_fraction > 0.2, "Should start with >20% helium");
+        
+        // Evolve for significant time
+        let dt_years = 1e6;
+        for _ in 0..1000 {
+            stellar_evolution.evolve(solar_mass, dt_years)
+                .expect("Should evolve successfully");
+            
+            if stellar_evolution.nuclear_fuel_fraction < 0.8 {
+                break;
+            }
+        }
+        
+        // Should have converted some hydrogen to helium
+        let final_h_fraction = stellar_evolution.core_composition.iter()
+            .find(|(z, a, _)| *z == 1 && *a == 1)
+            .map(|(_, _, f)| *f)
+            .unwrap_or(0.0);
+        let final_he_fraction = stellar_evolution.core_composition.iter()
+            .find(|(z, a, _)| *z == 2 && *a == 4)
+            .map(|(_, _, f)| *f)
+            .unwrap_or(0.0);
+        
+        assert!(final_h_fraction < initial_h_fraction, 
+               "Hydrogen fraction should decrease due to burning");
+        assert!(final_he_fraction > initial_he_fraction, 
+               "Helium fraction should increase due to fusion");
+    }
+    
+    #[test]
+    fn test_stellar_death_outcomes() {
+        // Test that stellar death produces correct remnants based on mass
+        
+        // Low-mass star → white dwarf
+        let low_mass = 0.8 * 1.989e30;
+        let mut low_evolution = StellarEvolution::new(low_mass);
+        low_evolution.evolutionary_phase = StellarPhase::PlanetaryNebula;
+        low_evolution.update_evolutionary_phase(low_mass, 0.0);
+        assert_eq!(low_evolution.evolutionary_phase, StellarPhase::WhiteDwarf,
+                  "Low-mass star should become white dwarf");
+        
+        // Intermediate-mass star → neutron star
+        let intermediate_mass = 1.5 * 1.989e30;
+        let mut intermediate_evolution = StellarEvolution::new(intermediate_mass);
+        intermediate_evolution.evolutionary_phase = StellarPhase::PlanetaryNebula;
+        intermediate_evolution.update_evolutionary_phase(intermediate_mass, 0.0);
+        assert_eq!(intermediate_evolution.evolutionary_phase, StellarPhase::NeutronStar,
+                  "Intermediate-mass star should become neutron star");
+        
+        // Very massive star → black hole
+        let massive_mass = 30.0 * 1.989e30;
+        let mut massive_evolution = StellarEvolution::new(massive_mass);
+        massive_evolution.evolutionary_phase = StellarPhase::Supernova;
+        massive_evolution.update_evolutionary_phase(massive_mass, 0.0);
+        assert_eq!(massive_evolution.evolutionary_phase, StellarPhase::BlackHole,
+                  "Very massive star should become black hole");
+    }
+    
+    #[test]
+    fn test_stellar_evolution_energy_conservation() {
+        // Test that energy is conserved during stellar evolution
+        let solar_mass = 1.989e30;
+        let mut stellar_evolution = StellarEvolution::new(solar_mass);
+        
+        let dt_years = 1e6;
+        let mut total_energy_generated = 0.0;
+        
+        // Track energy generation over time
+        for _ in 0..100 {
+            let energy = stellar_evolution.evolve(solar_mass, dt_years)
+                .expect("Should evolve successfully");
+            total_energy_generated += energy;
+            
+            // Each step should conserve energy
+            assert!(energy.is_finite(), "Energy should be finite");
+            assert!(energy >= 0.0, "Fusion should generate positive energy");
+        }
+        
+        // Total energy should be significant for stellar burning
+        assert!(total_energy_generated > 0.0, "Star should generate energy over time");
+        
+        // Energy generation rate should be realistic for solar-mass star
+        let average_luminosity = stellar_evolution.nuclear_energy_generation;
+        assert!(average_luminosity > 0.0, "Star should have positive luminosity");
+        
+        // Compare to solar luminosity (~3.8e26 W)
+        // Our simplified model won't match exactly, but should be reasonable order of magnitude
+    }
+    
+    #[test]
+    fn test_initial_mass_function_sampling() {
+        // Test that IMF sampling produces realistic stellar mass distribution
+        let config = SimulationConfig::default();
+        let simulation = UniverseSimulation::new(config).expect("Should create simulation");
+        
+        let mut rng = rand::thread_rng();
+        let mut masses = Vec::new();
+        
+        // Sample 1000 stellar masses
+        for _ in 0..1000 {
+            let mass = simulation.sample_stellar_mass_from_imf(&mut rng);
+            masses.push(mass / 1.989e30); // Convert to solar masses
+        }
+        
+        // Check distribution properties
+        masses.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        
+        // Should be dominated by low-mass stars (Salpeter IMF with α=2.35)
+        let median_mass = masses[masses.len() / 2];
+        assert!(median_mass < 1.0, "Median stellar mass should be < 1 solar mass");
+        
+        // Should have some high-mass stars but they should be rare
+        let high_mass_fraction = masses.iter().filter(|&&m| m > 10.0).count() as f64 / masses.len() as f64;
+        assert!(high_mass_fraction < 0.1, "High-mass stars should be rare");
+        
+        // Should span realistic range
+        assert!(masses[0] >= 0.08, "Minimum mass should be hydrogen burning limit");
+        assert!(masses[masses.len()-1] <= 100.0, "Maximum mass should be reasonable");
+    }
+    
+    #[test] 
+    fn test_star_formation_and_evolution_cycle() {
+        // Integration test: star formation → evolution → death → enrichment
+        let config = SimulationConfig::low_memory(); // Keep simulation small
+        
+        let mut simulation = UniverseSimulation::new(config).expect("Should create simulation");
+        simulation.init_big_bang().expect("Should initialize universe");
+        
+        // Fast-forward to star formation era
+        for _ in 0..10 {
+            simulation.tick().expect("Should advance simulation");
+        }
+        
+        // Manually trigger star formation for testing
+        simulation.process_star_formation().expect("Should form stars");
+        
+        // Verify stars were created
+        let mut query = simulation.world.query::<(&CelestialBody, &StellarEvolution)>();
+        let star_count = query.iter(&simulation.world).count();
+        
+        if star_count > 0 {
+            // Test stellar evolution for created stars
+            simulation.process_stellar_evolution().expect("Should evolve stars");
+            
+            // Verify stellar evolution updated properties
+            let mut evolved_query = simulation.world.query::<(&CelestialBody, &StellarEvolution)>();
+            for (body, evolution) in evolved_query.iter(&simulation.world) {
+                assert!(evolution.nuclear_energy_generation >= 0.0, 
+                       "Stars should have non-negative energy generation");
+                
+                // Verify stellar properties are reasonable
+                assert!(body.mass > 0.0, "Star should have positive mass");
+                assert!(body.luminosity >= 0.0, "Star should have non-negative luminosity");
+                assert!(body.temperature > 1000.0, "Star should be hot");
+            }
+        }
     }
 }

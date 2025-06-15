@@ -96,6 +96,7 @@ pub fn load_checkpoint(path: &Path) -> Result<UniverseSimulation> {
         target_ups: serializable_universe.target_ups,
         cosmic_era: serializable_universe.cosmic_era,
         config: serializable_universe.config,
+        diagnostics: crate::DiagnosticsSystem::new(),
     };
 
     for s_entity in serializable_universe.entities {

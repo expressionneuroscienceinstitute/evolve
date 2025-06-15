@@ -382,9 +382,15 @@ impl PhysicsEngine {
             }
         ]);
         
-        // Initialize cross sections for particle interactions
-        self.cross_sections.insert((ParticleType::Electron, ParticleType::Electron), 1e-30); // m²
-        self.cross_sections.insert((ParticleType::Proton, ParticleType::Proton), 1e-27); // m²
+        // Initialize cross sections for particle interactions using nuclear database
+        // For electron-electron: use Thomson scattering cross-section
+        let thomson_cross_section = 8.0 * std::f64::consts::PI / 3.0 * 2.8179403227e-15_f64.powi(2); // m²
+        self.cross_sections.insert((ParticleType::Electron, ParticleType::Electron), thomson_cross_section);
+        
+        // For proton-proton: use nuclear database estimate at typical stellar temperature
+        let pp_cross_section = nuclear_physics::NUCLEAR_DATABASE.get_fusion_cross_section(1, 1, 1, 1, 15e6)
+            .unwrap_or(1e-47); // Fallback to realistic pp cross-section
+        self.cross_sections.insert((ParticleType::Proton, ParticleType::Proton), pp_cross_section);
         
         Ok(())
     }
@@ -1245,14 +1251,20 @@ impl PhysicsEngine {
         let kinetic_energy = 0.5 * reduced_mass * relative_velocity.powi(2);
         
         // Quantum tunneling probability (simplified)
-        let tunneling_prob = (-2.0 * (coulomb_barrier - kinetic_energy).max(0.0) / (HBAR * C)).exp();
+        let _tunneling_prob = (-2.0 * (coulomb_barrier - kinetic_energy).max(0.0) / (HBAR * C)).exp();
         
-        // Fusion cross-section (simplified - depends on nuclear properties)
-        let fusion_cross_section = if z1 <= 2.0 && z2 <= 2.0 {
-            1e-28 * tunneling_prob // Light nuclei like H, He
-        } else {
-            1e-32 * tunneling_prob // Heavier nuclei
-        };
+        // Fusion cross-section using nuclear database
+        let temperature = kinetic_energy / (1.5 * BOLTZMANN); // Estimate temperature from kinetic energy
+        let fusion_cross_section = nuclear_physics::NUCLEAR_DATABASE
+            .get_fusion_cross_section(z1 as u32, n1.mass_number - n1.atomic_number, z2 as u32, n2.mass_number - n2.atomic_number, temperature)
+            .unwrap_or_else(|| {
+                // Fallback to systematics-based estimate
+                nuclear_physics::NUCLEAR_DATABASE.estimate_fusion_cross_section(
+                    z1 as u32, n1.mass_number - n1.atomic_number,
+                    z2 as u32, n2.mass_number - n2.atomic_number,
+                    temperature
+                )
+            });
         
         // Check if fusion should occur this timestep
         let interaction_rate = fusion_cross_section * relative_velocity / (4.0 * std::f64::consts::PI * r12.powi(2));
@@ -1278,12 +1290,25 @@ impl PhysicsEngine {
         let binding_energy_product = Nucleus::new(product_z, product_mass - product_z).binding_energy() * 1.60218e-13;
         let q_value = binding_energy_product - binding_energy_reactants;
         
+        // Get fusion cross-section from nuclear database
+        let temperature = self.temperature; // Use engine temperature
+        let fusion_cross_section = nuclear_physics::NUCLEAR_DATABASE
+            .get_fusion_cross_section(n1.atomic_number, n1.mass_number - n1.atomic_number, 
+                                    n2.atomic_number, n2.mass_number - n2.atomic_number, temperature)
+            .unwrap_or_else(|| {
+                nuclear_physics::NUCLEAR_DATABASE.estimate_fusion_cross_section(
+                    n1.atomic_number, n1.mass_number - n1.atomic_number,
+                    n2.atomic_number, n2.mass_number - n2.atomic_number,
+                    temperature
+                )
+            });
+
         Ok(FusionReaction {
             reactant_indices: vec![i, j],
             product_mass_number: product_mass,
             product_atomic_number: product_z,
             q_value,
-            cross_section: 1e-28,
+            cross_section: fusion_cross_section,
             requires_catalysis: product_z > 6, // Heavy products need catalysis
         })
     }

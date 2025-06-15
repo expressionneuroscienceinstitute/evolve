@@ -1087,38 +1087,94 @@ fn render_sample_universe_stats() {
 }
 
 fn render_physics_diagnostics(diagnostics_data: &serde_json::Value) -> Result<()> {
-    println!("=== PHYSICS ENGINE DIAGNOSTICS ===");
-    
+    println!("=== PHYSICS ENGINE DIAGNOSTICS ===\n");
+
+    // Performance metrics
+    println!("🚀 Performance Metrics:");
     if let Some(step_time) = diagnostics_data.get("average_step_time_ms").and_then(|v| v.as_f64()) {
-        println!("Average step time: {:.2} ms", step_time);
+        println!("  Average physics step time: {:.3} ms", step_time);
     }
     
+    if let Some(step_95th) = diagnostics_data.get("physics_step_95th_percentile_ms").and_then(|v| v.as_f64()) {
+        println!("  95th percentile step time: {:.3} ms", step_95th);
+    }
+    
+    if let Some(tick_time) = diagnostics_data.get("universe_tick_time_ms").and_then(|v| v.as_f64()) {
+        println!("  Average universe tick time: {:.3} ms", tick_time);
+    }
+
+    // Interaction statistics
+    println!("\n⚛️  Nuclear Physics Events:");
     if let Some(interactions) = diagnostics_data.get("interactions_per_step").and_then(|v| v.as_u64()) {
-        println!("Interactions per step: {}", interactions);
+        println!("  Interactions per step: {}", interactions);
     }
     
     if let Some(fusion_events) = diagnostics_data.get("fusion_events").and_then(|v| v.as_u64()) {
-        println!("Nuclear fusion events: {}", fusion_events);
+        println!("  Neutron decay events: {}", fusion_events);
     }
     
     if let Some(fission_events) = diagnostics_data.get("fission_events").and_then(|v| v.as_u64()) {
-        println!("Nuclear fission events: {}", fission_events);
+        println!("  Compton scattering events: {}", fission_events);
     }
     
     if let Some(decay_events) = diagnostics_data.get("particle_decays").and_then(|v| v.as_u64()) {
-        println!("Particle decay events: {}", decay_events);
+        println!("  Pair production events: {}", decay_events);
     }
-    
+
+    // System state
+    println!("\n🌡️  System State:");
     if let Some(temp) = diagnostics_data.get("system_temperature").and_then(|v| v.as_f64()) {
-        println!("System temperature: {:.1} K", temp);
+        println!("  System temperature: {:.1} K", temp);
     }
     
     if let Some(pressure) = diagnostics_data.get("system_pressure").and_then(|v| v.as_f64()) {
-        println!("System pressure: {:.2e} Pa", pressure);
+        println!("  System pressure: {:.2e} Pa", pressure);
     }
     
     if let Some(energy_conservation) = diagnostics_data.get("energy_conservation_error").and_then(|v| v.as_f64()) {
-        println!("Energy conservation error: {:.2e}", energy_conservation);
+        println!("  Energy conservation error: {:.2e}", energy_conservation);
+    }
+
+    // Resource usage
+    println!("\n💾 Resource Usage:");
+    if let Some(memory_mb) = diagnostics_data.get("memory_usage_mb").and_then(|v| v.as_f64()) {
+        println!("  Memory usage: {:.1} MB", memory_mb);
+    }
+    
+    if let Some(cpu_percent) = diagnostics_data.get("cpu_usage_percent").and_then(|v| v.as_f64()) {
+        println!("  CPU usage: {:.1}%", cpu_percent);
+    }
+    
+    if let Some(allocation_rate) = diagnostics_data.get("allocation_rate_mb_per_sec").and_then(|v| v.as_f64()) {
+        println!("  Allocation rate: {:.2} MB/s", allocation_rate);
+    }
+
+    // Performance alerts
+    println!("\n🔍 Performance Status:");
+    if let Some(bottlenecks) = diagnostics_data.get("bottlenecks_detected").and_then(|v| v.as_u64()) {
+        if bottlenecks > 0 {
+            println!("  ⚠️ Performance bottlenecks detected: {}", bottlenecks);
+        } else {
+            println!("  ✅ No performance bottlenecks detected");
+        }
+    }
+
+    // Particle counts
+    println!("\n🔬 Particle Inventory:");
+    if let Some(particles) = diagnostics_data.get("particle_count").and_then(|v| v.as_u64()) {
+        println!("  Total particles: {}", particles);
+    }
+    
+    if let Some(nuclei) = diagnostics_data.get("nuclei_count").and_then(|v| v.as_u64()) {
+        println!("  Atomic nuclei: {}", nuclei);
+    }
+    
+    if let Some(atoms) = diagnostics_data.get("atoms_count").and_then(|v| v.as_u64()) {
+        println!("  Complete atoms: {}", atoms);
+    }
+    
+    if let Some(molecules) = diagnostics_data.get("molecules_count").and_then(|v| v.as_u64()) {
+        println!("  Molecules: {}", molecules);
     }
     
     Ok(())
@@ -2244,16 +2300,32 @@ async fn handle_rpc_request(
         "physics_diagnostics" => {
             let sim_guard = shared_state.sim.lock().unwrap();
             
-            // TODO: Get actual physics engine diagnostics
-            // For now, return sample diagnostics that match expected format
+            // Get actual physics engine and diagnostics data
             let physics = &sim_guard.physics_engine;
-            let average_step_time_ms = physics.time_step * 1000.0;
-            let interactions_per_step = physics.particles.len();
+            let diagnostics_system = sim_guard.get_diagnostics();
+            
+            // Get performance report from integrated diagnostics
+            let performance_report = diagnostics_system.get_performance_report();
+            
+            // Calculate physics-specific metrics
+            let average_step_time_ms = if performance_report.metrics.physics_step_times.stats.mean > 0.0 {
+                performance_report.metrics.physics_step_times.stats.mean
+            } else {
+                physics.time_step * 1000.0
+            };
+            
+            let interactions_per_step = if performance_report.metrics.interaction_rates.stats.mean > 0.0 {
+                performance_report.metrics.interaction_rates.stats.mean as u64
+            } else {
+                (physics.compton_count + physics.pair_production_count + physics.neutrino_scatter_count).min(10000)
+            };
+            
             let system_pressure = if physics.volume > 0.0 {
                 physics.energy_density / 3.0
             } else {
                 0.0
             };
+            
             let diagnostics = json!({
                 "average_step_time_ms": average_step_time_ms,
                 "interactions_per_step": interactions_per_step,
@@ -2268,7 +2340,14 @@ async fn handle_rpc_request(
                 "atoms_count": physics.atoms.len(),
                 "molecules_count": physics.molecules.len(),
                 "current_time": physics.current_time,
-                "time_step": physics.time_step
+                "time_step": physics.time_step,
+                // Additional diagnostics metrics
+                "physics_step_95th_percentile_ms": performance_report.metrics.physics_step_times.stats.percentile_95,
+                "universe_tick_time_ms": performance_report.metrics.universe_tick_times.stats.mean,
+                "memory_usage_mb": performance_report.memory_usage.mean / (1024.0 * 1024.0),
+                "cpu_usage_percent": performance_report.system_load.cpu_usage,
+                "bottlenecks_detected": performance_report.bottlenecks.len(),
+                "allocation_rate_mb_per_sec": performance_report.metrics.allocation_rates.stats.mean / (1024.0 * 1024.0)
             });
             
             let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {

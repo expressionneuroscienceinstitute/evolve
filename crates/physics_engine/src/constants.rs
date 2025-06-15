@@ -169,9 +169,11 @@ pub const ELECTRON_MASS: f64 = 9.109_383_7015e-31;      // kg
 pub const PROTON_MASS: f64 = 1.672_621_923_69e-27;      // kg
 pub const NEUTRON_MASS: f64 = 1.674_927_498_04e-27;     // kg
 
-/// Rydberg constant in m⁻¹
-pub const RYDBERG_CONSTANT: f64 = (ELECTRON_MASS * ELEMENTARY_CHARGE * ELEMENTARY_CHARGE * ELEMENTARY_CHARGE * ELEMENTARY_CHARGE) 
-    / (8.0 * VACUUM_PERMITTIVITY * VACUUM_PERMITTIVITY * PLANCK_CONSTANT * PLANCK_CONSTANT * PLANCK_CONSTANT * SPEED_OF_LIGHT);
+/// Rydberg constant in m⁻¹ (CODATA-2023)
+pub const RYDBERG_CONSTANT: f64 = 1.097_373_156_8160e7;
+
+/// Rydberg energy in eV (13.605693122994 eV)
+pub const RYDBERG_ENERGY: f64 = 13.605693122994;
 
 #[cfg(test)]
 mod tests {

@@ -585,8 +585,6 @@
     </div>
 
     <script type="module">
-        import init, { EvolutionMonitor } from './viz_web.js';
-
         let monitor = null;
         let animationId = null;
         let lastFrameTime = 0;
@@ -594,18 +592,26 @@
 
         async function initializeSimulation() {
             try {
-                // Initialize WASM module
-                await init();
+                // Wait for WASM module to be loaded by Trunk
+                await new Promise(resolve => {
+                    if (window.wasmBindings) {
+                        resolve();
+                    } else {
+                        window.addEventListener('TrunkApplicationStarted', resolve);
+                    }
+                });
                 console.log('WASM module loaded successfully');
                 
-                monitor = new EvolutionMonitor('simulation-canvas');
+                monitor = new window.wasmBindings.EvolutionMonitor('simulation-canvas');
                 console.log('Evolution monitor initialized');
                 
                 // Connect to simulation backend
                 const wsUrl = `ws://${window.location.hostname}:8080/ws`;
+                console.log('Attempting to connect to:', wsUrl);
                 try {
                     monitor.connect(wsUrl);
-                    updateConnectionStatus(true);
+                    // Don't immediately assume success - let the WebSocket callbacks handle status
+                    updateConnectionStatus(false); // Start as disconnected
                 } catch (err) {
                     console.error('WebSocket connection failed:', err);
                     updateConnectionStatus(false);
@@ -770,9 +776,17 @@
                 statusElement.textContent = '🔴 Disconnected';
                 statusElement.className = 'connection-status disconnected';
             }
+            
+            // Debug logging
+            console.log('Connection status updated:', connected);
         }
 
         function updateSimulationStats() {
+            // Update connection status first
+            if (monitor) {
+                updateConnectionStatus(monitor.is_connected());
+            }
+            
             // Update right panel with simulation data
             if (monitor) {
                 try {
@@ -796,9 +810,6 @@
                     document.getElementById('memory-usage').textContent = Math.round((performance.memory?.usedJSHeapSize || 0) / 1024 / 1024) + ' MB';
                     document.getElementById('cpu-usage').textContent = '0%'; // Placeholder
                     
-                    // Update connection status
-                    updateConnectionStatus(monitor.is_connected());
-                    
                     // Update innovations
                     updateRecentInnovations(state.innovations || []);
                 } catch (error) {
@@ -808,6 +819,7 @@
                 }
             } else {
                 setDefaultStats();
+                updateConnectionStatus(false);
             }
         }
 

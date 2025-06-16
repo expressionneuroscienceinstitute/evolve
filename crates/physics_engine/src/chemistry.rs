@@ -3,8 +3,6 @@
 //! Implements stiff ODE solver (CVODE-style) with rate constants 
 //! via Arrhenius equation and quantum tunneling correction
 
-use nalgebra::Vector3;
-use crate::*;
 use anyhow::Result;
 use std::collections::HashMap;
 use crate::{PhysicsState, PhysicsConstants};

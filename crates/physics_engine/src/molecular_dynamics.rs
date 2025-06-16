@@ -9,7 +9,6 @@ use anyhow::Result;
 use nalgebra::Vector3;
 
 use crate::{PhysicsState, constants::{ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY}};
-use crate::*;
 
 /// Represents the parameters for a force field, e.g., Lennard-Jones.
 #[derive(Debug, Clone, Default)]

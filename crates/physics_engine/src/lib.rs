@@ -2784,19 +2784,11 @@ pub enum MaterialType {
 
 // ... existing code ...
 
-use crate::particles::*;
-use crate::interactions::*;
-use crate::nuclear_physics::*;
-use crate::atomic_physics::*;
-use crate::phase_transitions::*;
-use crate::emergent_properties::*;
-use crate::molecular_dynamics::*;
-use crate::quantum_fields::*;
 
 /// General Relativity corrections for strong gravitational fields
 /// Based on PDF recommendation for hybrid gravity approach
 pub mod general_relativity {
-    use super::*;
+    
     
     /// Gravitational constant in SI units (CODATA 2023)
     pub const G: f64 = 6.67430e-11; // m³ kg⁻¹ s⁻²
@@ -2892,7 +2884,7 @@ pub mod general_relativity {
 /// Implements the PDF recommendation for dynamic spatial resolution
 pub mod adaptive_mesh_refinement {
     use super::*;
-    use std::collections::VecDeque;
+    
     
     /// AMR grid cell with hierarchical refinement capability
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3455,7 +3447,7 @@ pub mod quantum_chemistry {
             let nuclear_matrix = self.build_nuclear_attraction_matrix(molecule)?;
             
             // SCF iteration (simplified)
-            let mut density_matrix = Matrix3::zeros();
+            let density_matrix = Matrix3::zeros();
             let mut total_energy = 0.0;
             
             for _iteration in 0..50 {

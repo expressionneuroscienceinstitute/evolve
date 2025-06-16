@@ -5,8 +5,6 @@
 
 use anyhow::Result;
 use crate::{PhysicsState, PhysicsConstants};
-use nalgebra::Vector3;
-use crate::*;
 
 /// Climate state information
 #[derive(Debug, Clone)]

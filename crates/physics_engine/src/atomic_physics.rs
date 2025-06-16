@@ -6,8 +6,6 @@
 //! Routines for atomic-level phenomena.
 
 use anyhow::{anyhow, bail, Result};
-use nalgebra::{Vector3, Matrix3};
-use crate::*;
 
 use crate::constants::RYDBERG_ENERGY;
 use crate::Electron;

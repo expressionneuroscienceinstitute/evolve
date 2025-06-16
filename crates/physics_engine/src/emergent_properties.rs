@@ -5,8 +5,6 @@
 //! such as temperature and pressure, are not fundamental to individual particles but
 //! arise from their statistical mechanics.
 
-use nalgebra::Vector3;
-use crate::*;
 use anyhow::Result;
 use std::collections::HashMap;
 

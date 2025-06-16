@@ -4,7 +4,6 @@
 //! and orogeny & subduction loops
 
 use nalgebra::Vector3;
-use crate::*;
 use anyhow::Result;
 
 use crate::{PhysicsState, PhysicsConstants};

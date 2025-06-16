@@ -7,7 +7,6 @@ use anyhow::Result;
 
 use crate::constants::*;
 use crate::{FundamentalParticle, QuantumState};
-use crate::ParticleType::{WBoson, WBosonMinus, ZBoson};
 
 /// Initialise particle constants - PDG constants and Standard Model parameters are already loaded
 pub fn init_particles() -> Result<()> {

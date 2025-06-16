@@ -3,7 +3,6 @@
 //! Implements tight-binding valence model for electron shells
 //! and stochastic Pauli Monte Carlo for new compounds
 
-use nalgebra::{Vector3, Complex};
 use crate::*;
 use rand::{Rng, thread_rng};
 use anyhow::Result;

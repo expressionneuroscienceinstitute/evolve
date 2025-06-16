@@ -62,6 +62,10 @@ pub struct EvolutionMonitor {
     innovation_tracker: InnovationTracker,
     analytics_engine: AnalyticsEngine,
     connected: bool,
+    // Performance tracking
+    last_frame_time: f64,
+    fps: f64,
+    last_render_duration: f64,
 }
 
 /// Complete simulation state received from backend
@@ -354,6 +358,9 @@ impl EvolutionMonitor {
             innovation_tracker,
             analytics_engine,
             connected: false,
+            last_frame_time: 0.0,
+            fps: 0.0,
+            last_render_duration: 0.0,
         })
     }
     
@@ -362,6 +369,10 @@ impl EvolutionMonitor {
     pub fn render(&mut self) -> Result<(), JsValue> {
         // No longer need to check for global JS variable, state is updated directly
         // self.update_simulation_state()?;
+        
+        // Measure start time
+        let perf = web_window().performance().expect("performance should be available");
+        let frame_start = perf.now();
         
         // Update HTML UI elements with current simulation state
         self.update_html_ui()?;
@@ -385,6 +396,17 @@ impl EvolutionMonitor {
         
         // Render UI overlay
         self.render_ui_overlay()?;
+        
+        // Measure end time & compute performance metrics
+        let frame_end = perf.now();
+        self.last_render_duration = frame_end - frame_start;
+        if self.last_frame_time > 0.0 {
+            let delta = frame_start - self.last_frame_time;
+            if delta > 0.0 {
+                self.fps = 1000.0 / delta;
+            }
+        }
+        self.last_frame_time = frame_start;
         
         Ok(())
     }
@@ -436,6 +458,36 @@ impl EvolutionMonitor {
                 if self.connected {
                     elem.set_inner_html("🟢 Connected");
                     elem.set_class_name("connection-status connected");
+                } else {
+                    elem.set_inner_html("🔴 Disconnected");
+                    elem.set_class_name("connection-status disconnected");
+                }
+            }
+            
+            // Update FPS and render time
+            if let Some(elem) = doc.get_element_by_id("fps") {
+                elem.set_inner_html(&format!("{:.1}", self.fps));
+            }
+            if let Some(elem) = doc.get_element_by_id("render-time") {
+                elem.set_inner_html(&format!("{:.1}ms", self.last_render_duration));
+            }
+            
+            // Update memory usage if available
+            if let Ok(perf) = web_window().performance() {
+                use wasm_bindgen::JsCast;
+                use wasm_bindgen::JsValue;
+                use js_sys::Reflect;
+                if let Ok(mem_val) = Reflect::get(perf.as_ref(), &JsValue::from_str("memory")) {
+                    if !mem_val.is_undefined() {
+                        if let Ok(used_val) = Reflect::get(&mem_val, &JsValue::from_str("usedJSHeapSize")) {
+                            if let Some(bytes) = used_val.as_f64() {
+                                let mb = bytes / 1024.0 / 1024.0;
+                                if let Some(elem) = doc.get_element_by_id("memory-usage") {
+                                    elem.set_inner_html(&format!("{:.1} MB", mb));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -899,6 +951,30 @@ impl EvolutionMonitor {
         
         Ok(())
     }
+
+    fn apply_delta(&mut self, delta: DeltaMessage) {
+        if delta.kind != "delta" { return; }
+
+        // Update or add particles
+        if let Some(new_parts) = delta.new_particles {
+            self.simulation_state.particles.extend(new_parts);
+        }
+        if let Some(upd_parts) = delta.updated_particles {
+            for upd in upd_parts {
+                if let Some(existing) = self.simulation_state.particles.iter_mut().find(|p| p.id == upd.id) {
+                    *existing = upd;
+                } else {
+                    self.simulation_state.particles.push(upd);
+                }
+            }
+        }
+        // Remove particles by id
+        if let Some(rem) = delta.removed_particle_ids {
+            self.simulation_state.particles.retain(|p| !rem.contains(&p.id));
+        }
+
+        self.simulation_state.current_tick = delta.current_tick;
+    }
 }
 
 /// Establish websocket and start reading JSON messages representing SimulationState
@@ -930,25 +1006,48 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
     // Set up message handler
     let message_monitor_rc = monitor_rc.clone();
     let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
+        // Text path (legacy / debug)
         if let Ok(text) = e.data().dyn_into::<JsString>() {
             let data_str = text.as_string().unwrap_or_default();
-            console_log!("Received WebSocket message ({} chars)", data_str.len());
-            
-            let mut monitor = message_monitor_rc.borrow_mut();
-            match serde_json::from_str::<SimulationState>(&data_str) {
-                Ok(new_state) => {
-                    monitor.simulation_state = new_state;
+            console_log!("Received WS text message ({} chars)", data_str.len());
+
+            if let Ok(new_state) = serde_json::from_str::<SimulationState>(&data_str) {
+                message_monitor_rc.borrow_mut().simulation_state = new_state;
+            } else if let Ok(delta) = serde_json::from_str::<DeltaMessage>(&data_str) {
+                message_monitor_rc.borrow_mut().apply_delta(delta);
+            } else {
+                console_log!("Unrecognized JSON payload");
+            }
+            return;
+        }
+
+        // Binary path (compressed JSON)
+        if let Ok(buffer) = e.data().dyn_into::<ArrayBuffer>() {
+            let uint8_array = Uint8Array::new(&buffer);
+            let mut compressed = vec![0u8; uint8_array.length() as usize];
+            uint8_array.copy_to(&mut compressed);
+
+            // Decompress (zlib)
+            match miniz_oxide::inflate::decompress_to_vec_zlib(&compressed) {
+                Ok(decompressed) => {
+                    if let Ok(json_str) = String::from_utf8(decompressed) {
+                        if let Ok(new_state) = serde_json::from_str::<SimulationState>(&json_str) {
+                            message_monitor_rc.borrow_mut().simulation_state = new_state;
+                        } else if let Ok(delta) = serde_json::from_str::<DeltaMessage>(&json_str) {
+                            message_monitor_rc.borrow_mut().apply_delta(delta);
+                        } else {
+                            console_log!("Unrecognized JSON payload");
+                        }
+                    } else {
+                        console_log!("Binary message contained non-UTF8 payload");
+                    }
                 }
                 Err(err) => {
-                    console_log!("Failed to parse simulation state: {}", err);
+                    console_log!("Failed to decompress WS payload: {:?}", err);
                 }
             }
         } else {
-            let message_type = match e.data().dyn_into::<ArrayBuffer>() {
-                Ok(buffer) => format!("binary (size: {} bytes)", buffer.byte_length()),
-                Err(_) => "unknown type".to_string(),
-            };
-            console_log!("Received non-text WebSocket message: {}", message_type);
+            console_log!("Received WebSocket message of unknown type");
         }
     }) as Box<dyn FnMut(MessageEvent)>);
     
@@ -956,6 +1055,7 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
     onmessage_callback.forget();
 
     // Set up error handler
+    let error_monitor_rc = monitor_rc.clone();
     let onerror_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
         console_log!("WebSocket connection error");
         if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
@@ -964,12 +1064,14 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
                 elem.set_class_name("connection-status disconnected");
             }
         }
+        error_monitor_rc.borrow_mut().connected = false;
     }) as Box<dyn FnMut(web_sys::Event)>);
     
     ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
     onerror_callback.forget();
 
     // Set up close handler
+    let close_monitor_rc = monitor_rc.clone();
     let onclose_callback = Closure::wrap(Box::new(move |_: web_sys::CloseEvent| {
         console_log!("WebSocket connection closed");
         if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
@@ -978,6 +1080,7 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
                 elem.set_class_name("connection-status disconnected");
             }
         }
+        close_monitor_rc.borrow_mut().connected = false;
     }) as Box<dyn FnMut(web_sys::CloseEvent)>);
     
     ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
@@ -1157,8 +1260,24 @@ fn setup_ui_event_handlers(monitor_rc: Rc<RefCell<EvolutionMonitor>>) -> Result<
         if let Some(node) = view_buttons.item(i) {
             let button = node.dyn_into::<HtmlElement>()?;
             let monitor_clone = monitor_rc.clone();
+            let button_for_cb = button.clone();
             let callback = Closure::wrap(Box::new(move || {
+                // Update Rust state
                 monitor_clone.borrow_mut().set_view_mode(i as u8);
+
+                // Update button active classes
+                if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                    if let Ok(all) = doc.query_selector_all(".view-btn") {
+                        for j in 0..all.length() {
+                            if let Some(btn_node) = all.item(j) {
+                                let _ = btn_node
+                                    .dyn_ref::<web_sys::HtmlElement>()
+                                    .map(|el| el.class_list().remove_1("active"));
+                            }
+                        }
+                    }
+                }
+                let _ = button_for_cb.class_list().add_1("active");
             }) as Box<dyn FnMut()>);
             button.set_onclick(Some(callback.as_ref().unchecked_ref()));
             callback.forget();
@@ -1166,4 +1285,13 @@ fn setup_ui_event_handlers(monitor_rc: Rc<RefCell<EvolutionMonitor>>) -> Result<
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeltaMessage {
+    pub kind: String,
+    pub current_tick: u64,
+    pub new_particles: Option<Vec<ParticleVisualization>>,
+    pub updated_particles: Option<Vec<ParticleVisualization>>,
+    pub removed_particle_ids: Option<Vec<usize>>,
 }

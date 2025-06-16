@@ -16,6 +16,7 @@ use tracing::{error, info, warn};
 use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
+use std::collections::HashMap;
 
 mod rpc;
 
@@ -239,6 +240,13 @@ enum OracleAction {
     Stats,
 }
 
+#[derive(Clone, Copy)]
+struct ParticleSnapshot {
+    position: [f64; 3],
+    momentum: [f64; 3],
+    energy: f64,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -391,8 +399,8 @@ async fn cmd_start(
     let shared_state = Arc::new(Mutex::new(SharedState { sim: sim.clone(), last_save_time: None }));
     tokio::spawn(start_rpc_server(rpc_port, shared_state.clone()));
 
-    // Start WebSocket server if requested
-    let (tx, _) = broadcast::channel(100);
+    // Start WebSocket server if requested (binary payloads)
+    let (tx, _) = broadcast::channel::<Vec<u8>>(100);
     if let Some(port) = serve_dash {
         tokio::spawn(start_websocket_server(port, tx.clone()));
     }
@@ -400,6 +408,9 @@ async fn cmd_start(
     println!("Simulation started. Press Ctrl+C to stop.");
 
     let mut _ups = 0.0;
+    let mut sent_initial_state = false;
+    let mut last_particle_state: HashMap<usize, ParticleSnapshot> = HashMap::new();
+
     loop {
         let start_time = tokio::time::Instant::now();
         let mut sim_guard = sim.lock().unwrap();
@@ -444,11 +455,10 @@ async fn cmd_start(
             // Get physics engine reference
             let physics = &sim_guard.physics_engine;
             
-            // Extract particle data from simulation (limit to first 100 for performance)
+            // Extract particle data from simulation (no hard limit – rely on compression)
             let particle_data: Vec<serde_json::Value> = physics.particles
                 .iter()
                 .enumerate()
-                .take(100)
                 .map(|(i, p)| {
                     // Calculate safe numeric values outside the json! macro
                     let safe_pos = [
@@ -520,64 +530,86 @@ async fn cmd_start(
                     a.nucleus.mass_number, a.electrons.len(), a.total_energy))
                 .collect();
             
-            let simulation_state = json!({
-                "current_tick": stats.current_tick,
-                "universe_age_gyr": stats.universe_age_gyr,
-                "cosmic_era": format!("{:?}", stats.cosmic_era),
-                "temperature": physics.temperature,
-                "energy_density": physics.energy_density,
-                "particles": particle_data,
-                "quantum_fields": {},
-                "nuclei": nuclei_data,
-                "atoms": atoms_data,
-                "molecules": [],
-                "agents": [],
-                "lineages": {},
-                "decisions": [],
-                "innovations": [],
-                "consciousness_events": [],
-                "environments": [],
-                "selection_pressures": [],
-                "population_stats": {
-                    "total_agents": 0,
-                    "active_lineages": stats.lineage_count,
-                    "extinct_lineages": 0,
-                    "birth_rate": 0.0,
-                    "death_rate": 0.0,
-                    "mutation_rate": 0.0,
-                    "average_fitness": 0.0,
-                    "fitness_variance": 0.0,
-                    "genetic_diversity": 0.0,
-                    "consciousness_distribution": {},
-                    "technology_distribution": {}
-                },
-                "evolution_metrics": "",
-                "physics_metrics": format!("Particles: {}, Nuclei: {}, Atoms: {}, Temperature: {:.2e} K", 
-                    physics.particles.len(), 
-                    physics.nuclei.len(), 
-                    physics.atoms.len(),
-                    physics.temperature)
-            });
-            
-            // Debug print physics values being sent to dashboard (every 10 seconds)
-            if stats.current_tick % 10 == 0 {
-                println!("📡 WEBSOCKET DATA (Tick {})", stats.current_tick);
-                println!("   Temperature: {:.2e} K", physics.temperature);
-                println!("   Energy density: {:.2e} J/m³", physics.energy_density);
-                println!("   Particles: {}", physics.particles.len());
-                println!("   Nuclei: {}", physics.nuclei.len());
-                println!("   Atoms: {}", physics.atoms.len());
-                println!("   Molecules: {}", physics.molecules.len());
-                println!("   Particle data entries: {}", particle_data.len());
-                println!("   Average age: {:.1} GYr", stats.universe_age_gyr);
-                println!("   Cosmic era: {:?}", stats.cosmic_era);
-            }
-            
+            // ── Decide full snapshot vs delta ───────────────────────────
+            let payload_json = if !sent_initial_state {
+                // Full snapshot
+                sent_initial_state = true;
+
+                // Build and cache particle snapshots
+                last_particle_state.clear();
+                for p in physics.particles.iter().enumerate() {
+                    let (idx, part) = p;
+                    last_particle_state.insert(idx, ParticleSnapshot {
+                        position: [part.position.x, part.position.y, part.position.z],
+                        momentum: [part.momentum.x, part.momentum.y, part.momentum.z],
+                        energy: part.energy,
+                    });
+                }
+
+                json!({
+                    "kind": "full",
+                    "current_tick": stats.current_tick,
+                    "universe_age_gyr": stats.universe_age_gyr,
+                    "cosmic_era": format!("{:?}", stats.cosmic_era),
+                    "temperature": physics.temperature,
+                    "energy_density": physics.energy_density,
+                    "particles": particle_data,
+                    "nuclei": nuclei_data,
+                    "atoms": atoms_data,
+                })
+            } else {
+                // Delta snapshot
+                let mut new_particles = Vec::new();
+                let mut updated_particles = Vec::new();
+                let mut current_map: HashMap<usize, ParticleSnapshot> = HashMap::new();
+
+                for (idx, p) in physics.particles.iter().enumerate() {
+                    let snapshot = ParticleSnapshot {
+                        position: [p.position.x, p.position.y, p.position.z],
+                        momentum: [p.momentum.x, p.momentum.y, p.momentum.z],
+                        energy: p.energy,
+                    };
+                    current_map.insert(idx, snapshot);
+
+                    if !last_particle_state.contains_key(&idx) {
+                        // New particle
+                        new_particles.push(particle_data[idx].clone());
+                    } else {
+                        // Possibly updated
+                        let prev = last_particle_state.get(&idx).unwrap();
+                        let changed = prev.position != snapshot.position || prev.momentum != snapshot.momentum || (prev.energy - snapshot.energy).abs() > 1e-9;
+                        if changed {
+                            updated_particles.push(particle_data[idx].clone());
+                        }
+                    }
+                }
+
+                // Removed particles
+                let mut removed_ids = Vec::new();
+                for id in last_particle_state.keys() {
+                    if !current_map.contains_key(id) {
+                        removed_ids.push(*id);
+                    }
+                }
+
+                // Update cache
+                last_particle_state = current_map;
+
+                json!({
+                    "kind": "delta",
+                    "current_tick": stats.current_tick,
+                    "new_particles": new_particles,
+                    "updated_particles": updated_particles,
+                    "removed_particle_ids": removed_ids,
+                })
+            };
+
             drop(sim_guard); // Release the lock quickly
-            
-            if tx.send(simulation_state.to_string()).is_err() {
-                // All receivers are gone, no point in continuing
-            }
+
+            // ── Serialize + compress ────────────────────────────────────
+            let json_bytes = payload_json.to_string().as_bytes();
+            let compressed = miniz_oxide::deflate::compress_to_vec_zlib(json_bytes, 6);
+            let _ = tx.send(compressed);
         }
 
         let tick_duration = Duration::from_secs_f64(1.0 / config.target_ups);
@@ -2071,7 +2103,7 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
     Ok(false)
 }
 
-async fn start_websocket_server(port: u16, tx: broadcast::Sender<String>) {
+async fn start_websocket_server(port: u16, tx: broadcast::Sender<Vec<u8>>) {
     let websocket_route = warp::path("ws")
         .and(warp::ws())
         .and(warp::any().map(move || tx.clone()))
@@ -2083,14 +2115,14 @@ async fn start_websocket_server(port: u16, tx: broadcast::Sender<String>) {
     warp::serve(websocket_route).run(([127, 0, 0, 1], port)).await;
 }
 
-async fn handle_websocket(websocket: WebSocket, tx: broadcast::Sender<String>) {
+async fn handle_websocket(websocket: WebSocket, tx: broadcast::Sender<Vec<u8>>) {
     let mut rx = tx.subscribe();
     let (mut ws_tx, _ws_rx) = websocket.split();
 
     loop {
         match rx.recv().await {
             Ok(msg) => {
-                if ws_tx.send(Message::text(msg)).await.is_err() {
+                if ws_tx.send(Message::binary(msg)).await.is_err() {
                     break;
                 }
             }

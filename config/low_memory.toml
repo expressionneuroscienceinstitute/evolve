@@ -8,7 +8,7 @@ target_ups = 100.0                     # Lower UPS target for efficiency
 max_ticks = null                       # No limit
 
 # Initial conditions
-initial_particle_count = 100           # Fewer particles for low memory
+initial_particle_count = 300.0         # Fewer particles for low memory
 universe_radius_ly = 500.0             # Smaller universe
 big_bang_temperature = 3000.0          # Standard temperature
 
@@ -25,9 +25,9 @@ agent_lifespan_ticks = 500             # Shorter lifespan
 enable_self_modification = true        # Keep evolution capability
 
 # Performance and resource limits
-memory_limit_gb = 0.5                  # 512 MB limit
+memory_limit_gb = 2.0                  # 512 MB limit
 cpu_limit_percent = 50.0               # Conservative CPU usage
-auto_save_interval = 1000              # More frequent saves
+auto_save_interval = 3000              # More frequent saves
 checkpoint_retention = 3               # Fewer checkpoints
 
 # God-mode parameters
@@ -43,4 +43,4 @@ enable_oracle_link = false             # Disable for performance
 # Validation and safety
 strict_physics_validation = false      # Relax validation for performance
 enable_safety_guards = true            # Keep safety on
-simulation_seed = null
+# simulation_seed = 765143097650987136507891635708

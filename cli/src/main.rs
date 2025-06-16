@@ -140,6 +140,9 @@ enum Commands {
         #[command(subcommand)]
         action: OracleAction,
     },
+    
+    /// Interactive mode for real-time simulation control
+    Interactive,
 }
 
 #[derive(Subcommand, Debug)]
@@ -259,6 +262,7 @@ async fn main() -> Result<()> {
         Commands::GodMode { action } => cmd_godmode(action).await,
         Commands::Resources { action } => cmd_resources(action).await,
         Commands::Oracle { action } => cmd_oracle(action).await,
+        Commands::Interactive => cmd_interactive().await,
     }
 }
 
@@ -1824,113 +1828,242 @@ async fn cmd_resources(action: ResourceAction) -> Result<()> {
 async fn cmd_oracle(action: OracleAction) -> Result<()> {
     match action {
         OracleAction::Inbox => {
-            println!("Fetching pending messages from agents...");
-
-            let client = reqwest::Client::new();
-            let req_body = json!({
-                "jsonrpc": "2.0",
-                "method": "oracle_inbox",
-                "params": {},
-                "id": 30
-            });
-
-            let res = client
-                .post("http://127.0.0.1:9001/rpc")
-                .json(&req_body)
-                .send()
-                .await?;
-
-            if !res.status().is_success() {
-                println!("Error: Failed to reach simulation RPC server.");
-            } else {
-                let rpc_res: rpc::RpcResponse<Vec<rpc::Petition>> = res.json().await?;
-                if let Some(error) = rpc_res.error {
-                    println!("RPC Error: {} (code: {})", error.message, error.code);
-                } else if let Some(petitions) = rpc_res.result {
-                    if petitions.is_empty() {
-                        println!("No pending petitions.");
-                    } else {
-                        println!("ID       | Agent | Subject | Received");
-                        println!("---------|-------|---------|--------");
-                        for p in petitions {
-                            println!("{:<8} | {:<5} | {:<7} | {}", p.id, p.agent_id, p.subject, p.received_at);
+            // Get pending messages from agents
+            let response = rpc::call_rpc("oracle_messages", &json!({})).await?;
+            
+            println!("🔮 Oracle-Link Messages");
+            println!("======================");
+            
+            if let Some(messages) = response.get("messages").and_then(|v| v.as_array()) {
+                if messages.is_empty() {
+                    println!("No pending messages from agents.");
+                } else {
+                    for (i, message) in messages.iter().enumerate() {
+                        println!("\n📨 Message {}", i + 1);
+                        if let Some(content) = message.get("content").and_then(|v| v.as_str()) {
+                            println!("Content: {}", content);
+                        }
+                        if let Some(agent_id) = message.get("agent_id").and_then(|v| v.as_str()) {
+                            println!("From Agent: {}", agent_id);
+                        }
+                        if let Some(timestamp) = message.get("timestamp").and_then(|v| v.as_u64()) {
+                            println!("Timestamp: {}", timestamp);
                         }
                     }
                 }
+            } else {
+                println!("Error: Could not retrieve messages");
             }
-        }
+        },
+        
         OracleAction::Reply { petition_id, action, message } => {
-            println!("Replying to petition {} with action: {}", petition_id, action);
+            // Send reply to agent
+            let response = rpc::call_rpc("oracle_reply", &json!({
+                "petition_id": petition_id,
+                "action": action,
+                "message": message
+            })).await?;
             
-            let client = reqwest::Client::new();
-            let req_body = json!({
-                "jsonrpc": "2.0",
-                "method": "oracle_reply",
-                "params": {
-                    "petition_id": petition_id,
-                    "action": action,
-                    "message": message
-                },
-                "id": 31
-            });
-
-            let res = client
-                .post("http://127.0.0.1:9001/rpc")
-                .json(&req_body)
-                .send()
-                .await?;
-
-            if !res.status().is_success() {
-                println!("Error: Failed to reach simulation RPC server.");
+            if response.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+                println!("✅ Reply sent successfully");
             } else {
-                let rpc_res: rpc::RpcResponse<String> = res.json().await?;
-                if let Some(error) = rpc_res.error {
-                    println!("RPC Error: {} (code: {})", error.message, error.code);
-                } else {
-                    println!("Reply sent successfully to agent petition {}", petition_id);
-                }
+                println!("❌ Failed to send reply");
             }
-        }
+        },
+        
         OracleAction::Stats => {
-            println!("Fetching communication statistics...");
+            // Get communication statistics
+            let response = rpc::call_rpc("oracle_stats", &json!({})).await?;
             
-            let client = reqwest::Client::new();
-            let req_body = json!({
-                "jsonrpc": "2.0",
-                "method": "oracle_stats",
-                "params": {},
-                "id": 32
-            });
-
-            let res = client
-                .post("http://127.0.0.1:9001/rpc")
-                .json(&req_body)
-                .send()
-                .await?;
-
-            if !res.status().is_success() {
-                println!("Error: Failed to reach simulation RPC server.");
-            } else {
-                let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
-                if let Some(error) = rpc_res.error {
-                    println!("RPC Error: {} (code: {})", error.message, error.code);
-                } else if let Some(stats) = rpc_res.result {
-                    println!("Communication Statistics:");
-                    println!("=======================");
-                    if let Some(stats_obj) = stats.as_object() {
-                        for (key, value) in stats_obj {
-                            println!("{}: {}", key, value);
-                        }
-                    } else {
-                        println!("{}", stats);
-                    }
-                } else {
-                    println!("No communication statistics available");
-                }
+            println!("🔮 Oracle-Link Statistics");
+            println!("========================");
+            
+            if let Some(total_messages) = response.get("total_messages").and_then(|v| v.as_u64()) {
+                println!("Total Messages: {}", total_messages);
+            }
+            if let Some(active_agents) = response.get("active_agents").and_then(|v| v.as_u64()) {
+                println!("Active Agents: {}", active_agents);
+            }
+            if let Some(avg_response_time) = response.get("avg_response_time_ms").and_then(|v| v.as_f64()) {
+                println!("Average Response Time: {:.2}ms", avg_response_time);
             }
         }
     }
     Ok(())
+}
+
+/// Interactive mode for real-time simulation control and monitoring
+async fn cmd_interactive() -> Result<()> {
+    use std::io::{self, Write};
+    use tokio::time::{timeout, Duration};
+    
+    println!("🎮 Interactive Simulation Control");
+    println!("=================================");
+    println!("Commands: status, stats, speed <factor>, map [layer], planets, quit");
+    println!("Press Ctrl+C to exit\n");
+    
+    // Real-time monitoring setup
+    let mut last_stats_update = Instant::now();
+    let stats_update_interval = Duration::from_secs(5);
+    
+    // Initial prompt
+    print!("universe> ");
+    io::stdout().flush()?;
+    
+    loop {
+        // Auto-update stats every 5 seconds (only if enough time has passed)
+        let should_update = last_stats_update.elapsed() >= stats_update_interval;
+        
+        // Read user input with reasonable timeout (1 second instead of 100ms)
+        let read_result = timeout(Duration::from_secs(1), tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            match io::stdin().read_line(&mut line) {
+                Ok(_) => Ok(line),
+                Err(e) => Err(e),
+            }
+        })).await;
+        
+        match read_result {
+            Ok(join_result) => {
+                match join_result {
+                    Ok(stdin_result) => {
+                        match stdin_result {
+                            Ok(input_line) => {
+                                let command: &str = input_line.trim();
+                                if command.is_empty() {
+                                    // Show prompt again for empty input
+                                    print!("universe> ");
+                                    io::stdout().flush()?;
+                                    continue;
+                                }
+                                
+                                match execute_interactive_command(command).await {
+                                    Ok(should_exit) => {
+                                        if should_exit {
+                                            break;
+                                        }
+                                    },
+                                    Err(e) => {
+                                        println!("❌ Error: {}", e);
+                                    }
+                                }
+                                
+                                // Show prompt after command execution
+                                print!("universe> ");
+                                io::stdout().flush()?;
+                            },
+                            Err(_) => {
+                                // stdin error, show prompt and continue
+                                print!("universe> ");
+                                io::stdout().flush()?;
+                                continue;
+                            }
+                        }
+                    },
+                    Err(_) => {
+                        // join error, show prompt and continue
+                        print!("universe> ");
+                        io::stdout().flush()?;
+                        continue;
+                    }
+                }
+            },
+            Err(_) => {
+                // Timeout - check if we should show status update
+                if should_update {
+                    print!("\r\x1b[K📊 Auto-update: ");
+                    match rpc::call_rpc("status", &json!({})).await {
+                        Ok(response) => {
+                            if let Some(age_gyr) = response.get("universe_age_gyr").and_then(|v| v.as_f64()) {
+                                if let Some(particle_count) = response.get("particle_count").and_then(|v| v.as_u64()) {
+                                    print!("Age: {:.2} GYr, Particles: {}", age_gyr, particle_count);
+                                }
+                            }
+                            if let Some(era) = response.get("cosmic_era").and_then(|v| v.as_str()) {
+                                print!(", Era: {}", era);
+                            }
+                        },
+                        Err(_) => print!("Simulation offline"),
+                    }
+                    println!();
+                    last_stats_update = Instant::now();
+                    
+                    // Show prompt again after status update
+                    print!("universe> ");
+                    io::stdout().flush()?;
+                }
+                // Continue loop without showing extra prompts
+                continue;
+            }
+        }
+    }
+    
+    println!("👋 Exiting interactive mode");
+    Ok(())
+}
+
+/// Execute interactive command and return whether to exit
+async fn execute_interactive_command(command: &str) -> Result<bool> {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.is_empty() {
+        return Ok(false);
+    }
+    
+    match parts[0] {
+        "quit" | "exit" | "q" => {
+            return Ok(true);
+        },
+        
+        "status" => {
+            cmd_status().await?;
+        },
+        
+        "stats" => {
+            cmd_inspect(InspectTarget::Universe).await?;
+        },
+        
+        "physics" => {
+            cmd_inspect(InspectTarget::Physics).await?;
+        },
+        
+        "speed" => {
+            if parts.len() > 1 {
+                if let Ok(factor) = parts[1].parse::<f64>() {
+                    cmd_speed(factor).await?;
+                } else {
+                    println!("❌ Invalid speed factor. Use: speed <number>");
+                }
+            } else {
+                println!("❌ Usage: speed <factor>");
+            }
+        },
+        
+        "map" => {
+            let layer = parts.get(1).unwrap_or(&"stars");
+            cmd_map(1.0, layer).await?;
+        },
+        
+        "planets" => {
+            cmd_list_planets(None, false).await?;
+        },
+        
+        "help" => {
+            println!("Available commands:");
+            println!("  status       - Show simulation status");
+            println!("  stats        - Show universe statistics");
+            println!("  physics      - Show physics diagnostics");
+            println!("  speed <n>    - Change simulation speed");
+            println!("  map [layer]  - Show ASCII map (layers: stars, gas, dark_matter, radiation)");
+            println!("  planets      - List planets");
+            println!("  quit         - Exit interactive mode");
+        },
+        
+        _ => {
+            println!("❌ Unknown command: {}. Type 'help' for available commands.", parts[0]);
+        }
+    }
+    
+    Ok(false)
 }
 
 async fn start_websocket_server(port: u16, tx: broadcast::Sender<String>) {

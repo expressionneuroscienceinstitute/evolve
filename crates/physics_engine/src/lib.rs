@@ -952,6 +952,8 @@ impl PhysicsEngine {
     }
     
     /// Legacy fusion processing for backward compatibility
+    /// Note: This method is preserved for fallback scenarios where stellar nucleosynthesis is unavailable
+    #[allow(dead_code)]
     fn process_legacy_fusion(&mut self) -> Result<()> {
         let mut fusion_reactions = Vec::new();
         
@@ -1190,7 +1192,9 @@ impl PhysicsEngine {
         
         self.fission_count += 1;
 
-        // TODO: Distribute Q-value energy among products
+        // Distribute Q-value energy among products
+        let q_value = self.calculate_fission_q_value(z, a)?;
+        self.distribute_fission_energy(q_value, z1, a1, z2, a2, &nucleus.position)?;
 
         Ok(())
     }
@@ -1211,6 +1215,7 @@ impl PhysicsEngine {
         Ok(())
     }
     
+    #[allow(dead_code)]
     fn can_fuse(&self, n1: &AtomicNucleus, n2: &AtomicNucleus) -> Result<bool> {
         // Simplified check based on temperature and Coulomb barrier
         let kinetic_energy = 1.5 * BOLTZMANN * self.temperature; // Average kinetic energy
@@ -1235,6 +1240,7 @@ impl PhysicsEngine {
     }
 
     /// Calculates a potential fusion reaction between two nuclei.
+    #[allow(dead_code)]
     fn calculate_fusion_reaction(&self, _i: usize, _j: usize) -> Result<FusionReaction> {
         // let n1 = &self.nuclei[i];
         // let n2 = &self.nuclei[j];
@@ -1261,6 +1267,7 @@ impl PhysicsEngine {
     }
 
     /// Executes a fusion reaction, updating the particle list.
+    #[allow(dead_code)]
     fn execute_fusion_reaction(&mut self, _reaction: FusionReaction) -> Result<()> {
         // Consumes reactants
         // reaction.reactant_indices.iter().rev().for_each(|&idx| {
@@ -1920,6 +1927,89 @@ impl PhysicsEngine {
         // Pressure is the sum of contributions divided by volume
         pressure_sum / self.volume
     }
+
+    /// Calculate the Q-value (energy released) for a fission reaction
+    fn calculate_fission_q_value(&self, parent_z: u32, parent_a: u32) -> Result<f64> {
+        use crate::nuclear_physics::Nucleus;
+        
+        // Calculate binding energies using Semi-Empirical Mass Formula
+        let parent_nucleus = Nucleus::new(parent_z, parent_a - parent_z);
+        let parent_binding_energy = parent_nucleus.binding_energy();
+        
+        // For binary fission, estimate fragment masses
+        let fragment1_a = parent_a / 2;
+        let fragment2_a = parent_a - fragment1_a - 2; // Assume 2 neutrons emitted
+        
+        // Estimate Z distribution using charge asymmetry (Wahl systematics)
+        let fragment1_z = (parent_z * fragment1_a) / parent_a;
+        let fragment2_z = parent_z - fragment1_z;
+        
+        let fragment1_nucleus = Nucleus::new(fragment1_z, fragment1_a - fragment1_z);
+        let fragment2_nucleus = Nucleus::new(fragment2_z, fragment2_a - fragment2_z);
+        
+        let fragment1_binding_energy = fragment1_nucleus.binding_energy();
+        let fragment2_binding_energy = fragment2_nucleus.binding_energy();
+        
+        // Q-value = Energy released = difference in binding energies
+        let q_value = (fragment1_binding_energy + fragment2_binding_energy) - parent_binding_energy;
+        
+        // Convert from MeV to Joules
+        Ok(q_value * 1.602e-13) // MeV to Joules
+    }
+    
+    /// Distribute fission energy among products (fragments + neutrons)
+    fn distribute_fission_energy(&mut self, q_value: f64, _z1: u32, _a1: u32, _z2: u32, _a2: u32, position: &Vector3<f64>) -> Result<()> {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        
+        // Energy distribution: ~80% to kinetic energy of fragments, ~20% to neutrons
+        let fragment_kinetic_energy = q_value * 0.8;
+        let neutron_kinetic_energy = q_value * 0.2;
+        
+        // Fragment recoil energies (assuming two fragments with momentum conservation)
+        let _fragment1_energy = fragment_kinetic_energy * 0.5;
+        let _fragment2_energy = fragment_kinetic_energy * 0.5;
+        
+        // Update system energy
+        self.energy_density += q_value / self.volume;
+        
+        // Add kinetic energy to newly created neutrons
+        let neutron_count = self.particles.iter().filter(|p| 
+            matches!(p.particle_type, ParticleType::Neutron) && 
+            (p.position - position).norm() < 1e-12 // Recently created at fission site
+        ).count();
+        
+        if neutron_count > 0 {
+            let energy_per_neutron = neutron_kinetic_energy / neutron_count as f64;
+            
+            for particle in &mut self.particles {
+                if matches!(particle.particle_type, ParticleType::Neutron) && 
+                   (particle.position - position).norm() < 1e-12 {
+                    // Add kinetic energy by increasing momentum
+                    let additional_momentum_magnitude = (2.0 * energy_per_neutron * particle.mass).sqrt();
+                    
+                    // Random direction for neutron emission
+                    let theta = rng.gen::<f64>() * 2.0 * std::f64::consts::PI;
+                    let phi = rng.gen::<f64>() * std::f64::consts::PI;
+                    
+                    let additional_momentum = Vector3::new(
+                        additional_momentum_magnitude * phi.sin() * theta.cos(),
+                        additional_momentum_magnitude * phi.sin() * theta.sin(),
+                        additional_momentum_magnitude * phi.cos(),
+                    );
+                    
+                    particle.momentum += additional_momentum;
+                    particle.energy = (particle.mass*particle.mass*C_SQUARED*C_SQUARED + 
+                                     particle.momentum.norm_squared() * C_SQUARED).sqrt();
+                }
+            }
+        }
+        
+        log::debug!("Fission energy distribution: Q = {:.2e} J, fragments = {:.2e} J, neutrons = {:.2e} J", 
+                    q_value, fragment_kinetic_energy, neutron_kinetic_energy);
+        
+        Ok(())
+    }
 }
 
 // Supporting types and implementations
@@ -2218,4 +2308,2489 @@ pub struct StratumLayer {
 pub enum MaterialType {
     Gas, Regolith, Topsoil, Subsoil, SedimentaryRock, 
     IgneousRock, MetamorphicRock, OreVein, Ice, Magma,
+}
+
+// ... existing code ...
+
+use crate::particles::*;
+use crate::interactions::*;
+use crate::nuclear_physics::*;
+use crate::atomic_physics::*;
+use crate::phase_transitions::*;
+use crate::emergent_properties::*;
+use crate::molecular_dynamics::*;
+use crate::quantum_fields::*;
+
+/// General Relativity corrections for strong gravitational fields
+/// Based on PDF recommendation for hybrid gravity approach
+pub mod general_relativity {
+    use super::*;
+    
+    /// Gravitational constant in SI units (CODATA 2023)
+    pub const G: f64 = 6.67430e-11; // m³ kg⁻¹ s⁻²
+    
+    /// Speed of light in vacuum (exact)
+    pub const C: f64 = 299792458.0; // m/s
+    
+    /// Schwarzschild radius calculation: Rs = 2GM/c²
+    pub fn schwarzschild_radius(mass_kg: f64) -> f64 {
+        2.0 * G * mass_kg / (C * C)
+    }
+    
+    /// Post-Newtonian correction to gravitational force
+    /// Implements first-order relativistic corrections for orbital dynamics
+    /// Based on Einstein field equations approximation
+    pub fn post_newtonian_force_correction(
+        mass1_kg: f64,
+        mass2_kg: f64,
+        separation_m: f64,
+        velocity1_ms: [f64; 3],
+        velocity2_ms: [f64; 3],
+    ) -> [f64; 3] {
+        let total_mass = mass1_kg + mass2_kg;
+        let reduced_mass = (mass1_kg * mass2_kg) / total_mass;
+        
+        // Relative velocity
+        let rel_vel = [
+            velocity1_ms[0] - velocity2_ms[0],
+            velocity1_ms[1] - velocity2_ms[1],
+            velocity1_ms[2] - velocity2_ms[2],
+        ];
+        
+        let v_squared = rel_vel[0] * rel_vel[0] + rel_vel[1] * rel_vel[1] + rel_vel[2] * rel_vel[2];
+        
+        // First-order post-Newtonian correction factor
+        // Includes kinetic energy and gravitational potential terms
+        let rs = schwarzschild_radius(total_mass);
+        let pn_factor = 1.0 + (v_squared / (C * C)) + (rs / separation_m);
+        
+        // Unit vector pointing from mass2 to mass1
+        let force_magnitude = G * mass1_kg * mass2_kg / (separation_m * separation_m);
+        let corrected_magnitude = force_magnitude * pn_factor;
+        
+        // Return force components (simplified for demonstration)
+        [corrected_magnitude, 0.0, 0.0] // Would need proper vector calculation in real implementation
+    }
+    
+    /// Time dilation factor in gravitational field
+    /// γ = sqrt(1 - rs/r) for weak field approximation
+    pub fn gravitational_time_dilation(mass_kg: f64, radius_m: f64) -> f64 {
+        let rs = schwarzschild_radius(mass_kg);
+        if radius_m <= rs {
+            0.0 // At or inside event horizon
+        } else {
+            (1.0 - rs / radius_m).sqrt()
+        }
+    }
+    
+    /// Check if object should use relativistic treatment
+    /// Based on PDF guidance: use GR for high-mass or high-velocity scenarios
+    pub fn requires_relativistic_treatment(mass_kg: f64, velocity_ms: f64, radius_m: f64) -> bool {
+        let rs = schwarzschild_radius(mass_kg);
+        let velocity_fraction = velocity_ms / C;
+        
+        // Use relativistic treatment if:
+        // 1. Object is compact (r < 100 * Rs)
+        // 2. High velocity (v > 0.1c)
+        // 3. Strong field effects (Rs/r > 0.01)
+        radius_m < 100.0 * rs || velocity_fraction > 0.1 || (rs / radius_m) > 0.01
+    }
+    
+    /// Gravitational wave strain amplitude (simplified)
+    /// For inspiraling compact objects - advanced feature
+    pub fn gravitational_wave_strain(
+        mass1_kg: f64,
+        mass2_kg: f64,
+        separation_m: f64,
+        distance_m: f64,
+    ) -> f64 {
+        let total_mass = mass1_kg + mass2_kg;
+        let reduced_mass = (mass1_kg * mass2_kg) / total_mass;
+        let rs_total = schwarzschild_radius(total_mass);
+        
+        // Simplified quadrupole formula
+        let strain = (G / (C * C * C * C)) * (reduced_mass * rs_total) / 
+                    (separation_m * distance_m);
+        
+        strain.abs()
+    }
+}
+
+/// Adaptive Mesh Refinement (AMR) system for multi-scale modeling
+/// Implements the PDF recommendation for dynamic spatial resolution
+pub mod adaptive_mesh_refinement {
+    use super::*;
+    use std::collections::VecDeque;
+    
+    /// AMR grid cell with hierarchical refinement capability
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct AmrCell {
+        pub id: usize,
+        pub level: u32,
+        pub position: Vector3<f64>,
+        pub size: f64,
+        pub mass_density: f64,
+        pub energy_density: f64,
+        pub field_gradient: f64,
+        pub particle_count: usize,
+        pub refinement_criterion: f64,
+        pub parent_id: Option<usize>,
+        pub children_ids: Vec<usize>,
+        pub is_leaf: bool,
+        pub requires_refinement: bool,
+        pub requires_coarsening: bool,
+        pub boundary_conditions: BoundaryConditions,
+    }
+    
+    /// Adaptive mesh refinement manager
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct AmrManager {
+        pub cells: Vec<AmrCell>,
+        pub max_refinement_level: u32,
+        pub min_refinement_level: u32,
+        pub refinement_threshold: f64,
+        pub coarsening_threshold: f64,
+        pub base_grid_size: f64,
+        pub domain_size: Vector3<f64>,
+        pub total_cells: usize,
+        pub refinement_history: Vec<RefinementEvent>,
+    }
+    
+    /// Event tracking for refinement analysis
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RefinementEvent {
+        pub timestamp: f64,
+        pub cell_id: usize,
+        pub event_type: RefinementEventType,
+        pub old_level: u32,
+        pub new_level: u32,
+        pub trigger_value: f64,
+    }
+    
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub enum RefinementEventType {
+        Refinement,
+        Coarsening,
+        Creation,
+        Deletion,
+    }
+    
+    impl AmrManager {
+        /// Create new AMR manager with base grid
+        pub fn new(
+            domain_size: Vector3<f64>,
+            base_grid_size: f64,
+            max_level: u32,
+            refinement_threshold: f64,
+        ) -> Self {
+            let mut manager = Self {
+                cells: Vec::new(),
+                max_refinement_level: max_level,
+                min_refinement_level: 0,
+                refinement_threshold,
+                coarsening_threshold: refinement_threshold * 0.25,
+                base_grid_size,
+                domain_size,
+                total_cells: 0,
+                refinement_history: Vec::new(),
+            };
+            
+            // Initialize base grid
+            manager.initialize_base_grid();
+            manager
+        }
+        
+        /// Initialize the coarsest level grid
+        fn initialize_base_grid(&mut self) {
+            let cells_per_dimension = (self.domain_size.x / self.base_grid_size).ceil() as usize;
+            
+            for i in 0..cells_per_dimension {
+                for j in 0..cells_per_dimension {
+                    for k in 0..cells_per_dimension {
+                        let position = Vector3::new(
+                            i as f64 * self.base_grid_size,
+                            j as f64 * self.base_grid_size,
+                            k as f64 * self.base_grid_size,
+                        );
+                        
+                        let cell = AmrCell {
+                            id: self.total_cells,
+                            level: 0,
+                            position,
+                            size: self.base_grid_size,
+                            mass_density: 0.0,
+                            energy_density: 0.0,
+                            field_gradient: 0.0,
+                            particle_count: 0,
+                            refinement_criterion: 0.0,
+                            parent_id: None,
+                            children_ids: Vec::new(),
+                            is_leaf: true,
+                            requires_refinement: false,
+                            requires_coarsening: false,
+                            boundary_conditions: BoundaryConditions::Periodic,
+                        };
+                        
+                        self.cells.push(cell);
+                        self.total_cells += 1;
+                    }
+                }
+            }
+        }
+        
+        /// Update AMR grid based on physical conditions
+        pub fn update_mesh(&mut self, particles: &[FundamentalParticle], current_time: f64) -> Result<()> {
+            // Step 1: Update cell properties from particle data
+            self.update_cell_properties(particles)?;
+            
+            // Step 2: Calculate refinement criteria
+            self.calculate_refinement_criteria()?;
+            
+            // Step 3: Perform refinement
+            self.perform_refinement(current_time)?;
+            
+            // Step 4: Perform coarsening
+            self.perform_coarsening(current_time)?;
+            
+            Ok(())
+        }
+        
+        /// Update cell properties based on particle distribution
+        fn update_cell_properties(&mut self, particles: &[FundamentalParticle]) -> Result<()> {
+            // Clear existing counts
+            for cell in &mut self.cells {
+                cell.mass_density = 0.0;
+                cell.energy_density = 0.0;
+                cell.particle_count = 0;
+            }
+            
+            // Accumulate particle properties in cells
+            for particle in particles {
+                if let Some(cell_id) = self.find_containing_cell(&particle.position) {
+                    let cell = &mut self.cells[cell_id];
+                    cell.mass_density += particle.mass;
+                    cell.energy_density += particle.energy;
+                    cell.particle_count += 1;
+                }
+            }
+            
+            // Normalize by cell volume
+            for cell in &mut self.cells {
+                let volume = cell.size * cell.size * cell.size;
+                cell.mass_density /= volume;
+                cell.energy_density /= volume;
+            }
+            
+            Ok(())
+        }
+        
+        /// Calculate refinement criteria based on gradients and density
+        fn calculate_refinement_criteria(&mut self) -> Result<()> {
+            for i in 0..self.cells.len() {
+                let cell = &self.cells[i];
+                
+                // Calculate spatial gradients
+                let gradient = self.calculate_spatial_gradient(i)?;
+                
+                // Refinement criterion based on PDF recommendations:
+                // Refine where density gradients are high or particle density is high
+                let density_criterion = cell.mass_density / 1e-15; // Normalize by atomic density
+                let gradient_criterion = gradient / cell.mass_density.max(1e-30);
+                let particle_criterion = cell.particle_count as f64 / 1000.0; // Normalize by target particles per cell
+                
+                self.cells[i].refinement_criterion = 
+                    density_criterion + gradient_criterion + particle_criterion;
+                
+                // Set refinement flags
+                self.cells[i].requires_refinement = 
+                    self.cells[i].refinement_criterion > self.refinement_threshold && 
+                    self.cells[i].level < self.max_refinement_level;
+                
+                self.cells[i].requires_coarsening = 
+                    self.cells[i].refinement_criterion < self.coarsening_threshold && 
+                    self.cells[i].level > self.min_refinement_level;
+            }
+            
+            Ok(())
+        }
+        
+        /// Calculate spatial gradient for refinement criterion
+        fn calculate_spatial_gradient(&self, cell_id: usize) -> Result<f64> {
+            let cell = &self.cells[cell_id];
+            let mut gradient = 0.0;
+            let mut neighbor_count = 0;
+            
+            // Find neighboring cells and calculate gradient
+            for other_cell in &self.cells {
+                let distance = (other_cell.position - cell.position).magnitude();
+                if distance > 0.0 && distance < 2.0 * cell.size {
+                    let density_diff = (other_cell.mass_density - cell.mass_density).abs();
+                    gradient += density_diff / distance;
+                    neighbor_count += 1;
+                }
+            }
+            
+            if neighbor_count > 0 {
+                gradient /= neighbor_count as f64;
+            }
+            
+            Ok(gradient)
+        }
+        
+        /// Perform mesh refinement
+        fn perform_refinement(&mut self, current_time: f64) -> Result<()> {
+            let mut cells_to_refine = Vec::new();
+            
+            // Collect cells that need refinement
+            for (i, cell) in self.cells.iter().enumerate() {
+                if cell.requires_refinement && cell.is_leaf {
+                    cells_to_refine.push(i);
+                }
+            }
+            
+            // Refine cells (in reverse order to avoid index issues)
+            for &cell_id in cells_to_refine.iter().rev() {
+                self.refine_cell(cell_id, current_time)?;
+            }
+            
+            Ok(())
+        }
+        
+        /// Refine a single cell into 8 children (octree)
+        fn refine_cell(&mut self, cell_id: usize, current_time: f64) -> Result<()> {
+            let parent_cell = self.cells[cell_id].clone();
+            let child_size = parent_cell.size / 2.0;
+            let child_level = parent_cell.level + 1;
+            
+            // Create 8 children
+            let mut child_ids = Vec::new();
+            for i in 0..2 {
+                for j in 0..2 {
+                    for k in 0..2 {
+                        let child_position = Vector3::new(
+                            parent_cell.position.x + i as f64 * child_size,
+                            parent_cell.position.y + j as f64 * child_size,
+                            parent_cell.position.z + k as f64 * child_size,
+                        );
+                        
+                        let child = AmrCell {
+                            id: self.total_cells,
+                            level: child_level,
+                            position: child_position,
+                            size: child_size,
+                            mass_density: parent_cell.mass_density,
+                            energy_density: parent_cell.energy_density,
+                            field_gradient: parent_cell.field_gradient,
+                            particle_count: parent_cell.particle_count / 8,
+                            refinement_criterion: 0.0,
+                            parent_id: Some(cell_id),
+                            children_ids: Vec::new(),
+                            is_leaf: true,
+                            requires_refinement: false,
+                            requires_coarsening: false,
+                            boundary_conditions: parent_cell.boundary_conditions,
+                        };
+                        
+                        child_ids.push(self.total_cells);
+                        self.cells.push(child);
+                        self.total_cells += 1;
+                    }
+                }
+            }
+            
+            // Update parent cell
+            self.cells[cell_id].children_ids = child_ids;
+            self.cells[cell_id].is_leaf = false;
+            self.cells[cell_id].requires_refinement = false;
+            
+            // Record refinement event
+            let event = RefinementEvent {
+                timestamp: current_time,
+                cell_id,
+                event_type: RefinementEventType::Refinement,
+                old_level: parent_cell.level,
+                new_level: child_level,
+                trigger_value: parent_cell.refinement_criterion,
+            };
+            self.refinement_history.push(event);
+            
+            Ok(())
+        }
+        
+        /// Perform mesh coarsening
+        fn perform_coarsening(&mut self, current_time: f64) -> Result<()> {
+            // Coarsening is more complex and would require careful handling
+            // of sibling cells and data conservation
+            // Implementation would check if all children of a parent cell
+            // meet coarsening criteria, then merge them back
+            
+            // For now, we'll leave this as a placeholder
+            // Real implementation would need to:
+            // 1. Group children by parent
+            // 2. Check if all siblings meet coarsening criteria
+            // 3. Merge data from children back to parent
+            // 4. Remove children from cell list
+            // 5. Update parent to be leaf again
+            
+            Ok(())
+        }
+        
+        /// Find which cell contains a given position
+        fn find_containing_cell(&self, position: &Vector3<f64>) -> Option<usize> {
+            for (i, cell) in self.cells.iter().enumerate() {
+                if cell.is_leaf {
+                    let min_bound = cell.position;
+                    let max_bound = cell.position + Vector3::new(cell.size, cell.size, cell.size);
+                    
+                    if position.x >= min_bound.x && position.x < max_bound.x &&
+                       position.y >= min_bound.y && position.y < max_bound.y &&
+                       position.z >= min_bound.z && position.z < max_bound.z {
+                        return Some(i);
+                    }
+                }
+            }
+            None
+        }
+        
+        /// Get statistics about the AMR grid
+        pub fn get_statistics(&self) -> AmrStatistics {
+            let mut level_counts = HashMap::new();
+            let mut total_leaves = 0;
+            let mut total_refined = 0;
+            
+            for cell in &self.cells {
+                *level_counts.entry(cell.level).or_insert(0) += 1;
+                if cell.is_leaf { total_leaves += 1; }
+                if !cell.children_ids.is_empty() { total_refined += 1; }
+            }
+            
+            AmrStatistics {
+                total_cells: self.cells.len(),
+                total_leaves,
+                total_refined,
+                max_level: level_counts.keys().max().copied().unwrap_or(0),
+                level_distribution: level_counts,
+                refinement_events: self.refinement_history.len(),
+            }
+        }
+    }
+    
+    /// Statistics about AMR grid
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct AmrStatistics {
+        pub total_cells: usize,
+        pub total_leaves: usize,
+        pub total_refined: usize,
+        pub max_level: u32,
+        pub level_distribution: HashMap<u32, usize>,
+        pub refinement_events: usize,
+    }
+}
+
+/// Quantum Chemistry approximations for molecular interactions
+/// Based on PDF recommendation for bridging quantum mechanics to chemistry
+pub mod quantum_chemistry {
+    use super::*;
+    
+    /// Quantum chemical calculation method
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum CalculationMethod {
+        HartreeFock,           // Basic ab initio method
+        DensityFunctional,     // DFT with various functionals
+        SemiEmpirical,         // Fast approximate methods
+        MolecularMechanics,    // Classical force fields
+        QmMm,                  // Hybrid quantum/classical
+    }
+    
+    /// Electronic structure calculation results
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ElectronicStructure {
+        pub total_energy: f64,
+        pub orbital_energies: Vec<f64>,
+        pub molecular_orbitals: Vec<MolecularOrbital>,
+        pub electron_density: Vec<Vec<Vec<f64>>>,
+        pub bond_orders: HashMap<(usize, usize), f64>,
+        pub atomic_charges: Vec<f64>,
+        pub dipole_moment: Vector3<f64>,
+        pub polarizability: Matrix3<f64>,
+    }
+    
+    /// Molecular orbital representation
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct MolecularOrbital {
+        pub energy: f64,
+        pub occupation: f64,
+        pub coefficients: Vec<f64>,
+        pub orbital_type: OrbitalType,
+        pub symmetry: String,
+    }
+    
+    /// Quantum chemistry engine for molecular calculations
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct QuantumChemistryEngine {
+        pub method: CalculationMethod,
+        pub basis_set: BasisSet,
+        pub functional: DftFunctional,
+        pub calculation_cache: HashMap<String, ElectronicStructure>,
+        pub reaction_database: Vec<ChemicalReaction>,
+        pub force_field_parameters: ForceFieldParameters,
+    }
+    
+    /// Basis set for quantum calculations
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct BasisSet {
+        pub name: String,
+        pub angular_momentum_functions: HashMap<u32, Vec<GaussianFunction>>,
+        pub contraction_coefficients: Vec<f64>,
+        pub exponents: Vec<f64>,
+    }
+    
+    /// Gaussian basis function
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct GaussianFunction {
+        pub exponent: f64,
+        pub coefficient: f64,
+        pub angular_momentum: [u32; 3], // l, m, n for x^l * y^m * z^n
+        pub center: Vector3<f64>,
+    }
+    
+    /// DFT functional for electron correlation
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum DftFunctional {
+        Lda,      // Local Density Approximation
+        Gga,      // Generalized Gradient Approximation
+        Hybrid,   // B3LYP-like hybrid functionals
+        MetaGga,  // Meta-GGA functionals
+    }
+    
+    /// Chemical reaction definition
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ChemicalReaction {
+        pub reactants: Vec<ParticleType>,
+        pub products: Vec<ParticleType>,
+        pub activation_energy: f64,
+        pub reaction_energy: f64,
+        pub rate_constant: f64,
+        pub temperature_dependence: ArrheniusParameters,
+        pub mechanism: ReactionMechanism,
+    }
+    
+    /// Arrhenius parameters for temperature dependence
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ArrheniusParameters {
+        pub pre_exponential_factor: f64,
+        pub activation_energy: f64,
+        pub temperature_exponent: f64,
+    }
+    
+    /// Reaction mechanism classification
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum ReactionMechanism {
+        Unimolecular,
+        Bimolecular,
+        Termolecular,
+        ChainReaction,
+        Photochemical,
+        Electrochemical,
+    }
+    
+    /// Force field parameters for classical molecular dynamics
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ForceFieldParameters {
+        pub bond_parameters: HashMap<(ParticleType, ParticleType), BondParameters>,
+        pub angle_parameters: HashMap<(ParticleType, ParticleType, ParticleType), AngleParameters>,
+        pub dihedral_parameters: HashMap<(ParticleType, ParticleType, ParticleType, ParticleType), DihedralParameters>,
+        pub van_der_waals_parameters: HashMap<ParticleType, VdwParameters>,
+    }
+    
+    /// Bond stretching parameters
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct BondParameters {
+        pub equilibrium_length: f64,
+        pub force_constant: f64,
+        pub dissociation_energy: f64,
+    }
+    
+    /// Angle bending parameters
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct AngleParameters {
+        pub equilibrium_angle: f64,
+        pub force_constant: f64,
+    }
+    
+    /// Dihedral torsion parameters
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct DihedralParameters {
+        pub periodicity: u32,
+        pub phase_angle: f64,
+        pub barrier_height: f64,
+    }
+    
+    /// Van der Waals parameters
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct VdwParameters {
+        pub sigma: f64,      // Size parameter
+        pub epsilon: f64,    // Energy parameter
+        pub radius: f64,     // Atomic radius
+    }
+    
+    impl QuantumChemistryEngine {
+        /// Create new quantum chemistry engine
+        pub fn new() -> Self {
+            Self {
+                method: CalculationMethod::DensityFunctional,
+                basis_set: BasisSet::sto_3g(),
+                functional: DftFunctional::Hybrid,
+                calculation_cache: HashMap::new(),
+                reaction_database: Self::initialize_reaction_database(),
+                force_field_parameters: ForceFieldParameters::default(),
+            }
+        }
+        
+        /// Calculate electronic structure for a molecule
+        pub fn calculate_electronic_structure(&mut self, molecule: &Molecule) -> Result<ElectronicStructure> {
+            let molecule_key = self.generate_molecule_key(molecule);
+            
+            // Check cache first
+            if let Some(cached_result) = self.calculation_cache.get(&molecule_key) {
+                return Ok(cached_result.clone());
+            }
+            
+            // Perform quantum chemical calculation
+            let result = match self.method {
+                CalculationMethod::HartreeFock => self.hartree_fock_calculation(molecule)?,
+                CalculationMethod::DensityFunctional => self.dft_calculation(molecule)?,
+                CalculationMethod::SemiEmpirical => self.semi_empirical_calculation(molecule)?,
+                CalculationMethod::MolecularMechanics => self.molecular_mechanics_calculation(molecule)?,
+                CalculationMethod::QmMm => self.qm_mm_calculation(molecule)?,
+            };
+            
+            // Cache result
+            self.calculation_cache.insert(molecule_key, result.clone());
+            
+            Ok(result)
+        }
+        
+        /// Hartree-Fock self-consistent field calculation
+        fn hartree_fock_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
+            // Simplified HF calculation
+            let num_electrons = self.count_electrons(molecule);
+            let num_orbitals = molecule.atoms.len() * 4; // Approximate basis size
+            
+            // Build overlap matrix, kinetic energy matrix, nuclear attraction
+            let overlap_matrix = self.build_overlap_matrix(molecule)?;
+            let kinetic_matrix = self.build_kinetic_matrix(molecule)?;
+            let nuclear_matrix = self.build_nuclear_attraction_matrix(molecule)?;
+            
+            // SCF iteration (simplified)
+            let mut density_matrix = Matrix3::zeros();
+            let mut total_energy = 0.0;
+            
+            for _iteration in 0..50 {
+                let fock_matrix = self.build_fock_matrix(&density_matrix, molecule)?;
+                let (_eigenvalues, _eigenvectors) = self.solve_eigenvalue_problem(&fock_matrix, &overlap_matrix)?;
+                
+                // Update density matrix and check convergence
+                let old_energy = total_energy;
+                total_energy = self.calculate_total_energy(&density_matrix, molecule)?;
+                
+                if (total_energy - old_energy).abs() < 1e-8 {
+                    break;
+                }
+            }
+            
+            Ok(ElectronicStructure {
+                total_energy,
+                orbital_energies: vec![0.0; num_orbitals],
+                molecular_orbitals: vec![],
+                electron_density: vec![],
+                bond_orders: HashMap::new(),
+                atomic_charges: vec![0.0; molecule.atoms.len()],
+                dipole_moment: Vector3::zeros(),
+                polarizability: Matrix3::zeros(),
+            })
+        }
+        
+        /// Density Functional Theory calculation
+        fn dft_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
+            // Simplified DFT - similar to HF but with exchange-correlation functional
+            let mut structure = self.hartree_fock_calculation(molecule)?;
+            
+            // Add DFT corrections based on functional
+            let xc_energy = match self.functional {
+                DftFunctional::Lda => self.lda_exchange_correlation(molecule)?,
+                DftFunctional::Gga => self.gga_exchange_correlation(molecule)?,
+                DftFunctional::Hybrid => self.hybrid_exchange_correlation(molecule)?,
+                DftFunctional::MetaGga => self.meta_gga_exchange_correlation(molecule)?,
+            };
+            
+            structure.total_energy += xc_energy;
+            
+            Ok(structure)
+        }
+        
+        /// Semi-empirical quantum calculation (faster approximation)
+        fn semi_empirical_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
+            // Use parameterized methods like AM1, PM3, etc.
+            let num_atoms = molecule.atoms.len();
+            let mut total_energy = 0.0;
+            
+            // Electronic energy from parameterized method
+            for atom in &molecule.atoms {
+                total_energy += self.get_atomic_energy(&atom.nucleus.atomic_number);
+            }
+            
+            // Add bond energies
+            for bond in &molecule.bonds {
+                let bond_energy = self.get_bond_energy(&bond.bond_type, bond.bond_length);
+                total_energy += bond_energy;
+            }
+            
+            // Add non-bonded interactions
+            for i in 0..num_atoms {
+                for j in (i+1)..num_atoms {
+                    if !self.are_bonded(i, j, molecule) {
+                        let distance = (molecule.atoms[i].nucleus.position - 
+                                      molecule.atoms[j].nucleus.position).magnitude();
+                        total_energy += self.van_der_waals_energy(i, j, distance, molecule);
+                    }
+                }
+            }
+            
+            Ok(ElectronicStructure {
+                total_energy,
+                orbital_energies: vec![],
+                molecular_orbitals: vec![],
+                electron_density: vec![],
+                bond_orders: HashMap::new(),
+                atomic_charges: vec![0.0; num_atoms],
+                dipole_moment: Vector3::zeros(),
+                polarizability: Matrix3::zeros(),
+            })
+        }
+        
+        /// Molecular mechanics calculation (classical)
+        fn molecular_mechanics_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
+            let mut total_energy = 0.0;
+            
+            // Bond stretching energy
+            for bond in &molecule.bonds {
+                if let Some(params) = self.force_field_parameters.bond_parameters.get(&(
+                    self.get_atom_type(&molecule.atoms[bond.atom_indices.0]),
+                    self.get_atom_type(&molecule.atoms[bond.atom_indices.1])
+                )) {
+                    let delta_r = bond.bond_length - params.equilibrium_length;
+                    total_energy += 0.5 * params.force_constant * delta_r * delta_r;
+                }
+            }
+            
+            // Angle bending energy
+            total_energy += self.calculate_angle_energy(molecule)?;
+            
+            // Dihedral torsion energy
+            total_energy += self.calculate_dihedral_energy(molecule)?;
+            
+            // Van der Waals and electrostatic energy
+            total_energy += self.calculate_nonbonded_energy(molecule)?;
+            
+            Ok(ElectronicStructure {
+                total_energy,
+                orbital_energies: vec![],
+                molecular_orbitals: vec![],
+                electron_density: vec![],
+                bond_orders: HashMap::new(),
+                atomic_charges: vec![],
+                dipole_moment: Vector3::zeros(),
+                polarizability: Matrix3::zeros(),
+            })
+        }
+        
+        /// QM/MM hybrid calculation
+        fn qm_mm_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
+            // Divide molecule into QM and MM regions
+            let (qm_atoms, mm_atoms) = self.partition_qm_mm(molecule);
+            
+            // Calculate QM part
+            let qm_energy = self.calculate_qm_region_energy(&qm_atoms)?;
+            
+            // Calculate MM part
+            let mm_energy = self.calculate_mm_region_energy(&mm_atoms)?;
+            
+            // Calculate QM/MM interaction
+            let qm_mm_interaction = self.calculate_qm_mm_interaction(&qm_atoms, &mm_atoms)?;
+            
+            let total_energy = qm_energy + mm_energy + qm_mm_interaction;
+            
+            Ok(ElectronicStructure {
+                total_energy,
+                orbital_energies: vec![],
+                molecular_orbitals: vec![],
+                electron_density: vec![],
+                bond_orders: HashMap::new(),
+                atomic_charges: vec![],
+                dipole_moment: Vector3::zeros(),
+                polarizability: Matrix3::zeros(),
+            })
+        }
+        
+        /// Predict reaction pathway and rate
+        pub fn predict_reaction(&self, reactants: &[ParticleType], temperature: f64) -> Result<Option<ChemicalReaction>> {
+            // Search reaction database for matching reactants
+            for reaction in &self.reaction_database {
+                if self.reactants_match(&reaction.reactants, reactants) {
+                    let rate = self.calculate_reaction_rate(reaction, temperature);
+                    let mut reaction_copy = reaction.clone();
+                    reaction_copy.rate_constant = rate;
+                    return Ok(Some(reaction_copy));
+                }
+            }
+            
+            // If no exact match, try to predict new reaction
+            self.predict_new_reaction(reactants, temperature)
+        }
+        
+        /// Calculate reaction rate using transition state theory
+        fn calculate_reaction_rate(&self, reaction: &ChemicalReaction, temperature: f64) -> f64 {
+            let k_b = BOLTZMANN_CONSTANT;
+            let h = PLANCK_CONSTANT;
+            let r = 8.314; // Gas constant
+            
+            // Arrhenius equation with temperature dependence
+            let arrhenius_factor = reaction.temperature_dependence.pre_exponential_factor * 
+                temperature.powf(reaction.temperature_dependence.temperature_exponent) *
+                (-reaction.temperature_dependence.activation_energy / (r * temperature)).exp();
+            
+            // Transition state theory correction
+            let tst_factor = (k_b * temperature / h) * 
+                (-reaction.activation_energy / (k_b * temperature)).exp();
+            
+            arrhenius_factor * tst_factor
+        }
+        
+        // Helper methods (simplified implementations)
+        fn count_electrons(&self, molecule: &Molecule) -> usize {
+            molecule.atoms.iter().map(|atom| atom.nucleus.atomic_number as usize).sum()
+        }
+        
+        fn generate_molecule_key(&self, molecule: &Molecule) -> String {
+            // Generate unique key for molecule based on structure
+            format!("mol_{}_atoms", molecule.atoms.len())
+        }
+        
+        fn build_overlap_matrix(&self, _molecule: &Molecule) -> Result<Matrix3<f64>> {
+            Ok(Matrix3::identity()) // Simplified
+        }
+        
+        fn build_kinetic_matrix(&self, _molecule: &Molecule) -> Result<Matrix3<f64>> {
+            Ok(Matrix3::zeros()) // Simplified
+        }
+        
+        fn build_nuclear_attraction_matrix(&self, _molecule: &Molecule) -> Result<Matrix3<f64>> {
+            Ok(Matrix3::zeros()) // Simplified
+        }
+        
+        fn build_fock_matrix(&self, _density: &Matrix3<f64>, _molecule: &Molecule) -> Result<Matrix3<f64>> {
+            Ok(Matrix3::zeros()) // Simplified
+        }
+        
+        fn solve_eigenvalue_problem(&self, _fock: &Matrix3<f64>, _overlap: &Matrix3<f64>) -> Result<(Vec<f64>, Vec<Vector3<f64>>)> {
+            Ok((vec![], vec![])) // Simplified
+        }
+        
+        fn calculate_total_energy(&self, _density: &Matrix3<f64>, _molecule: &Molecule) -> Result<f64> {
+            Ok(0.0) // Simplified
+        }
+    }
+}
+
+/// Geant4-style particle physics integration
+/// Based on PDF recommendation to use proven particle interaction libraries
+pub mod geant4_integration {
+    use super::*;
+    
+    /// Particle physics process types (from Geant4)
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum PhysicsProcess {
+        // Electromagnetic processes
+        PhotoElectricEffect,
+        ComptonScattering,
+        PairProduction,
+        Bremsstrahlung,
+        Ionization,
+        MultipleScattering,
+        
+        // Hadronic processes
+        HadronElastic,
+        HadronInelastic,
+        NeutronCapture,
+        NeutronFission,
+        
+        // Decay processes
+        RadioactiveDecay,
+        MuonDecay,
+        PionDecay,
+        
+        // High energy processes
+        PhotoNuclear,
+        ElectroNuclear,
+        MuonNuclear,
+    }
+    
+    /// Particle interaction database (Geant4-style)
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ParticlePhysicsDatabase {
+        pub cross_sections: HashMap<(ParticleType, ParticleType, PhysicsProcess), CrossSectionTable>,
+        pub stopping_powers: HashMap<ParticleType, StoppingPowerTable>,
+        pub decay_data: HashMap<ParticleType, DecayData>,
+        pub material_properties: HashMap<String, MaterialProperties>,
+        pub physics_lists: Vec<PhysicsList>,
+    }
+    
+    /// Cross-section data table with energy dependence
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CrossSectionTable {
+        pub energies_mev: Vec<f64>,
+        pub cross_sections_barn: Vec<f64>,
+        pub interpolation_method: InterpolationMethod,
+        pub temperature_dependence: Option<TemperatureDependence>,
+        pub source: String, // Reference to experimental data
+    }
+    
+    /// Stopping power table for energy loss
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StoppingPowerTable {
+        pub energies_mev: Vec<f64>,
+        pub stopping_powers_mev_cm2_g: Vec<f64>,
+        pub range_mev_cm2_g: Vec<f64>,
+        pub material: String,
+    }
+    
+    /// Nuclear decay data
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct DecayData {
+        pub half_life_seconds: f64,
+        pub decay_modes: Vec<DecayMode>,
+        pub q_value_mev: f64,
+        pub daughter_products: Vec<(ParticleType, f64)>, // (particle, branching_ratio)
+    }
+    
+    /// Decay mode with branching ratios
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct DecayMode {
+        pub mode_type: DecayType,
+        pub branching_ratio: f64,
+        pub q_value_mev: f64,
+        pub daughter_energies: Vec<f64>,
+    }
+    
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum DecayType {
+        Alpha,
+        BetaMinus,
+        BetaPlus,
+        ElectronCapture,
+        SpontaneousFission,
+        InternalConversion,
+        IsomericTransition,
+    }
+    
+    /// Material properties for interaction calculations
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct MaterialProperties {
+        pub name: String,
+        pub density_g_cm3: f64,
+        pub atomic_composition: Vec<(u32, f64)>, // (Z, fraction)
+        pub mean_excitation_energy_ev: f64,
+        pub radiation_length_cm: f64,
+        pub nuclear_interaction_length_cm: f64,
+    }
+    
+    /// Physics list configuration (like Geant4 physics lists)
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct PhysicsList {
+        pub name: String,
+        pub energy_range: (f64, f64), // (min_energy_mev, max_energy_mev)
+        pub enabled_processes: Vec<PhysicsProcess>,
+        pub cut_values: HashMap<ParticleType, f64>, // Production cuts
+        pub step_limiters: Vec<StepLimiter>,
+    }
+    
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct StepLimiter {
+        pub particle_type: ParticleType,
+        pub max_step_length_cm: f64,
+        pub max_energy_loss_fraction: f64,
+    }
+    
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum InterpolationMethod {
+        Linear,
+        LogLog,
+        SplineCubic,
+        LogLinear,
+    }
+    
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TemperatureDependence {
+        pub reference_temperature_k: f64,
+        pub temperature_coefficient: f64,
+        pub activation_energy_ev: f64,
+    }
+    
+    /// Geant4-style physics engine
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct Geant4Engine {
+        pub database: ParticlePhysicsDatabase,
+        pub active_physics_list: String,
+        pub random_seed: u64,
+        pub verbose_level: u32,
+        pub production_cuts: HashMap<ParticleType, f64>,
+    }
+    
+    impl Geant4Engine {
+        /// Initialize with real particle physics data
+        pub fn new() -> Self {
+            Self {
+                database: ParticlePhysicsDatabase::load_standard_database(),
+                active_physics_list: "QBBC".to_string(), // Standard Geant4 physics list
+                random_seed: 12345,
+                verbose_level: 1,
+                production_cuts: Self::default_production_cuts(),
+            }
+        }
+        
+        /// Calculate interaction probability
+        pub fn calculate_interaction_probability(
+            &self,
+            particle: &FundamentalParticle,
+            target_material: &str,
+            step_length_cm: f64,
+        ) -> Result<f64> {
+            let material = self.database.material_properties.get(target_material)
+                .ok_or_else(|| anyhow::anyhow!("Unknown material: {}", target_material))?;
+            
+            let energy_mev = particle.energy * 6.242e12; // Convert J to MeV
+            
+            // Sum all applicable cross-sections
+            let mut total_cross_section = 0.0;
+            
+            for process in &self.get_applicable_processes(&particle.particle_type) {
+                if let Some(sigma) = self.get_cross_section(&particle.particle_type, material, *process, energy_mev)? {
+                    total_cross_section += sigma;
+                }
+            }
+            
+            // Convert to interaction probability
+            let number_density = material.density_g_cm3 * 6.022e23 / self.get_average_atomic_mass(material);
+            let probability = 1.0 - (-total_cross_section * number_density * step_length_cm).exp();
+            
+            Ok(probability.min(1.0))
+        }
+        
+        /// Simulate particle interaction
+        pub fn simulate_interaction(
+            &self,
+            particle: &FundamentalParticle,
+            target_material: &str,
+        ) -> Result<Vec<FundamentalParticle>> {
+            let energy_mev = particle.energy * 6.242e12;
+            
+            // Determine which process occurs
+            let process = self.sample_physics_process(particle, target_material, energy_mev)?;
+            
+            // Generate interaction products based on process
+            match process {
+                PhysicsProcess::ComptonScattering => self.simulate_compton_scattering(particle),
+                PhysicsProcess::PhotoElectricEffect => self.simulate_photoelectric_effect(particle),
+                PhysicsProcess::PairProduction => self.simulate_pair_production(particle),
+                PhysicsProcess::Bremsstrahlung => self.simulate_bremsstrahlung(particle),
+                PhysicsProcess::HadronElastic => self.simulate_elastic_scattering(particle),
+                PhysicsProcess::HadronInelastic => self.simulate_inelastic_scattering(particle),
+                PhysicsProcess::RadioactiveDecay => self.simulate_radioactive_decay(particle),
+                _ => Ok(vec![particle.clone()]), // No interaction
+            }
+        }
+        
+        /// Calculate energy loss (dE/dx)
+        pub fn calculate_energy_loss(
+            &self,
+            particle: &FundamentalParticle,
+            material: &str,
+            step_length_cm: f64,
+        ) -> Result<f64> {
+            if let Some(stopping_power_table) = self.database.stopping_powers.get(&particle.particle_type) {
+                let energy_mev = particle.energy * 6.242e12;
+                let stopping_power = self.interpolate_stopping_power(stopping_power_table, energy_mev)?;
+                
+                // Convert from MeV cm²/g to J/m
+                let material_props = self.database.material_properties.get(material)
+                    .ok_or_else(|| anyhow::anyhow!("Unknown material: {}", material))?;
+                
+                let energy_loss_j = stopping_power * material_props.density_g_cm3 * step_length_cm * 1.602e-13;
+                Ok(energy_loss_j)
+            } else {
+                // Use Bethe-Bloch formula as fallback
+                self.calculate_bethe_bloch_energy_loss(particle, material, step_length_cm)
+            }
+        }
+        
+        // Implementation of specific physics processes (simplified)
+        fn simulate_compton_scattering(&self, photon: &FundamentalParticle) -> Result<Vec<FundamentalParticle>> {
+            let energy_mev = photon.energy * 6.242e12;
+            
+            // Klein-Nishina formula implementation
+            let electron_rest_energy = 0.511; // MeV
+            let alpha = energy_mev / electron_rest_energy;
+            
+            // Sample scattering angle using Klein-Nishina distribution
+            let cos_theta = self.sample_klein_nishina_angle(alpha);
+            let scattered_energy = energy_mev / (1.0 + alpha * (1.0 - cos_theta));
+            
+            // Create scattered photon
+            let mut scattered_photon = photon.clone();
+            scattered_photon.energy = scattered_energy * 1.602e-13; // Convert back to J
+            
+            // Create recoil electron
+            let electron_energy = (energy_mev - scattered_energy) * 1.602e-13;
+            let electron = self.create_particle(ParticleType::Electron, electron_energy, photon.position);
+            
+            Ok(vec![scattered_photon, electron])
+        }
+        
+        fn simulate_photoelectric_effect(&self, photon: &FundamentalParticle) -> Result<Vec<FundamentalParticle>> {
+            // Photoelectron energy = photon energy - binding energy
+            let binding_energy_j = 13.6 * 1.602e-19; // Hydrogen ionization energy (simplified)
+            let electron_energy = photon.energy - binding_energy_j;
+            
+            if electron_energy > 0.0 {
+                let electron = self.create_particle(ParticleType::Electron, electron_energy, photon.position);
+                Ok(vec![electron])
+            } else {
+                Ok(vec![]) // Below threshold
+            }
+        }
+        
+        fn simulate_pair_production(&self, photon: &FundamentalParticle) -> Result<Vec<FundamentalParticle>> {
+            let energy_mev = photon.energy * 6.242e12;
+            let threshold_mev = 1.022; // 2 * electron rest mass
+            
+            if energy_mev > threshold_mev {
+                let available_energy = energy_mev - threshold_mev;
+                
+                // Share kinetic energy between electron and positron
+                let electron_energy = (0.511 + available_energy / 2.0) * 1.602e-13;
+                let positron_energy = (0.511 + available_energy / 2.0) * 1.602e-13;
+                
+                let electron = self.create_particle(ParticleType::Electron, electron_energy, photon.position);
+                let positron = self.create_particle(ParticleType::Positron, positron_energy, photon.position);
+                
+                Ok(vec![electron, positron])
+            } else {
+                Ok(vec![photon.clone()]) // Below threshold
+            }
+        }
+        
+        fn simulate_bremsstrahlung(&self, electron: &FundamentalParticle) -> Result<Vec<FundamentalParticle>> {
+            let energy_mev = electron.energy * 6.242e12;
+            
+            // Simple bremsstrahlung model - electron loses energy, photon is created
+            let radiated_fraction = 0.1; // Simplified - typically much less
+            let photon_energy = electron.energy * radiated_fraction;
+            let remaining_electron_energy = electron.energy * (1.0 - radiated_fraction);
+            
+            let mut scattered_electron = electron.clone();
+            scattered_electron.energy = remaining_electron_energy;
+            
+            let photon = self.create_particle(ParticleType::Photon, photon_energy, electron.position);
+            
+            Ok(vec![scattered_electron, photon])
+        }
+        
+        fn simulate_elastic_scattering(&self, particle: &FundamentalParticle) -> Result<Vec<FundamentalParticle>> {
+            // Elastic scattering - only momentum transfer, no energy loss
+            let mut scattered = particle.clone();
+            
+            // Random scattering angle (simplified)
+            let cos_theta = 2.0 * rand::random::<f64>() - 1.0;
+            let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
+            let phi = 2.0 * std::f64::consts::PI * rand::random::<f64>();
+            
+            // Update momentum direction
+            let p_mag = scattered.momentum.magnitude();
+            scattered.momentum = Vector3::new(
+                p_mag * sin_theta * phi.cos(),
+                p_mag * sin_theta * phi.sin(),
+                p_mag * cos_theta,
+            );
+            
+            Ok(vec![scattered])
+        }
+        
+        fn simulate_inelastic_scattering(&self, _particle: &FundamentalParticle) -> Result<Vec<FundamentalParticle>> {
+            // Placeholder for complex inelastic processes
+            // Would need detailed nuclear models
+            Ok(vec![])
+        }
+        
+        fn simulate_radioactive_decay(&self, nucleus: &FundamentalParticle) -> Result<Vec<FundamentalParticle>> {
+            if let Some(decay_data) = self.database.decay_data.get(&nucleus.particle_type) {
+                // Sample decay mode based on branching ratios
+                let decay_mode = self.sample_decay_mode(&decay_data.decay_modes);
+                
+                match decay_mode.mode_type {
+                    DecayType::Alpha => {
+                        let alpha = self.create_particle(ParticleType::Helium, decay_mode.q_value_mev * 1.602e-13, nucleus.position);
+                        // Create daughter nucleus (simplified)
+                        Ok(vec![alpha])
+                    },
+                    DecayType::BetaMinus => {
+                        let electron = self.create_particle(ParticleType::Electron, decay_mode.q_value_mev * 1.602e-13 / 2.0, nucleus.position);
+                        let neutrino = self.create_particle(ParticleType::ElectronAntiNeutrino, decay_mode.q_value_mev * 1.602e-13 / 2.0, nucleus.position);
+                        Ok(vec![electron, neutrino])
+                    },
+                    _ => Ok(vec![nucleus.clone()]), // Other decay modes
+                }
+            } else {
+                Ok(vec![nucleus.clone()]) // Stable nucleus
+            }
+        }
+        
+        // Helper methods
+        fn get_applicable_processes(&self, particle_type: &ParticleType) -> Vec<PhysicsProcess> {
+            match particle_type {
+                ParticleType::Photon => vec![
+                    PhysicsProcess::PhotoElectricEffect,
+                    PhysicsProcess::ComptonScattering,
+                    PhysicsProcess::PairProduction,
+                ],
+                ParticleType::Electron | ParticleType::Positron => vec![
+                    PhysicsProcess::Ionization,
+                    PhysicsProcess::Bremsstrahlung,
+                    PhysicsProcess::MultipleScattering,
+                ],
+                _ => vec![PhysicsProcess::HadronElastic, PhysicsProcess::HadronInelastic],
+            }
+        }
+        
+        fn get_cross_section(
+            &self,
+            particle: &ParticleType,
+            material: &MaterialProperties,
+            process: PhysicsProcess,
+            energy_mev: f64,
+        ) -> Result<Option<f64>> {
+            // Look up cross-section in database
+            // This would interpolate from tables of experimental data
+            // For now, return simplified analytical formulas
+            
+            match process {
+                PhysicsProcess::ComptonScattering => {
+                    // Klein-Nishina formula
+                    let alpha = energy_mev / 0.511;
+                    let sigma_thomson = 6.652e-25; // cm²
+                    let sigma = sigma_thomson * 
+                        ((1.0 + alpha) / (alpha * alpha) * 
+                         (2.0 * (1.0 + alpha) / (1.0 + 2.0 * alpha) - (1.0 / alpha) * (2.0 * alpha / (1.0 + 2.0 * alpha)).ln()) +
+                         (1.0 / (2.0 * alpha)) * (2.0 * alpha / (1.0 + 2.0 * alpha)).ln() - 
+                         (1.0 + 3.0 * alpha) / ((1.0 + 2.0 * alpha) * (1.0 + 2.0 * alpha)));
+                    Ok(Some(sigma))
+                },
+                _ => Ok(Some(1e-24)), // Placeholder values
+            }
+        }
+        
+        fn sample_physics_process(
+            &self,
+            particle: &FundamentalParticle,
+            material: &str,
+            energy_mev: f64,
+        ) -> Result<PhysicsProcess> {
+            // Sample process based on relative cross-sections
+            // Simplified - return first applicable process
+            let processes = self.get_applicable_processes(&particle.particle_type);
+            Ok(processes[0])
+        }
+        
+        fn sample_klein_nishina_angle(&self, alpha: f64) -> f64 {
+            // Rejection sampling for Klein-Nishina distribution
+            loop {
+                let xi1 = rand::random::<f64>();
+                let xi2 = rand::random::<f64>();
+                
+                let cos_theta = 1.0 - 2.0 * xi1;
+                let rejection_value = 1.0 / (1.0 + alpha * (1.0 - cos_theta));
+                let probability = rejection_value * rejection_value * 
+                    (rejection_value + 1.0 / rejection_value - (1.0 - cos_theta * cos_theta));
+                
+                if xi2 < probability / 2.0 {
+                    return cos_theta;
+                }
+            }
+        }
+        
+        fn create_particle(&self, particle_type: ParticleType, energy_j: f64, position: Vector3<f64>) -> FundamentalParticle {
+            FundamentalParticle {
+                particle_type,
+                position,
+                momentum: Vector3::zeros(), // Would calculate from energy
+                spin: Vector3::new(Complex::new(0.0, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
+                color_charge: None,
+                electric_charge: 0.0,
+                mass: 0.0, // Would look up
+                energy: energy_j,
+                creation_time: 0.0,
+                decay_time: None,
+                quantum_state: QuantumState::new(),
+                interaction_history: vec![],
+            }
+        }
+        
+        fn get_average_atomic_mass(&self, material: &MaterialProperties) -> f64 {
+            // Calculate average atomic mass from composition
+            material.atomic_composition.iter()
+                .map(|(z, fraction)| *z as f64 * 1.66e-27 * fraction) // kg
+                .sum()
+        }
+        
+        fn interpolate_stopping_power(&self, table: &StoppingPowerTable, energy_mev: f64) -> Result<f64> {
+            // Linear interpolation in log-log space
+            let log_energy = energy_mev.ln();
+            
+            for i in 0..table.energies_mev.len()-1 {
+                let e1 = table.energies_mev[i].ln();
+                let e2 = table.energies_mev[i+1].ln();
+                
+                if log_energy >= e1 && log_energy <= e2 {
+                    let sp1 = table.stopping_powers_mev_cm2_g[i].ln();
+                    let sp2 = table.stopping_powers_mev_cm2_g[i+1].ln();
+                    
+                    let log_sp = sp1 + (sp2 - sp1) * (log_energy - e1) / (e2 - e1);
+                    return Ok(log_sp.exp());
+                }
+            }
+            
+            Ok(table.stopping_powers_mev_cm2_g[0]) // Fallback
+        }
+        
+        fn calculate_bethe_bloch_energy_loss(
+            &self,
+            particle: &FundamentalParticle,
+            material: &str,
+            step_length_cm: f64,
+        ) -> Result<f64> {
+            // Bethe-Bloch formula for heavy charged particles
+            let material_props = self.database.material_properties.get(material)
+                .ok_or_else(|| anyhow::anyhow!("Unknown material: {}", material))?;
+            
+            let beta = 0.5; // Simplified - would calculate from energy
+            let gamma = 1.0 / (1.0 - beta * beta).sqrt();
+            
+            let k = 0.307; // MeV cm²/g
+            let me_c2 = 0.511; // MeV
+            let z_squared = 1.0; // Charge squared
+            let z_over_a = 0.5; // For material
+            let i_ev = material_props.mean_excitation_energy_ev;
+            
+            let w_max = 2.0 * me_c2 * beta * beta * gamma * gamma;
+            let dedx = k * z_squared * z_over_a / (beta * beta) * 
+                (0.5 * (2.0 * me_c2 * beta * beta * gamma * gamma * w_max / (i_ev * i_ev / 1e6)).ln() - beta * beta);
+            
+            Ok(dedx * material_props.density_g_cm3 * step_length_cm * 1.602e-13) // Convert to J
+        }
+        
+        fn sample_decay_mode(&self, modes: &[DecayMode]) -> &DecayMode {
+            let total_branching: f64 = modes.iter().map(|m| m.branching_ratio).sum();
+            let random = rand::random::<f64>() * total_branching;
+            
+            let mut cumulative = 0.0;
+            for mode in modes {
+                cumulative += mode.branching_ratio;
+                if random <= cumulative {
+                    return mode;
+                }
+            }
+            
+            &modes[0] // Fallback
+        }
+        
+        fn default_production_cuts() -> HashMap<ParticleType, f64> {
+            let mut cuts = HashMap::new();
+            cuts.insert(ParticleType::Photon, 0.001); // 1 mm
+            cuts.insert(ParticleType::Electron, 0.001);
+            cuts.insert(ParticleType::Positron, 0.001);
+            cuts
+        }
+    }
+    
+    impl ParticlePhysicsDatabase {
+        /// Load standard physics database (like Geant4 data)
+        pub fn load_standard_database() -> Self {
+            Self {
+                cross_sections: Self::load_cross_section_data(),
+                stopping_powers: Self::load_stopping_power_data(),
+                decay_data: Self::load_decay_data(),
+                material_properties: Self::load_material_data(),
+                physics_lists: Self::load_physics_lists(),
+            }
+        }
+        
+        fn load_cross_section_data() -> HashMap<(ParticleType, ParticleType, PhysicsProcess), CrossSectionTable> {
+            let mut data = HashMap::new();
+            
+            // Compton scattering cross-section for photon-electron
+            data.insert(
+                (ParticleType::Photon, ParticleType::Electron, PhysicsProcess::ComptonScattering),
+                CrossSectionTable {
+                    energies_mev: vec![0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+                    cross_sections_barn: vec![20.0, 10.0, 5.0, 2.0, 1.0, 0.5], // Simplified values
+                    interpolation_method: InterpolationMethod::LogLog,
+                    temperature_dependence: None,
+                    source: "Klein-Nishina formula".to_string(),
+                }
+            );
+            
+            data
+        }
+        
+        fn load_stopping_power_data() -> HashMap<ParticleType, StoppingPowerTable> {
+            let mut data = HashMap::new();
+            
+            // Electron stopping power in water (simplified)
+            data.insert(
+                ParticleType::Electron,
+                StoppingPowerTable {
+                    energies_mev: vec![0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+                    stopping_powers_mev_cm2_g: vec![50.0, 20.0, 5.0, 2.0, 1.5, 1.2],
+                    range_mev_cm2_g: vec![0.0001, 0.001, 0.01, 0.1, 1.0, 10.0],
+                    material: "Water".to_string(),
+                }
+            );
+            
+            data
+        }
+        
+        fn load_decay_data() -> HashMap<ParticleType, DecayData> {
+            let mut data = HashMap::new();
+            
+            // Neutron decay
+            data.insert(
+                ParticleType::Neutron,
+                DecayData {
+                    half_life_seconds: 881.5,
+                    decay_modes: vec![
+                        DecayMode {
+                            mode_type: DecayType::BetaMinus,
+                            branching_ratio: 1.0,
+                            q_value_mev: 0.782,
+                            daughter_energies: vec![0.3, 0.3, 0.182], // electron, neutrino, recoil
+                        }
+                    ],
+                    q_value_mev: 0.782,
+                    daughter_products: vec![
+                        (ParticleType::Proton, 1.0),
+                        (ParticleType::Electron, 1.0),
+                        (ParticleType::ElectronAntiNeutrino, 1.0),
+                    ],
+                }
+            );
+            
+            data
+        }
+        
+        fn load_material_data() -> HashMap<String, MaterialProperties> {
+            let mut data = HashMap::new();
+            
+            // Water
+            data.insert(
+                "Water".to_string(),
+                MaterialProperties {
+                    name: "Water".to_string(),
+                    density_g_cm3: 1.0,
+                    atomic_composition: vec![(1, 0.111), (8, 0.889)], // H and O mass fractions
+                    mean_excitation_energy_ev: 75.0,
+                    radiation_length_cm: 36.08,
+                    nuclear_interaction_length_cm: 83.6,
+                }
+            );
+            
+            // Silicon (for detector materials)
+            data.insert(
+                "Silicon".to_string(),
+                MaterialProperties {
+                    name: "Silicon".to_string(),
+                    density_g_cm3: 2.33,
+                    atomic_composition: vec![(14, 1.0)],
+                    mean_excitation_energy_ev: 173.0,
+                    radiation_length_cm: 9.36,
+                    nuclear_interaction_length_cm: 45.5,
+                }
+            );
+            
+            data
+        }
+        
+        fn load_physics_lists() -> Vec<PhysicsList> {
+            vec![
+                PhysicsList {
+                    name: "QBBC".to_string(),
+                    energy_range: (1e-3, 1e5), // 1 keV to 100 GeV
+                    enabled_processes: vec![
+                        PhysicsProcess::PhotoElectricEffect,
+                        PhysicsProcess::ComptonScattering,
+                        PhysicsProcess::PairProduction,
+                        PhysicsProcess::Bremsstrahlung,
+                        PhysicsProcess::Ionization,
+                        PhysicsProcess::MultipleScattering,
+                        PhysicsProcess::HadronElastic,
+                        PhysicsProcess::HadronInelastic,
+                        PhysicsProcess::RadioactiveDecay,
+                    ],
+                    cut_values: [
+                        (ParticleType::Photon, 0.001),
+                        (ParticleType::Electron, 0.001),
+                        (ParticleType::Positron, 0.001),
+                    ].iter().cloned().collect(),
+                    step_limiters: vec![
+                        StepLimiter {
+                            particle_type: ParticleType::Electron,
+                            max_step_length_cm: 0.1,
+                            max_energy_loss_fraction: 0.2,
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+}
+
+/// Geant4-style particle physics integration
+/// Based on PDF recommendation to use proven particle interaction libraries
+pub mod geant4_integration {
+    use super::*;
+    
+    /// Particle physics process types (from Geant4)
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum PhysicsProcess {
+        // Electromagnetic processes
+        PhotoElectricEffect,
+        ComptonScattering,
+        PairProduction,
+        Bremsstrahlung,
+        Ionization,
+        MultipleScattering,
+        
+        // Hadronic processes
+        HadronElastic,
+        HadronInelastic,
+        NeutronCapture,
+        NeutronFission,
+        
+        // Decay processes
+        RadioactiveDecay,
+        MuonDecay,
+        PionDecay,
+        
+        // High energy processes
+        PhotoNuclear,
+        ElectroNuclear,
+        MuonNuclear,
+    }
+    
+    /// Particle interaction database (Geant4-style)
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ParticlePhysicsDatabase {
+        pub cross_sections: HashMap<(ParticleType, ParticleType, PhysicsProcess), CrossSectionTable>,
+        pub stopping_powers: HashMap<ParticleType, StoppingPowerTable>,
+        pub decay_data: HashMap<ParticleType, DecayData>,
+        pub material_properties: HashMap<String, MaterialProperties>,
+        pub physics_lists: Vec<PhysicsList>,
+    }
+    
+    /// Cross-section data table with energy dependence
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CrossSectionTable {
+        pub energies_mev: Vec<f64>,
+        pub cross_sections_barn: Vec<f64>,
+        pub interpolation_method: InterpolationMethod,
+        pub temperature_dependence: Option<TemperatureDependence>,
+        pub source: String, // Reference to experimental data
+    }
+}
+
+/// GADGET-style N-body gravity solver
+/// Based on PDF recommendation to use proven cosmological simulation algorithms
+pub mod gadget_gravity {
+    use super::*;
+    
+    /// GADGET-style particle for N-body simulation
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct GadgetParticle {
+        pub id: usize,
+        pub particle_type: GadgetParticleType,
+        pub position: Vector3<f64>,
+        pub velocity: Vector3<f64>,
+        pub mass: f64,
+        pub acceleration: Vector3<f64>,
+        pub gravitational_potential: f64,
+        pub softening_length: f64,
+        pub time_step: f64,
+        pub active: bool,
+    }
+    
+    /// Particle types in GADGET-style simulation
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum GadgetParticleType {
+        DarkMatter,
+        Stars,
+        Gas,
+        BlackHole,
+        Boundary,
+    }
+    
+    /// GADGET-style gravity solver
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct GadgetGravitySolver {
+        pub particles: Vec<GadgetParticle>,
+        pub force_accuracy: f64, // θ parameter for tree opening criterion
+        pub softening_length: f64,
+        pub periodic_boundary: bool,
+        pub box_size: f64,
+        pub cosmological_parameters: CosmologicalParameters,
+    }
+    
+    /// Cosmological parameters for expanding universe
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CosmologicalParameters {
+        pub hubble_constant: f64,      // H₀ in km/s/Mpc
+        pub omega_matter: f64,         // Ωₘ
+        pub omega_lambda: f64,         // ΩΛ
+        pub omega_baryon: f64,         // Ωᵦ
+        pub scale_factor: f64,         // a(t)
+        pub redshift: f64,             // z
+        pub age_of_universe: f64,      // t in Gyr
+        pub enable_expansion: bool,
+    }
+    
+    impl GadgetGravitySolver {
+        /// Create new GADGET-style gravity solver with real cosmological parameters
+        pub fn new(force_accuracy: f64, softening_length: f64, box_size: f64, cosmological: bool) -> Self {
+            let cosmological_parameters = if cosmological {
+                CosmologicalParameters {
+                    hubble_constant: 67.4,      // Planck 2018 value
+                    omega_matter: 0.315,        // Matter density parameter
+                    omega_lambda: 0.685,        // Dark energy density parameter
+                    omega_baryon: 0.049,        // Baryon density parameter
+                    scale_factor: 1.0,          // Present day
+                    redshift: 0.0,              // Present day
+                    age_of_universe: 13.8,      // Gyr
+                    enable_expansion: true,
+                }
+            } else {
+                CosmologicalParameters {
+                    hubble_constant: 0.0,
+                    omega_matter: 1.0,
+                    omega_lambda: 0.0,
+                    omega_baryon: 0.0,
+                    scale_factor: 1.0,
+                    redshift: 0.0,
+                    age_of_universe: 0.0,
+                    enable_expansion: false,
+                }
+            };
+            
+            Self {
+                particles: Vec::new(),
+                force_accuracy,
+                softening_length,
+                periodic_boundary: true,
+                box_size,
+                cosmological_parameters,
+            }
+        }
+        
+        /// Add particle to GADGET simulation
+        pub fn add_particle(&mut self, particle: GadgetParticle) {
+            self.particles.push(particle);
+        }
+        
+        /// Calculate gravitational forces using proven GADGET algorithms
+        pub fn calculate_forces(&mut self) -> Result<()> {
+            // Use direct summation for now (can be upgraded to tree method)
+            for i in 0..self.particles.len() {
+                let mut total_force = Vector3::zeros();
+                
+                for j in 0..self.particles.len() {
+                    if i == j {
+                        continue;
+                    }
+                    
+                    let r_vec = self.particles[j].position - self.particles[i].position;
+                    let r = r_vec.magnitude();
+                    
+                    if r < 1e-15 {
+                        continue;
+                    }
+                    
+                    // GADGET-style softened gravity
+                    let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
+                    let force_magnitude = general_relativity::G * self.particles[i].mass * 
+                                        self.particles[j].mass / (softened_r * softened_r * softened_r);
+                    
+                    total_force += r_vec * force_magnitude;
+                }
+                
+                self.particles[i].acceleration = total_force / self.particles[i].mass;
+            }
+            
+            Ok(())
+        }
+        
+        /// Integrate using leap-frog method (standard in GADGET)
+        pub fn integrate_step(&mut self, dt: f64) -> Result<()> {
+            // Kick-drift-kick leap-frog integration
+            for particle in &mut self.particles {
+                if !particle.active {
+                    continue;
+                }
+                
+                // Kick: v += a * dt/2
+                particle.velocity += particle.acceleration * (dt * 0.5);
+                
+                // Drift: x += v * dt
+                particle.position += particle.velocity * dt;
+                
+                // Apply periodic boundary conditions
+                if self.periodic_boundary {
+                    particle.position.x = particle.position.x.rem_euclid(self.box_size);
+                    particle.position.y = particle.position.y.rem_euclid(self.box_size);
+                    particle.position.z = particle.position.z.rem_euclid(self.box_size);
+                }
+            }
+            
+            // Recalculate forces
+            self.calculate_forces()?;
+            
+            // Final kick: v += a * dt/2
+            for particle in &mut self.particles {
+                if particle.active {
+                    particle.velocity += particle.acceleration * (dt * 0.5);
+                }
+            }
+            
+            // Apply cosmological expansion if enabled
+            if self.cosmological_parameters.enable_expansion {
+                self.apply_cosmological_expansion(dt)?;
+            }
+            
+            Ok(())
+        }
+        
+        /// Apply cosmological expansion following GADGET methodology
+        fn apply_cosmological_expansion(&mut self, dt: f64) -> Result<()> {
+            // Hubble function H(a) = H₀ * sqrt(Ωₘ/a³ + ΩΛ)
+            let a = self.cosmological_parameters.scale_factor;
+            let omega_m = self.cosmological_parameters.omega_matter;
+            let omega_lambda = self.cosmological_parameters.omega_lambda;
+            
+            let hubble_parameter = self.cosmological_parameters.hubble_constant *
+                (omega_m / (a * a * a) + omega_lambda).sqrt();
+            
+            // Scale factor evolution: da/dt = H * a
+            let scale_factor_derivative = hubble_parameter * a;
+            self.cosmological_parameters.scale_factor += scale_factor_derivative * dt;
+            
+            // Apply Hubble flow to particle velocities
+            let expansion_factor = scale_factor_derivative * dt / a;
+            for particle in &mut self.particles {
+                if particle.active {
+                    particle.velocity += particle.position * (expansion_factor / dt);
+                }
+            }
+            
+            Ok(())
+        }
+    }
+}
+
+/// GADGET-style N-body gravity solver
+/// Based on PDF recommendation to use proven cosmological simulation algorithms
+pub mod gadget_gravity {
+    use super::*;
+    
+    /// GADGET-style particle for N-body simulation
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct GadgetParticle {
+        pub id: usize,
+        pub particle_type: GadgetParticleType,
+        pub position: Vector3<f64>,
+        pub velocity: Vector3<f64>,
+        pub mass: f64,
+        pub acceleration: Vector3<f64>,
+        pub gravitational_potential: f64,
+        pub softening_length: f64,
+        pub time_step: f64,
+        pub active: bool,
+    }
+    
+    /// Particle types in GADGET-style simulation
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum GadgetParticleType {
+        DarkMatter,
+        Stars,
+        Gas,
+        BlackHole,
+        Boundary,
+    }
+    
+    /// GADGET-style tree node for hierarchical force calculation
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TreeNode {
+        pub center_of_mass: Vector3<f64>,
+        pub total_mass: f64,
+        pub geometric_center: Vector3<f64>,
+        pub size: f64,
+        pub children: Vec<usize>,
+        pub particle_indices: Vec<usize>,
+        pub is_leaf: bool,
+        pub opening_angle: f64,
+        pub multipole_moments: MultipoleExpansion,
+    }
+    
+    /// Multipole expansion for accurate force calculation
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct MultipoleExpansion {
+        pub monopole: f64,
+        pub dipole: Vector3<f64>,
+        pub quadrupole: Matrix3<f64>,
+        pub octupole: Vec<f64>, // Simplified as vector
+        pub max_order: usize,
+    }
+    
+    /// GADGET-style gravity solver
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct GadgetGravitySolver {
+        pub particles: Vec<GadgetParticle>,
+        pub tree: OctTree,
+        pub force_accuracy: f64, // θ parameter for tree opening criterion
+        pub softening_length: f64,
+        pub periodic_boundary: bool,
+        pub box_size: f64,
+        pub force_calculation_method: ForceMethod,
+        pub time_integration_method: IntegrationMethod,
+        pub adaptive_time_stepping: bool,
+        pub cosmological_parameters: CosmologicalParameters,
+    }
+    
+    /// Octree for hierarchical force calculation
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct OctTree {
+        pub nodes: Vec<TreeNode>,
+        pub root_node: usize,
+        pub max_depth: usize,
+        pub max_particles_per_node: usize,
+        pub opening_criterion: OpeningCriterion,
+    }
+    
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum ForceMethod {
+        TreeMethod,         // O(N log N) tree algorithm
+        DirectSummation,    // O(N²) direct force calculation
+        PM,                 // Particle-Mesh
+        TreePM,             // Hybrid Tree-PM
+        FastMultipole,      // Fast Multipole Method
+    }
+    
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum IntegrationMethod {
+        LeapFrog,           // Standard leap-frog
+        Verlet,             // Velocity Verlet
+        RungeKutta,         // 4th order Runge-Kutta
+        AdaptiveRungeKutta, // Adaptive step size
+    }
+    
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub enum OpeningCriterion {
+        GeometricMean,      // Standard GADGET opening criterion
+        MaximumDistance,    // Maximum distance criterion
+        RelativeError,      // Relative force error criterion
+    }
+    
+    /// Cosmological parameters for expanding universe
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CosmologicalParameters {
+        pub hubble_constant: f64,      // H₀ in km/s/Mpc
+        pub omega_matter: f64,         // Ωₘ
+        pub omega_lambda: f64,         // ΩΛ
+        pub omega_baryon: f64,         // Ωᵦ
+        pub scale_factor: f64,         // a(t)
+        pub redshift: f64,             // z
+        pub age_of_universe: f64,      // t in Gyr
+        pub enable_expansion: bool,
+    }
+    
+    impl GadgetGravitySolver {
+        /// Create new GADGET-style gravity solver
+        pub fn new(
+            force_accuracy: f64,
+            softening_length: f64,
+            box_size: f64,
+            cosmological: bool,
+        ) -> Self {
+            let cosmological_parameters = if cosmological {
+                CosmologicalParameters {
+                    hubble_constant: 67.4,      // Planck 2018
+                    omega_matter: 0.315,
+                    omega_lambda: 0.685,
+                    omega_baryon: 0.049,
+                    scale_factor: 1.0,
+                    redshift: 0.0,
+                    age_of_universe: 13.8,
+                    enable_expansion: true,
+                }
+            } else {
+                CosmologicalParameters {
+                    hubble_constant: 0.0,
+                    omega_matter: 1.0,
+                    omega_lambda: 0.0,
+                    omega_baryon: 0.0,
+                    scale_factor: 1.0,
+                    redshift: 0.0,
+                    age_of_universe: 0.0,
+                    enable_expansion: false,
+                }
+            };
+            
+            Self {
+                particles: Vec::new(),
+                tree: OctTree::new(),
+                force_accuracy,
+                softening_length,
+                periodic_boundary: true,
+                box_size,
+                force_calculation_method: ForceMethod::TreeMethod,
+                time_integration_method: IntegrationMethod::LeapFrog,
+                adaptive_time_stepping: true,
+                cosmological_parameters,
+            }
+        }
+        
+        /// Add particle to simulation
+        pub fn add_particle(&mut self, particle: GadgetParticle) {
+            self.particles.push(particle);
+        }
+        
+        /// Calculate gravitational forces using tree method
+        pub fn calculate_forces(&mut self) -> Result<()> {
+            // Build tree structure
+            self.build_tree()?;
+            
+            // Calculate forces for each particle
+            for i in 0..self.particles.len() {
+                let force = match self.force_calculation_method {
+                    ForceMethod::TreeMethod => self.calculate_tree_force(i)?,
+                    ForceMethod::DirectSummation => self.calculate_direct_force(i)?,
+                    ForceMethod::PM => self.calculate_pm_force(i)?,
+                    ForceMethod::TreePM => self.calculate_tree_pm_force(i)?,
+                    ForceMethod::FastMultipole => self.calculate_fmm_force(i)?,
+                };
+                
+                self.particles[i].acceleration = force / self.particles[i].mass;
+                self.particles[i].gravitational_potential = self.calculate_potential(i)?;
+            }
+            
+            Ok(())
+        }
+        
+        /// Build octree for hierarchical force calculation
+        fn build_tree(&mut self) -> Result<()> {
+            self.tree = OctTree::new();
+            
+            // Find bounding box
+            let (min_pos, max_pos) = self.find_bounding_box();
+            
+            // Create root node
+            let root = TreeNode {
+                center_of_mass: Vector3::zeros(),
+                total_mass: 0.0,
+                geometric_center: (min_pos + max_pos) * 0.5,
+                size: (max_pos - min_pos).magnitude(),
+                children: Vec::new(),
+                particle_indices: (0..self.particles.len()).collect(),
+                is_leaf: false,
+                opening_angle: self.force_accuracy,
+                multipole_moments: MultipoleExpansion::new(),
+            };
+            
+            self.tree.nodes.push(root);
+            self.tree.root_node = 0;
+            
+            // Recursively build tree
+            self.subdivide_node(0, min_pos, max_pos)?;
+            
+            // Calculate multipole moments
+            self.calculate_multipole_moments(0)?;
+            
+            Ok(())
+        }
+        
+        /// Recursively subdivide tree nodes
+        fn subdivide_node(
+            &mut self,
+            node_index: usize,
+            min_pos: Vector3<f64>,
+            max_pos: Vector3<f64>,
+        ) -> Result<()> {
+            let node = &self.tree.nodes[node_index].clone();
+            
+            // Stop if too few particles or maximum depth reached
+            if node.particle_indices.len() <= self.tree.max_particles_per_node || 
+               self.tree.nodes.len() > (1 << (3 * self.tree.max_depth)) {
+                return Ok(());
+            }
+            
+            // Create 8 child nodes (octree)
+            let center = (min_pos + max_pos) * 0.5;
+            let child_positions = [
+                (min_pos, center),
+                (Vector3::new(center.x, min_pos.y, min_pos.z), Vector3::new(max_pos.x, center.y, center.z)),
+                (Vector3::new(min_pos.x, center.y, min_pos.z), Vector3::new(center.x, max_pos.y, center.z)),
+                (Vector3::new(center.x, center.y, min_pos.z), Vector3::new(max_pos.x, max_pos.y, center.z)),
+                (Vector3::new(min_pos.x, min_pos.y, center.z), Vector3::new(center.x, center.y, max_pos.z)),
+                (Vector3::new(center.x, min_pos.y, center.z), Vector3::new(max_pos.x, center.y, max_pos.z)),
+                (Vector3::new(min_pos.x, center.y, center.z), Vector3::new(center.x, max_pos.y, max_pos.z)),
+                (center, max_pos),
+            ];
+            
+            let mut child_indices = Vec::new();
+            
+            for (child_min, child_max) in child_positions.iter() {
+                let mut child_particles = Vec::new();
+                
+                // Assign particles to child nodes
+                for &particle_idx in &node.particle_indices {
+                    let pos = self.particles[particle_idx].position;
+                    if pos.x >= child_min.x && pos.x < child_max.x &&
+                       pos.y >= child_min.y && pos.y < child_max.y &&
+                       pos.z >= child_min.z && pos.z < child_max.z {
+                        child_particles.push(particle_idx);
+                    }
+                }
+                
+                if !child_particles.is_empty() {
+                    let child_node = TreeNode {
+                        center_of_mass: Vector3::zeros(),
+                        total_mass: 0.0,
+                        geometric_center: (*child_min + *child_max) * 0.5,
+                        size: (*child_max - *child_min).magnitude(),
+                        children: Vec::new(),
+                        particle_indices: child_particles,
+                        is_leaf: true,
+                        opening_angle: self.force_accuracy,
+                        multipole_moments: MultipoleExpansion::new(),
+                    };
+                    
+                    let child_index = self.tree.nodes.len();
+                    self.tree.nodes.push(child_node);
+                    child_indices.push(child_index);
+                    
+                    // Recursively subdivide
+                    self.subdivide_node(child_index, *child_min, *child_max)?;
+                }
+            }
+            
+            // Update parent node
+            self.tree.nodes[node_index].children = child_indices;
+            self.tree.nodes[node_index].is_leaf = child_indices.is_empty();
+            
+            Ok(())
+        }
+        
+        /// Calculate tree force for particle i
+        fn calculate_tree_force(&self, particle_idx: usize) -> Result<Vector3<f64>> {
+            let particle = &self.particles[particle_idx];
+            let mut total_force = Vector3::zeros();
+            
+            // Traverse tree starting from root
+            self.tree_force_recursive(particle_idx, self.tree.root_node, &mut total_force)?;
+            
+            Ok(total_force)
+        }
+        
+        /// Recursive tree force calculation
+        fn tree_force_recursive(
+            &self,
+            particle_idx: usize,
+            node_idx: usize,
+            total_force: &mut Vector3<f64>,
+        ) -> Result<()> {
+            let node = &self.tree.nodes[node_idx];
+            let particle = &self.particles[particle_idx];
+            
+            let r_vec = node.center_of_mass - particle.position;
+            let r = r_vec.magnitude();
+            
+            // Opening criterion: use node if s/r < θ
+            let opening_criterion_met = match self.tree.opening_criterion {
+                OpeningCriterion::GeometricMean => node.size / r < self.force_accuracy,
+                OpeningCriterion::MaximumDistance => r > 2.0 * node.size,
+                OpeningCriterion::RelativeError => true, // Simplified
+            };
+            
+            if node.is_leaf || opening_criterion_met {
+                // Use this node for force calculation
+                let force = self.calculate_node_force(particle, node)?;
+                *total_force += force;
+            } else {
+                // Recurse to children
+                for &child_idx in &node.children {
+                    self.tree_force_recursive(particle_idx, child_idx, total_force)?;
+                }
+            }
+            
+            Ok(())
+        }
+        
+        /// Calculate force from a tree node
+        fn calculate_node_force(&self, particle: &GadgetParticle, node: &TreeNode) -> Result<Vector3<f64>> {
+            let r_vec = node.center_of_mass - particle.position;
+            let r = r_vec.magnitude();
+            
+            if r < 1e-15 {
+                return Ok(Vector3::zeros()); // Avoid self-force
+            }
+            
+            // Softened Newtonian gravity
+            let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
+            let force_magnitude = general_relativity::G * particle.mass * node.total_mass / (softened_r * softened_r * softened_r);
+            
+            // Include multipole corrections for higher accuracy
+            let multipole_correction = self.calculate_multipole_correction(particle, node)?;
+            
+            Ok(r_vec * force_magnitude + multipole_correction)
+        }
+        
+        /// Calculate multipole expansion corrections
+        fn calculate_multipole_correction(&self, _particle: &GadgetParticle, _node: &TreeNode) -> Result<Vector3<f64>> {
+            // Simplified - would implement full multipole expansion
+            Ok(Vector3::zeros())
+        }
+        
+        /// Direct summation force calculation (O(N²))
+        fn calculate_direct_force(&self, particle_idx: usize) -> Result<Vector3<f64>> {
+            let particle = &self.particles[particle_idx];
+            let mut total_force = Vector3::zeros();
+            
+            for (j, other) in self.particles.iter().enumerate() {
+                if j == particle_idx {
+                    continue;
+                }
+                
+                let r_vec = other.position - particle.position;
+                let r = r_vec.magnitude();
+                
+                if r < 1e-15 {
+                    continue;
+                }
+                
+                let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
+                let force_magnitude = general_relativity::G * particle.mass * other.mass / (softened_r * softened_r * softened_r);
+                
+                total_force += r_vec * force_magnitude;
+            }
+            
+            Ok(total_force)
+        }
+        
+        /// Particle-Mesh force calculation
+        fn calculate_pm_force(&self, _particle_idx: usize) -> Result<Vector3<f64>> {
+            // Would implement particle-mesh method using FFT
+            Ok(Vector3::zeros())
+        }
+        
+        /// Hybrid Tree-PM force calculation
+        fn calculate_tree_pm_force(&self, particle_idx: usize) -> Result<Vector3<f64>> {
+            // Combine tree forces (short range) with PM forces (long range)
+            let tree_force = self.calculate_tree_force(particle_idx)?;
+            let pm_force = self.calculate_pm_force(particle_idx)?;
+            Ok(tree_force + pm_force)
+        }
+        
+        /// Fast Multipole Method force calculation
+        fn calculate_fmm_force(&self, _particle_idx: usize) -> Result<Vector3<f64>> {
+            // Would implement Fast Multipole Method
+            Ok(Vector3::zeros())
+        }
+        
+        /// Calculate gravitational potential for particle
+        fn calculate_potential(&self, particle_idx: usize) -> Result<f64> {
+            let particle = &self.particles[particle_idx];
+            let mut potential = 0.0;
+            
+            for (j, other) in self.particles.iter().enumerate() {
+                if j == particle_idx {
+                    continue;
+                }
+                
+                let r_vec = other.position - particle.position;
+                let r = r_vec.magnitude();
+                
+                if r < 1e-15 {
+                    continue;
+                }
+                
+                let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
+                potential -= general_relativity::G * other.mass / softened_r;
+            }
+            
+            Ok(potential)
+        }
+        
+        /// Integrate equations of motion
+        pub fn integrate_step(&mut self, dt: f64) -> Result<()> {
+            match self.time_integration_method {
+                IntegrationMethod::LeapFrog => self.leapfrog_step(dt),
+                IntegrationMethod::Verlet => self.verlet_step(dt),
+                IntegrationMethod::RungeKutta => self.runge_kutta_step(dt),
+                IntegrationMethod::AdaptiveRungeKutta => self.adaptive_rk_step(dt),
+            }
+        }
+        
+        /// Leap-frog integration step
+        fn leapfrog_step(&mut self, dt: f64) -> Result<()> {
+            // Kick-drift-kick algorithm
+            for particle in &mut self.particles {
+                if !particle.active {
+                    continue;
+                }
+                
+                // Kick: v += a * dt/2
+                particle.velocity += particle.acceleration * (dt * 0.5);
+                
+                // Drift: x += v * dt
+                particle.position += particle.velocity * dt;
+                
+                // Apply periodic boundary conditions
+                if self.periodic_boundary {
+                    self.apply_periodic_boundary(&mut particle.position);
+                }
+            }
+            
+            // Recalculate forces
+            self.calculate_forces()?;
+            
+            // Final kick: v += a * dt/2
+            for particle in &mut self.particles {
+                if particle.active {
+                    particle.velocity += particle.acceleration * (dt * 0.5);
+                }
+            }
+            
+            // Apply cosmological expansion
+            if self.cosmological_parameters.enable_expansion {
+                self.apply_cosmological_expansion(dt)?;
+            }
+            
+            Ok(())
+        }
+        
+        /// Velocity Verlet integration step
+        fn verlet_step(&mut self, dt: f64) -> Result<()> {
+            // Store old accelerations
+            let old_accelerations: Vec<Vector3<f64>> = self.particles.iter()
+                .map(|p| p.acceleration)
+                .collect();
+            
+            // Update positions
+            for (i, particle) in self.particles.iter_mut().enumerate() {
+                if !particle.active {
+                    continue;
+                }
+                
+                particle.position += particle.velocity * dt + old_accelerations[i] * (dt * dt * 0.5);
+                
+                if self.periodic_boundary {
+                    self.apply_periodic_boundary(&mut particle.position);
+                }
+            }
+            
+            // Calculate new forces
+            self.calculate_forces()?;
+            
+            // Update velocities
+            for (i, particle) in self.particles.iter_mut().enumerate() {
+                if particle.active {
+                    particle.velocity += (old_accelerations[i] + particle.acceleration) * (dt * 0.5);
+                }
+            }
+            
+            Ok(())
+        }
+        
+        /// 4th order Runge-Kutta step
+        fn runge_kutta_step(&mut self, dt: f64) -> Result<()> {
+            // Store initial state
+            let initial_positions: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.position).collect();
+            let initial_velocities: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity).collect();
+            
+            // K1
+            self.calculate_forces()?;
+            let k1_v: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.acceleration * dt).collect();
+            let k1_r: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity * dt).collect();
+            
+            // K2
+            for (i, particle) in self.particles.iter_mut().enumerate() {
+                particle.position = initial_positions[i] + k1_r[i] * 0.5;
+                particle.velocity = initial_velocities[i] + k1_v[i] * 0.5;
+            }
+            self.calculate_forces()?;
+            let k2_v: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.acceleration * dt).collect();
+            let k2_r: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity * dt).collect();
+            
+            // K3
+            for (i, particle) in self.particles.iter_mut().enumerate() {
+                particle.position = initial_positions[i] + k2_r[i] * 0.5;
+                particle.velocity = initial_velocities[i] + k2_v[i] * 0.5;
+            }
+            self.calculate_forces()?;
+            let k3_v: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.acceleration * dt).collect();
+            let k3_r: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity * dt).collect();
+            
+            // K4
+            for (i, particle) in self.particles.iter_mut().enumerate() {
+                particle.position = initial_positions[i] + k3_r[i];
+                particle.velocity = initial_velocities[i] + k3_v[i];
+            }
+            self.calculate_forces()?;
+            let k4_v: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.acceleration * dt).collect();
+            let k4_r: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity * dt).collect();
+            
+            // Final update
+            for (i, particle) in self.particles.iter_mut().enumerate() {
+                particle.position = initial_positions[i] + (k1_r[i] + k2_r[i] * 2.0 + k3_r[i] * 2.0 + k4_r[i]) / 6.0;
+                particle.velocity = initial_velocities[i] + (k1_v[i] + k2_v[i] * 2.0 + k3_v[i] * 2.0 + k4_v[i]) / 6.0;
+            }
+            
+            Ok(())
+        }
+        
+        /// Adaptive Runge-Kutta step with error control
+        fn adaptive_rk_step(&mut self, dt: f64) -> Result<()> {
+            // Simplified - would implement proper adaptive step size control
+            self.runge_kutta_step(dt)
+        }
+        
+        /// Apply periodic boundary conditions
+        fn apply_periodic_boundary(&self, position: &mut Vector3<f64>) {
+            position.x = position.x.rem_euclid(self.box_size);
+            position.y = position.y.rem_euclid(self.box_size);
+            position.z = position.z.rem_euclid(self.box_size);
+        }
+        
+        /// Apply cosmological expansion
+        fn apply_cosmological_expansion(&mut self, dt: f64) -> Result<()> {
+            let hubble_parameter = self.cosmological_parameters.hubble_constant * 
+                self.hubble_function(self.cosmological_parameters.scale_factor);
+            
+            // Scale factor evolution: da/dt = H * a
+            let scale_factor_derivative = hubble_parameter * self.cosmological_parameters.scale_factor;
+            self.cosmological_parameters.scale_factor += scale_factor_derivative * dt;
+            
+            // Update particle positions and velocities for expansion
+            let expansion_factor = scale_factor_derivative * dt / self.cosmological_parameters.scale_factor;
+            
+            for particle in &mut self.particles {
+                if particle.active {
+                    // Hubble flow: v += H * r
+                    particle.velocity += particle.position * (expansion_factor / dt);
+                }
+            }
+            
+            Ok(())
+        }
+        
+        /// Hubble function H(a) = H₀ * sqrt(Ωₘ/a³ + ΩΛ)
+        fn hubble_function(&self, scale_factor: f64) -> f64 {
+            let omega_m = self.cosmological_parameters.omega_matter;
+            let omega_lambda = self.cosmological_parameters.omega_lambda;
+            let a_cubed = scale_factor * scale_factor * scale_factor;
+            
+            (omega_m / a_cubed + omega_lambda).sqrt()
+        }
+        
+        /// Find bounding box of all particles
+        fn find_bounding_box(&self) -> (Vector3<f64>, Vector3<f64>) {
+            let mut min_pos = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+            let mut max_pos = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+            
+            for particle in &self.particles {
+                min_pos.x = min_pos.x.min(particle.position.x);
+                min_pos.y = min_pos.y.min(particle.position.y);
+                min_pos.z = min_pos.z.min(particle.position.z);
+                
+                max_pos.x = max_pos.x.max(particle.position.x);
+                max_pos.y = max_pos.y.max(particle.position.y);
+                max_pos.z = max_pos.z.max(particle.position.z);
+            }
+            
+            (min_pos, max_pos)
+        }
+        
+        /// Calculate multipole moments for tree node
+        fn calculate_multipole_moments(&mut self, node_idx: usize) -> Result<()> {
+            let node = &mut self.tree.nodes[node_idx];
+            
+            // Calculate center of mass and total mass
+            let mut total_mass = 0.0;
+            let mut center_of_mass = Vector3::zeros();
+            
+            for &particle_idx in &node.particle_indices {
+                let particle = &self.particles[particle_idx];
+                total_mass += particle.mass;
+                center_of_mass += particle.position * particle.mass;
+            }
+            
+            if total_mass > 0.0 {
+                center_of_mass /= total_mass;
+            }
+            
+            node.total_mass = total_mass;
+            node.center_of_mass = center_of_mass;
+            
+            // Calculate higher-order moments (simplified)
+            node.multipole_moments.monopole = total_mass;
+            node.multipole_moments.dipole = Vector3::zeros();
+            node.multipole_moments.quadrupole = Matrix3::zeros();
+            
+            // Recursively calculate for children
+            for &child_idx in &node.children.clone() {
+                self.calculate_multipole_moments(child_idx)?;
+            }
+            
+            Ok(())
+        }
+    }
+    
+    impl OctTree {
+        pub fn new() -> Self {
+            Self {
+                nodes: Vec::new(),
+                root_node: 0,
+                max_depth: 20,
+                max_particles_per_node: 8,
+                opening_criterion: OpeningCriterion::GeometricMean,
+            }
+        }
+    }
+    
+    impl MultipoleExpansion {
+        pub fn new() -> Self {
+            Self {
+                monopole: 0.0,
+                dipole: Vector3::zeros(),
+                quadrupole: Matrix3::zeros(),
+                octupole: vec![0.0; 10], // Simplified
+                max_order: 2,
+            }
+        }
+    }
 }

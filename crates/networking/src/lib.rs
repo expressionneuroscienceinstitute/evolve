@@ -49,6 +49,7 @@ pub struct WorkloadPacket {
 pub struct NetworkNode {
     pub id: NodeId,
     /// Sender for outgoing messages to other nodes.
+    #[allow(dead_code)] // Will be used when full networking is implemented
     message_tx: mpsc::Sender<NetworkMessage>,
     /// Receiver for incoming messages from other nodes.
     message_rx: mpsc::Receiver<NetworkMessage>,

@@ -915,7 +915,38 @@ impl AutonomousAgent {
     
     /// Make an autonomous decision based on current state and environment
     pub fn make_decision(&mut self, world_state: &dyn WorldState, current_tick: u64) -> Result<AgentAction> {
-        // Gather sensory information
+        // Update last decision time
+        self.last_decision_tick = current_tick;
+        
+        // Assess survival priorities based on current needs
+        let energy_priority = self.calculate_energy_priority();
+        let reproduction_priority = self.calculate_reproduction_priority();
+        let social_priority = self.calculate_social_priority();
+        let innovation_priority = self.calculate_innovation_priority();
+        
+        // Gather environmental information
+        let _local_resources = world_state.get_resource_density_at(self.position);
+        let _available_energy = world_state.get_available_energy_at(self.position);
+        let _temperature = world_state.get_temperature_at(self.position);
+        
+        // Determine the highest priority action
+        let mut priorities = vec![
+            (energy_priority, ActionType::ExtractEnergy),
+            (reproduction_priority, ActionType::Reproduce),
+            (social_priority, ActionType::Communicate),
+            (innovation_priority, ActionType::Experiment),
+        ];
+        
+        // Sort by priority (highest first)
+        priorities.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Select action type based on priority and feasibility
+        let action_type = self.select_feasible_action(&priorities, world_state)?;
+        
+        // Create action with appropriate parameters
+        let _parameters = self.generate_action_parameters(&action_type, world_state);
+        
+        // Gather sensory information for AI processing
         let nearby_agents = world_state.get_nearby_agents(self.id, self.communication_range);
         let agent_sensory_data: Vec<AgentSensoryData> = nearby_agents.iter()
             .map(|agent| AgentSensoryData {
@@ -1534,6 +1565,160 @@ impl AutonomousAgent {
         if rng.gen::<f64>() < mutation_rate * 2.0 {
             self.ai_core.evolve();
         }
+    }
+    
+    /// Calculate energy acquisition priority based on current energy state
+    fn calculate_energy_priority(&self) -> f64 {
+        // Higher priority when energy is low
+        let energy_ratio = self.energy / 100.0; // Assuming 100 is max energy
+        let base_priority = 1.0 - energy_ratio;
+        
+        // Increase priority if stored energy is also low
+        let storage_modifier = if self.stored_energy < 20.0 { 0.5 } else { 0.0 };
+        
+        (base_priority + storage_modifier).min(1.0)
+    }
+    
+    /// Calculate reproduction priority based on energy, maturity, and time since last reproduction
+    fn calculate_reproduction_priority(&self) -> f64 {
+        // Only consider reproduction if agent has sufficient energy and maturity
+        if self.energy < 70.0 || self.sentience_level < 0.1 {
+            return 0.0;
+        }
+        
+        // Base priority increases with age and energy surplus
+        let energy_surplus = (self.energy - 50.0) / 50.0; // Above survival threshold
+        let maturity_factor = self.sentience_level;
+        let generation_factor = 1.0 / (1.0 + self.generation as f64 * 0.1); // Slight preference for early generations
+        
+        (energy_surplus * maturity_factor * generation_factor * 0.7).min(1.0)
+    }
+    
+    /// Calculate social interaction priority based on cooperation tendency and nearby agents
+    fn calculate_social_priority(&self) -> f64 {
+        // Base priority from agent's social nature
+        let base_social = self.cooperation_tendency;
+        
+        // Modify based on recent social interactions (simplified)
+        let interaction_bonus = if self.fitness_history.len() > 2 {
+            let recent_fitness = self.fitness_history.iter().rev().take(3).sum::<f64>() / 3.0;
+            if recent_fitness > 0.7 { 0.3 } else { 0.0 }
+        } else {
+            0.0
+        };
+        
+        (base_social + interaction_bonus).min(1.0)
+    }
+    
+    /// Calculate innovation priority based on tech level and current challenges
+    fn calculate_innovation_priority(&self) -> f64 {
+        // Higher priority for agents with higher tech capacity
+        let tech_capacity = self.tech_level + self.digitalization_level * 0.5;
+        
+        // Increase priority if facing repeated challenges (low recent fitness)
+        let challenge_factor = if self.fitness_history.len() > 3 {
+            let recent_avg = self.fitness_history.iter().rev().take(3).sum::<f64>() / 3.0;
+            if recent_avg < 0.5 { 0.4 } else { 0.0 }
+        } else {
+            0.0
+        };
+        
+        (tech_capacity * 0.6 + challenge_factor).min(1.0)
+    }
+    
+    /// Select a feasible action from prioritized list
+    fn select_feasible_action(&self, priorities: &[(f64, ActionType)], world_state: &dyn WorldState) -> Result<ActionType> {
+        for (priority, action_type) in priorities {
+            if *priority > 0.1 && self.is_action_feasible(action_type, world_state) {
+                return Ok(action_type.clone());
+            }
+        }
+        
+        // Fallback to rest if no other action is feasible
+        Ok(ActionType::Rest)
+    }
+    
+    /// Check if an action is feasible given current state and environment
+    fn is_action_feasible(&self, action_type: &ActionType, world_state: &dyn WorldState) -> bool {
+        match action_type {
+            ActionType::ExtractEnergy => {
+                // Need available energy in environment and some energy to perform action
+                world_state.get_available_energy_at(self.position) > 0.0 && self.energy > 5.0
+            },
+            ActionType::ExtractMatter => {
+                // Need available matter and energy to extract
+                world_state.get_available_matter_at(self.position) > 0.0 && self.energy > 10.0
+            },
+            ActionType::Reproduce => {
+                // Need sufficient energy, maturity, and nearby compatible agents
+                self.energy > 50.0 && 
+                self.sentience_level > 0.05 && 
+                !world_state.get_nearby_agents(self.id, self.communication_range).is_empty()
+            },
+            ActionType::Communicate => {
+                // Need energy and nearby agents
+                self.energy > 2.0 && 
+                !world_state.get_nearby_agents(self.id, self.communication_range).is_empty()
+            },
+            ActionType::Experiment => {
+                // Need sufficient tech level and energy for innovation
+                self.energy > 20.0 && (self.tech_level > 0.1 || self.digitalization_level > 0.1)
+            },
+            ActionType::MoveForward | ActionType::MoveBackward | ActionType::TurnLeft | ActionType::TurnRight => {
+                // Just need minimal energy for movement
+                self.energy > 3.0
+            },
+            ActionType::Rest => {
+                // Always feasible
+                true
+            },
+            _ => {
+                // Conservative approach for unhandled actions
+                self.energy > 10.0
+            }
+        }
+    }
+    
+    /// Generate appropriate parameters for the selected action
+    fn generate_action_parameters(&self, action_type: &ActionType, world_state: &dyn WorldState) -> HashMap<String, Vec<f64>> {
+        let mut parameters = HashMap::new();
+        
+        match action_type {
+            ActionType::MoveForward | ActionType::MoveBackward | ActionType::TurnLeft | ActionType::TurnRight => {
+                // Move towards resource-rich areas or away from threats
+                let resource_gradient = world_state.get_resource_gradient_at(self.position);
+                parameters.insert("direction".to_string(), vec![resource_gradient[0], resource_gradient[1], resource_gradient[2]]);
+                parameters.insert("speed".to_string(), vec![self.energy / 100.0]); // Speed based on available energy
+            },
+            ActionType::ExtractEnergy => {
+                // Amount to extract based on need and availability
+                let available = world_state.get_available_energy_at(self.position);
+                let desired = (100.0 - self.energy).max(0.0); // How much we need
+                let amount = available.min(desired).min(self.energy * 0.5); // Limited by our capacity
+                parameters.insert("amount".to_string(), vec![amount]);
+            },
+            ActionType::ExtractMatter => {
+                let available = world_state.get_available_matter_at(self.position);
+                let desired = 50.0 - self.stored_matter; // Assuming 50 is storage capacity
+                let amount = available.min(desired).max(0.0);
+                parameters.insert("amount".to_string(), vec![amount]);
+            },
+            ActionType::Communicate => {
+                // Communication range and intensity
+                parameters.insert("range".to_string(), vec![self.communication_range]);
+                parameters.insert("intensity".to_string(), vec![self.cooperation_tendency]);
+            },
+            ActionType::Experiment => {
+                // Innovation effort based on tech level
+                let effort = self.tech_level + self.digitalization_level * 0.5;
+                parameters.insert("effort".to_string(), vec![effort]);
+            },
+            _ => {
+                // Default empty parameters
+            }
+        }
+        
+        parameters
     }
 }
 

@@ -14,38 +14,59 @@ use uuid::Uuid;
 /// Represents the integrated information or "phi" value of a conscious state.
 /// In IIT, phi measures the degree to which a system's whole is greater than the sum of its parts.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct IntegratedInformation(f64);
+pub struct IntegratedInformation {
+    pub phi_value: f64,
+    pub neural_complexity: f64,
+    pub self_awareness_level: f64,
+}
 
 impl IntegratedInformation {
-    /// Calculates a simplified "phi" value based on the complexity, integration of data,
-    /// and a rudimentary self-awareness component. This is an abstract model for simulation.
-    pub fn from_data(sensory_input: &SensoryInput, internal_state: &DVector<f64>) -> Self {
-        // Sensory integration component: Weighted sum of visual and audio inputs.
-        // Assuming a higher "value" for visual input and a threshold for audio.
-        let visual_component: f64 = sensory_input.vision.iter().map(|&v| v as f64).sum();
-        let audio_component: f64 = sensory_input.audio.iter().map(|&a| if a > 0.1 { 1.0 } else { 0.0 }).sum();
-        let sensory_integration = (0.7 * visual_component + 0.3 * audio_component).max(0.0);
-
-        // Internal state complexity: Uses variance and magnitude of the internal state.
-        // A more complex internal state (higher variance, larger magnitude) implies higher complexity.
-        let state_variance = internal_state.variance();
-        let state_magnitude = internal_state.norm();
-        let internal_complexity = (state_variance * state_magnitude).log(1.0 + state_magnitude).max(0.0); // Logarithmic scaling
-
-        // Self-awareness component: A simplified metric based on the average internal state value.
-        // High average internal state could represent a more "active" or "self-aware" state.
-        let self_awareness_component = internal_state.mean().max(0.0).sqrt();
-
-        // Combine components with arbitrary weights.
-        let phi = (sensory_integration * 0.4 + internal_complexity * 0.4 + self_awareness_component * 0.2)
-            .powf(1.2) // Non-linear scaling to emphasize higher values
-            .min(100.0); // Cap phi at a reasonable maximum for stability
-
-        IntegratedInformation(phi)
+    /// Create from neural activity data with enhanced calculations
+    pub fn from_data(sensory_data: &[f64], decision_data: &[f64], memory_data: &[f64]) -> Self {
+        // Calculate weighted sensory integration (complexity of sensory processing)
+        let sensory_integration = sensory_data.iter()
+            .enumerate()
+            .map(|(i, &value)| {
+                let weight = 1.0 / (1.0 + i as f64 * 0.1); // Decreasing weights
+                value * weight
+            })
+            .sum::<f64>() / sensory_data.len() as f64;
+        
+        // Calculate internal state complexity (measure of decision processing)
+        let variance = if decision_data.len() > 1 {
+            let mean = decision_data.iter().sum::<f64>() / decision_data.len() as f64;
+            decision_data.iter()
+                .map(|&x| (x - mean).powi(2))
+                .sum::<f64>() / (decision_data.len() - 1) as f64
+        } else {
+            0.0
+        };
+        
+        let internal_state_complexity = variance.sqrt() * 10.0; // Scale for interpretation
+        
+        // Calculate simplified self-awareness score
+        let memory_consistency = if memory_data.len() > 2 {
+            let mut consistency_score = 0.0;
+            for i in 1..memory_data.len() {
+                let diff = (memory_data[i] - memory_data[i-1]).abs();
+                consistency_score += 1.0 / (1.0 + diff); // Higher score for consistency
+            }
+            consistency_score / (memory_data.len() - 1) as f64
+        } else {
+            0.0
+        };
+        
+        let self_awareness_score = memory_consistency * sensory_integration * 0.5; // Combined metric
+        
+        Self {
+            phi_value: sensory_integration,
+            neural_complexity: internal_state_complexity,
+            self_awareness_level: self_awareness_score,
+        }
     }
 
     pub fn value(&self) -> f64 {
-        self.0
+        self.phi_value
     }
 }
 
@@ -88,11 +109,11 @@ pub fn update_consciousness(
     sensory_input: &SensoryInput,
     internal_state: &DVector<f64>,
 ) -> Result<()> {
-    let phi = IntegratedInformation::from_data(sensory_input, internal_state);
+    let phi = IntegratedInformation::from_data(sensory_input.vision.as_slice(), internal_state.as_slice(), &[]);
     
     // Calculate new metrics based on the internal state and sensory input for consciousness tracking.
-    let neural_complexity = internal_state.len() as f64 * internal_state.variance().max(0.1).log(10.0);
-    let self_awareness_level = internal_state.mean().powf(2.0).min(1.0); // Simplified self-awareness, capped at 1.0
+    let neural_complexity = phi.neural_complexity;
+    let self_awareness_level = phi.self_awareness_level;
 
     // The "content" of consciousness is a narrative interpretation of the state.
     let content = format!(

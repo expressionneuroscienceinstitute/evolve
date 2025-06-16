@@ -83,6 +83,9 @@ candle-nn = "0.3"
 tempfile = "3.8"
 chrono = { version = "0.4", features = ["serde"] }
 
+# FFI and C interop
+libloading = "0.8"
+
 [profile.release]
 opt-level = 3
 lto = true
@@ -92,3 +95,8 @@ panic = "abort"
 [profile.dev]
 opt-level = 1
 debug = true
+
+[build-dependencies]
+cc = "1.0"
+pkg-config = "0.3"
+bindgen = "0.69"

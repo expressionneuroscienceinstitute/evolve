@@ -1,6 +1,7 @@
 //! # JSON-RPC types for Universectl
 
 use serde::{Deserialize, Serialize};
+use anyhow::Result;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
@@ -74,4 +75,33 @@ pub struct Petition {
 pub struct ResourceStatus {
     pub usage: std::collections::HashMap<String, u64>,
     pub limits: std::collections::HashMap<String, u64>,
+}
+
+/// Helper function to make RPC calls to the simulation server
+pub async fn call_rpc(method: &str, params: &serde_json::Value) -> Result<serde_json::Value> {
+    let client = reqwest::Client::new();
+    let req_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1
+    });
+
+    let res = client
+        .post("http://127.0.0.1:9001/rpc")
+        .json(&req_body)
+        .send()
+        .await?;
+
+    if !res.status().is_success() {
+        return Err(anyhow::anyhow!("HTTP error: {}", res.status()));
+    }
+
+    let rpc_res: RpcResponse<serde_json::Value> = res.json().await?;
+    
+    if let Some(error) = rpc_res.error {
+        return Err(anyhow::anyhow!("RPC error: {} (code: {})", error.message, error.code));
+    }
+
+    rpc_res.result.ok_or_else(|| anyhow::anyhow!("No result in RPC response"))
 } 

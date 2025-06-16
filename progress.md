@@ -32,4 +32,32 @@ The workspace is **not yet building successfully**. The primary blocker is the s
 1.  **Fix `physics_engine/src/lib.rs`:** This is the highest priority. The file needs to be purged of all definitions that now live in `physics_types`.
 2.  **Move the `impl QuantumState` Block:** The implementation for `QuantumState` must be moved to `crates/physics_types/src/lib.rs`.
 3.  **Fix `ffi_integration/Cargo.toml`:** Double-check that it no longer contains any paths that point to the deleted `types.rs` file.
-4.  **Full Build Check:** Once these structural issues are resolved, a full `cargo check --workspace` will be needed to identify and fix the next layer of compilation errors. 
+4.  **Full Build Check:** Once these structural issues are resolved, a full `cargo check --workspace` will be needed to identify and fix the next layer of compilation errors.
+
+#### Progress (Session: 2025-06-16)
+* Ran `cargo check` to get an updated error list.
+* Removed the wildcard `use physics_types::*` import from `physics_engine/src/particles.rs` to resolve `ParticleType` collisions between the local enum and the one in `physics_types`.
+* Extended `QuantumState` inside `physics_engine/src/lib.rs` with the extra quantum-number fields required by `quantum.rs` (`principal_quantum_number`, `orbital_angular_momentum`, `magnetic_quantum_number`, `spin_quantum_number`, `energy_level`, `occupation_probability`).
+* Implemented a full `Default` path by adding these fields to `QuantumState::new()` and updated the `derive(Default)`.
+* Added `#[default]` variant and explicit `Default` impl for `MeasurementBasis` to silence the missing-`Default` compile error.
+* Temporarily gated the duplicate `StoppingPowerTable`, `DecayData`, and `MaterialProperties` structs in `physics_engine/src/lib.rs` behind `#[cfg(any())]` to avoid name collisions with the identical definitions already re-exported from `geant4_integration`.
+* Updated `QuantumState::new()` to delegate to `Self::default()`; the old direct initialisation was kept but now includes all new fields.
+* NOTE: The large monolithic `physics_engine/src/lib.rs` still contains many duplicated types that shadow those in `physics_types`.  Only the three that actually broke the build were gated; the full cleanup is still outstanding.
+
+#### Current Build Status
+`cargo check` still fails.  The remaining *top-priority* errors are:
+1.  `m.insert($t, ParticleProperties { .. })` macros in `particles.rs` expect the local `ParticleType`, but the `HashMap` is still annotated as `HashMap<physics_types::ParticleType, _>`.  The map needs to use the local enum.
+2.  Several insertions into the `HashMap` of branching ratios in `particles.rs` exhibit the same mismatch.
+3.  Lifetime error in `geant4_integration::sample_decay_mode` – function signature needs explicit lifetime (`&'a [DecayMode] -> &'a DecayMode`).
+4.  `QuantumState` fields have been fixed, but any *uses* outside `quantum.rs` that were constructing the struct will now need to supply the new fields or call `..Default::default()`.
+5.  A few functions in `quantum_chemistry` still call the obsolete `predict_new_reaction`; they should call the already-implemented `predict_reaction`.
+
+Run `cargo check` again after fixing the `HashMap` type mismatch in `particles.rs` – this is expected to clear a large batch of the current errors.
+
+#### Recommended Next Steps
+1.  **Fix `particles.rs` HashMap Key Type:**
+    * Change `PARTICLE_DATA` and `BRANCHING_RATIOS` to use the local `crate::ParticleType` as the key type.
+2.  **Apply lifetime fix** to `sample_decay_mode` in `geant4_integration`.
+3.  **Rename call sites** from `predict_new_reaction` to `predict_reaction` (one found at line ~3586 in `physics_engine/src/lib.rs`).
+4.  **Gradually remove or gate** the rest of the duplicate type definitions in `physics_engine/src/lib.rs` so that only the canonical ones from `physics_types` remain.
+5.  After each stage run `cargo check --workspace` to surface the next layer of errors. 

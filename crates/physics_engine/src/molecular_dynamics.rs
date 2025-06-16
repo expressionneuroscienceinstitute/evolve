@@ -130,5 +130,10 @@ pub fn step_molecular_dynamics(
 
 /// Calculates the Lennard-Jones potential between two particles.
 pub fn lennard_jones_potential(r: f64, epsilon: f64, sigma: f64) -> f64 {
-    // ... existing code ...
+    if r == 0.0 {
+        return f64::INFINITY;
+    }
+
+    let sr6 = (sigma / r).powi(6);
+    4.0 * epsilon * (sr6.powi(2) - sr6)
 }

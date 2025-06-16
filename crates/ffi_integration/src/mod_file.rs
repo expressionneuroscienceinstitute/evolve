@@ -47,7 +47,7 @@ pub fn check_library_availability() -> LibraryStatus {
 }
 
 /// Status of available scientific libraries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LibraryStatus {
     pub geant4_available: bool,
     pub lammps_available: bool,

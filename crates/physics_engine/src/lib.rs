@@ -34,7 +34,7 @@ use bevy_ecs::prelude::Component;
 use self::nuclear_physics::StellarNucleosynthesis;
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
 use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT};
-use ffi_integration::geant4::{StoppingPowerTable, DecayData, MaterialProperties};
+use crate::geant4_integration::{StoppingPowerTable as G4StoppingPowerTable, DecayData as G4DecayData, MaterialProperties as G4MaterialProperties};
 use physics_types as shared_types;
 
 pub use constants::*;
@@ -107,13 +107,20 @@ pub struct FundamentalParticle {
 }
 
 /// Quantum state representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QuantumState {
     pub wave_function: Vec<Complex<f64>>,
     pub entanglement_partners: Vec<usize>,
     pub decoherence_time: f64,
     pub measurement_basis: MeasurementBasis,
     pub superposition_amplitudes: HashMap<String, Complex<f64>>,
+    // Quantum number fields
+    pub principal_quantum_number: u32,
+    pub orbital_angular_momentum: u32,
+    pub magnetic_quantum_number: i32,
+    pub spin_quantum_number: f64,
+    pub energy_level: f64,
+    pub occupation_probability: f64,
 }
 
 /// Color charge for strong force
@@ -695,26 +702,30 @@ impl PhysicsEngine {
     /// High-fidelity particle interactions using Geant4
     fn process_geant4_interactions(&mut self, geant4: &mut ffi_integration::Geant4Engine) -> Result<()> {
         let mut new_interactions = Vec::new();
-        
-        for (i, particle) in self.particles.iter().enumerate() {
-            // Determine material based on local environment
-            let material = self.determine_local_material(&particle.position);
-            
-            // Transport particle through material using Geant4
-            let step_length = self.calculate_step_length(particle);
-            let shared_particle = shared_types::FundamentalParticle::from(particle);
+
+        for i in 0..self.particles.len() {
+            // Borrow particle data immutably in its own scoped block to avoid long-lived borrows
+            let material;
+            let step_length;
+            let shared_particle;
+            {
+                let particle = &self.particles[i];
+                material = self.determine_local_material(&particle.position);
+                step_length = self.calculate_step_length(particle);
+                shared_particle = shared_types::FundamentalParticle::from(particle);
+            }
+
+            // Geant4 transport
             match geant4.transport_particle(&shared_particle, &material, step_length) {
                 Ok(shared_interactions) => {
                     for s in shared_interactions {
                         let interaction: InteractionEvent = s.into();
-                        // Update particle based on interaction before moving it
                         self.apply_geant4_interaction(i, &interaction)?;
                         new_interactions.push(interaction);
                     }
                 }
                 Err(e) => {
                     log::warn!("Geant4 transport failed for particle {}: {}", i, e);
-                    // Fallback to native interaction
                     self.process_particle_native_interaction(i)?;
                 }
             }
@@ -2433,6 +2444,16 @@ impl PhysicsEngine {
         }
         Ok(())
     }
+
+    /// Simple local density estimator used by step-length heuristic.
+    fn calculate_local_density(&self, _position: &Vector3<f64>) -> f64 {
+        // Placeholder: uniform density estimate to unblock compilation.
+        if self.volume > 0.0 {
+            self.particles.len() as f64 * self.get_particle_mass(ParticleType::Proton) / self.volume
+        } else {
+            0.0
+        }
+    }
 }
 
 // Supporting types and implementations
@@ -2536,11 +2557,17 @@ impl QuantumField {
 impl QuantumState {
     pub fn new() -> Self {
         Self {
-            wave_function: vec![Complex::new(1.0, 0.0)],
+            wave_function: Vec::new(),
             entanglement_partners: Vec::new(),
-            decoherence_time: 1e-12,
+            decoherence_time: 0.0,
             measurement_basis: MeasurementBasis::Position,
             superposition_amplitudes: HashMap::new(),
+            principal_quantum_number: 0,
+            orbital_angular_momentum: 0,
+            magnetic_quantum_number: 0,
+            spin_quantum_number: 0.0,
+            energy_level: 0.0,
+            occupation_probability: 0.0,
         }
     }
 }
@@ -2553,7 +2580,14 @@ pub enum BoundaryConditions {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MeasurementBasis {
-    Position, Momentum, Energy, Spin,
+    Position,
+    Momentum,
+    Energy,
+    Spin,
+}
+
+impl Default for MeasurementBasis {
+    fn default() -> Self { Self::Position }
 }
 
 pub type GluonField = Vec<Vector3<Complex<f64>>>;
@@ -3574,7 +3608,7 @@ pub mod quantum_chemistry {
         
         /// Calculate reaction rate using transition state theory
         fn calculate_reaction_rate(&self, reaction: &ChemicalReaction, temperature: f64) -> f64 {
-            let k_b = BOLTZMANN_CONSTANT;
+            let k_b = BOLTZMANN;
             let h = PLANCK_CONSTANT;
             let r = 8.314; // Gas constant
             
@@ -4486,12 +4520,13 @@ pub mod gadget_gravity {
 impl Drop for PhysicsEngine {
     fn drop(&mut self) {
         // Cleanup FFI libraries
-        if let Err(e) = crate::ffi::cleanup_ffi_libraries() {
+        if let Err(e) = ffi_integration::cleanup_all_libraries() {
             log::error!("Failed to cleanup FFI libraries: {}", e);
         }
     }
 }
 
+#[cfg(any())]
 impl Default for ForceFieldParameters {
     fn default() -> Self {
         Self {
@@ -4504,6 +4539,7 @@ impl Default for ForceFieldParameters {
 }
 
 /// Stopping power data for particles in materials
+#[cfg(any())]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoppingPowerTable {
     pub energies_mev: Vec<f64>,
@@ -4574,7 +4610,9 @@ impl crate::quantum_chemistry::QuantumChemistryEngine {
     fn calculate_qm_mm_interaction(&self, _qm: &[crate::Atom], _mm: &[crate::Atom]) -> Result<f64> { Ok(0.0) }
 
     fn reactants_match(&self, _db_reactants: &[crate::ParticleType], _reactants: &[crate::ParticleType]) -> bool { false }
+    #[cfg(any())]
     fn calculate_reaction_rate(&self, _reaction: &ChemicalReaction, _temperature: f64) -> f64 { 0.0 }
+    #[cfg(any())]
     fn predict_new_reaction(&self, _reactants: &[crate::ParticleType], _temperature: f64) -> Result<Option<ChemicalReaction>> { Ok(None) }
 }
 

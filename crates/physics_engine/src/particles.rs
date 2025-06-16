@@ -6,7 +6,8 @@ use nalgebra::Vector3;
 use anyhow::Result;
 
 use crate::constants::*;
-use physics_types::*;
+use crate::{FundamentalParticle, QuantumState};
+use crate::ParticleType::{WBoson, WBosonMinus, ZBoson};
 
 /// Initialise particle constants - PDG constants and Standard Model parameters are already loaded
 pub fn init_particles() -> Result<()> {
@@ -26,7 +27,7 @@ pub struct ParticleProperties {
 
 /// Lookup table keyed by `ParticleType`
 pub static PARTICLE_DATA: Lazy<HashMap<ParticleType, ParticleProperties>> = Lazy::new(|| {
-    use ParticleType::*;
+    use crate::ParticleType::*;
     let mut m = HashMap::new();
 
     // Helper macro to shorten inserts
@@ -123,7 +124,7 @@ pub static CKM_MATRIX: [[f64; 3]; 3] = [
 
 /// Dominant branching ratios for selected unstable particles (<channel list>, BR)
 pub static BRANCHING_RATIOS: Lazy<HashMap<ParticleType, Vec<(Vec<ParticleType>, f64)>>> = Lazy::new(|| {
-    use ParticleType::*;
+    use crate::ParticleType::*;
     let mut h = HashMap::new();
 
     // μ⁻ → e⁻ ν̄_e ν_μ (≈ 100 %)

@@ -310,8 +310,17 @@ pub fn elastic_collision_cross_section(atom1: &Atom, atom2: &Atom) -> f64 {
 
 /// Calculates the binding energy of an electron in a hydrogen-like atom.
 pub fn hydrogen_like_binding_energy(z: u32, n: u32) -> f64 {
-    const RYDBERG_EV: f64 = 13.6;
-    // ... existing code ...
+    // Using the Bohr model: E_n = - Z^2 * R_H / n^2
+    // where R_H ≈ 13.6 eV is the Rydberg constant for hydrogen.
+    const RYDBERG_EV: f64 = 13.605693122994; // more precise value
+
+    if n == 0 {
+        return 0.0; // avoid division by zero; caller should ensure n>=1
+    }
+
+    let z_f = z as f64;
+    let n_f = n as f64;
+    -RYDBERG_EV * z_f.powi(2) / n_f.powi(2)
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ use nalgebra::{Vector3, Complex};
 include!(concat!(env!("OUT_DIR"), "/geant4_bindings.rs"));
 
 /// Safe Rust wrapper around Geant4 functionality
+#[derive(Debug)]
 pub struct Geant4Engine {
     detector_construction: *mut c_void,
     physics_list: *mut c_void,

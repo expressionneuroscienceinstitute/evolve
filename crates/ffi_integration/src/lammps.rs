@@ -14,6 +14,7 @@ use nalgebra::Vector3;
 include!(concat!(env!("OUT_DIR"), "/lammps_bindings.rs"));
 
 /// Safe Rust wrapper around LAMMPS functionality
+#[derive(Debug)]
 pub struct LammpsEngine {
     lammps_handle: *mut c_void,
     natoms: c_int,

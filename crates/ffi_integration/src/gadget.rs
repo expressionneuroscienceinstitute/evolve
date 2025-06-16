@@ -12,6 +12,7 @@ use nalgebra::Vector3;
 include!(concat!(env!("OUT_DIR"), "/gadget_bindings.rs"));
 
 /// Safe Rust wrapper around GADGET functionality
+#[derive(Debug)]
 pub struct GadgetEngine {
     n_particles: c_int,
     box_size: f64,

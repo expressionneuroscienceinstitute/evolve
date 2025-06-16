@@ -242,6 +242,7 @@ pub fn pair_produce(
         energy: electron_energy,
         mass: ELECTRON_MASS,
         electric_charge: -ELEMENTARY_CHARGE,
+        charge: -1.0,
         // Spin vector as complex components (helicity approximation, magnitude ħ/2).
         spin: Vector3::new(
             Complex::new(electron_dir.x * 0.5, 0.0),
@@ -263,6 +264,7 @@ pub fn pair_produce(
         energy: positron_energy,
         mass: ELECTRON_MASS,
         electric_charge: ELEMENTARY_CHARGE,
+        charge: 1.0,
         spin: Vector3::new(
             Complex::new(positron_dir.x * 0.5, 0.0),
             Complex::new(positron_dir.y * 0.5, 0.0),

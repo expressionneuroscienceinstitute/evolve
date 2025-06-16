@@ -254,5 +254,24 @@ pub fn update_emergent_properties(monitor: &mut EmergenceMonitor, particles: &[P
 
 /// Calculates the Shannon entropy of a set of states.
 pub fn shannon_entropy(states: &[PhysicsState]) -> f64 {
-    // ... existing code ...
+    // A placeholder implementation that returns the Shannon entropy of the
+    // distribution of particle masses. For an empty slice the entropy is 0.
+    if states.is_empty() {
+        return 0.0;
+    }
+
+    // Build a simple histogram over mass values rounded to two significant figures.
+    let mut counts: HashMap<u64, usize> = HashMap::new();
+    for st in states {
+        let key = (st.mass * 100.0).round() as u64; // coarse binning
+        *counts.entry(key).or_insert(0) += 1;
+    }
+
+    let total = states.len() as f64;
+    counts.values()
+        .map(|&c| {
+            let p = c as f64 / total;
+            -p * p.ln()
+        })
+        .sum()
 }

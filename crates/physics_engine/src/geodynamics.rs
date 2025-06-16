@@ -3,8 +3,10 @@
 //! Implements viscoelastic mantle convection, plate motion via force-balance,
 //! and orogeny & subduction loops
 
-use anyhow::Result;
 use nalgebra::Vector3;
+use crate::*;
+use anyhow::Result;
+
 use crate::{PhysicsState, PhysicsConstants};
 
 /// Geological plate information

@@ -3,7 +3,11 @@
 //! This module provides structures and functions for modeling atoms, including their
 //! electronic structure, ionization, and interaction with photons.
 
+//! Routines for atomic-level phenomena.
+
 use anyhow::{anyhow, bail, Result};
+use nalgebra::{Vector3, Matrix3};
+use crate::*;
 
 use crate::constants::RYDBERG_ENERGY;
 use crate::Electron;
@@ -302,6 +306,12 @@ pub fn elastic_collision_cross_section(atom1: &Atom, atom2: &Atom) -> f64 {
     let r1 = atom1.atomic_radius();
     let r2 = atom2.atomic_radius();
     std::f64::consts::PI * (r1 + r2).powi(2)
+}
+
+/// Calculates the binding energy of an electron in a hydrogen-like atom.
+pub fn hydrogen_like_binding_energy(z: u32, n: u32) -> f64 {
+    const RYDBERG_EV: f64 = 13.6;
+    // ... existing code ...
 }
 
 #[cfg(test)]

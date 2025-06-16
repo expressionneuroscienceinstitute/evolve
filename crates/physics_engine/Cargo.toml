@@ -20,9 +20,13 @@ bevy_ecs = { workspace = true, optional = true }
 once_cell = { workspace = true }
 log = { workspace = true }
 endf_parser = "0.2.0"
+physics_types = { path = "../physics_types" }
+ffi_integration = { path = "../ffi_integration" }
 
 [features]
 default = ["gpu-acceleration", "bevy"]
 gpu-acceleration = []
 simd = []
 bevy = ["dep:bevy_ecs"]
+
+[build-dependencies]

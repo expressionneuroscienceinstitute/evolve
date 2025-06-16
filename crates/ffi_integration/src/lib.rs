@@ -7,7 +7,6 @@
 //! - GADGET: Cosmological N-body simulation
 //! - ENDF: Nuclear data library
 
-pub mod types;
 pub mod geant4;
 pub mod lammps; 
 pub mod gadget;
@@ -17,6 +16,7 @@ pub mod mod_file;
 pub use mod_file::*;
 
 use anyhow::Result;
+use physics_types::{ParticleTransport, NuclearCrossSections};
 
 /// Initialize all available FFI libraries
 pub fn initialize_all_libraries() -> Result<()> {

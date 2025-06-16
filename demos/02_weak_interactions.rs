@@ -11,6 +11,7 @@ use nalgebra::Vector3;
 use anyhow::Result;
 use std::collections::HashMap;
 use rand::{thread_rng, Rng};
+use std::f64::Complex;
 
 fn main() -> Result<()> {
     println!("=== Universe Evolution Simulator: Weak Interactions Demo ===");
@@ -124,14 +125,14 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
                 rng.gen_range(-1e-12..1e-12),
             ),
             momentum: Vector3::zeros(),
-            spin: Vector3::zeros(),
+            spin: Vector3::new(Complex::new(0.5, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
             color_charge: None,
             electric_charge: 0.0,
-            mass: engine.get_particle_mass(ParticleType::Neutron),
+            mass: 939.565,
             energy: 0.0,
             creation_time: engine.current_time,
             decay_time: Some(engine.current_time + sample_exponential_decay(interactions::neutron_lifetime(), &mut rng)),
-            quantum_state: QuantumState::new(),
+            quantum_state: QuantumState::default(),
             interaction_history: Vec::new(),
         };
         engine.particles.push(neutron);
@@ -154,11 +155,11 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
             spin: Vector3::zeros(),
             color_charge: None,
             electric_charge: -1.602176634e-19,
-            mass: engine.get_particle_mass(ParticleType::Electron),
+            mass: 5.48579909e-4,
             energy: 0.0,
             creation_time: engine.current_time,
             decay_time: None,
-            quantum_state: QuantumState::new(),
+            quantum_state: QuantumState::default(),
             interaction_history: Vec::new(),
         };
         engine.particles.push(electron);
@@ -185,7 +186,7 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
             energy: 0.0,
             creation_time: engine.current_time,
             decay_time: None,
-            quantum_state: QuantumState::new(),
+            quantum_state: QuantumState::default(),
             interaction_history: Vec::new(),
         };
         engine.particles.push(neutrino);

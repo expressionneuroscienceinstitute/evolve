@@ -4,9 +4,8 @@
 //! This provides access to experimental nuclear cross-sections and reaction data.
 
 use anyhow::{Result, anyhow};
-use std::ffi::{CString, CStr};
-use std::os::raw::{c_char, c_double, c_int, c_void};
-use std::ptr;
+use std::ffi::CString;
+use std::os::raw::{c_char, c_double, c_int};
 use std::collections::HashMap;
 
 // Include generated bindings

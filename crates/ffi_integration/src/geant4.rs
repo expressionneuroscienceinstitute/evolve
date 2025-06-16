@@ -3,12 +3,12 @@
 //! High-fidelity particle physics using the actual Geant4 Monte Carlo toolkit.
 //! This provides the highest accuracy possible for particle interactions, transport, and detector simulation.
 
-use crate::types::{FundamentalParticle, ParticleType, InteractionEvent, InteractionType};
+use physics_types::{FundamentalParticle, ParticleType, InteractionEvent, InteractionType, QuantumState};
 use anyhow::{Result, anyhow};
-use std::ffi::{CString, CStr};
+use std::ffi::CString;
 use std::os::raw::{c_char, c_double, c_int, c_void};
 use std::ptr;
-use nalgebra::Vector3;
+use nalgebra::{Vector3, Complex};
 
 // Include generated bindings
 #[cfg(feature = "geant4")]
@@ -134,10 +134,10 @@ impl Geant4Engine {
                 let event = InteractionEvent {
                     timestamp: 0.0, // Would need to track simulation time
                     interaction_type: process_type_to_interaction(interaction_data.process_type),
-                    participants: vec![0], // Would need particle tracking
+                    particles_in: vec![particle.clone()],
                     energy_exchanged: interaction_data.energy_deposited * 1.602e-13, // MeV to J
                     momentum_transfer: Vector3::zeros(), // Would extract from secondaries
-                    products: extract_secondary_particles(&interaction_data),
+                    particles_out: extract_secondary_particles(&interaction_data),
                     cross_section: 0.0, // Would calculate from process
                 };
                 
@@ -217,7 +217,7 @@ impl Geant4Engine {
                 let product = FundamentalParticle {
                     particle_type: pdg_to_particle_type(product_data.pdg_code),
                     mass: get_pdg_mass(product_data.pdg_code),
-                    charge: get_pdg_charge(product_data.pdg_code),
+                    electric_charge: get_pdg_charge(product_data.pdg_code),
                     energy: product_data.energy * 1.602e-13, // MeV to J
                     position: Vector3::new(
                         product_data.position[0] / 100.0, // cm to m
@@ -229,9 +229,17 @@ impl Geant4Engine {
                         product_data.momentum[1],
                         product_data.momentum[2],
                     ).normalize() * (2.0 * product_data.energy * 1.602e-13 / get_pdg_mass(product_data.pdg_code)).sqrt(),
-                    spin: Vector3::zeros(),
-                    creation_time: particle.creation_time,
-                    last_interaction_time: particle.last_interaction_time,
+                    spin: Vector3::new(Complex::new(0.0, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
+                    color_charge: None,
+                    creation_time: 0.0,
+                    decay_time: None,
+                    quantum_state: QuantumState::default(),
+                    interaction_history: Vec::new(),
+                    momentum: Vector3::new(
+                        product_data.momentum[0],
+                        product_data.momentum[1],
+                        product_data.momentum[2],
+                    )
                 };
                 
                 products.push(product);
@@ -302,7 +310,6 @@ fn particle_type_to_pdg(particle_type: &ParticleType) -> c_int {
         ParticleType::Electron => 11,
         ParticleType::Positron => -11,
         ParticleType::Muon => 13,
-        ParticleType::AntiMuon => -13,
         ParticleType::ElectronNeutrino => 12,
         ParticleType::ElectronAntiNeutrino => -12,
         ParticleType::MuonNeutrino => 14,
@@ -312,11 +319,11 @@ fn particle_type_to_pdg(particle_type: &ParticleType) -> c_int {
         ParticleType::Photon => 22,
         ParticleType::Proton => 2212,
         ParticleType::Neutron => 2112,
-        ParticleType::PiPlus => 211,
-        ParticleType::PiMinus => -211,
-        ParticleType::PiZero => 111,
-        ParticleType::Kaon => 321,
-        ParticleType::AntiKaon => -321,
+        ParticleType::PionPlus => 211,
+        ParticleType::PionMinus => -211,
+        ParticleType::PionZero => 111,
+        ParticleType::KaonPlus => 321,
+        ParticleType::KaonMinus => -321,
         _ => 0, // Unknown
     }
 }
@@ -326,7 +333,6 @@ fn pdg_to_particle_type(pdg_code: c_int) -> ParticleType {
         11 => ParticleType::Electron,
         -11 => ParticleType::Positron,
         13 => ParticleType::Muon,
-        -13 => ParticleType::AntiMuon,
         12 => ParticleType::ElectronNeutrino,
         -12 => ParticleType::ElectronAntiNeutrino,
         14 => ParticleType::MuonNeutrino,
@@ -336,12 +342,12 @@ fn pdg_to_particle_type(pdg_code: c_int) -> ParticleType {
         22 => ParticleType::Photon,
         2212 => ParticleType::Proton,
         2112 => ParticleType::Neutron,
-        211 => ParticleType::PiPlus,
-        -211 => ParticleType::PiMinus,
-        111 => ParticleType::PiZero,
-        321 => ParticleType::Kaon,
-        -321 => ParticleType::AntiKaon,
-        _ => ParticleType::Unknown,
+        211 => ParticleType::PionPlus,
+        -211 => ParticleType::PionMinus,
+        111 => ParticleType::PionZero,
+        321 => ParticleType::KaonPlus,
+        -321 => ParticleType::KaonMinus,
+        _ => ParticleType::DarkMatter, // Default fallback
     }
 }
 
@@ -350,7 +356,6 @@ fn particle_type_to_name(particle_type: &ParticleType) -> &'static str {
         ParticleType::Electron => "e-",
         ParticleType::Positron => "e+",
         ParticleType::Muon => "mu-",
-        ParticleType::AntiMuon => "mu+",
         ParticleType::ElectronNeutrino => "nu_e",
         ParticleType::ElectronAntiNeutrino => "anti_nu_e",
         ParticleType::MuonNeutrino => "nu_mu",
@@ -360,11 +365,11 @@ fn particle_type_to_name(particle_type: &ParticleType) -> &'static str {
         ParticleType::Photon => "gamma",
         ParticleType::Proton => "proton",
         ParticleType::Neutron => "neutron",
-        ParticleType::PiPlus => "pi+",
-        ParticleType::PiMinus => "pi-",
-        ParticleType::PiZero => "pi0",
-        ParticleType::Kaon => "kaon+",
-        ParticleType::AntiKaon => "kaon-",
+        ParticleType::PionPlus => "pi+",
+        ParticleType::PionMinus => "pi-",
+        ParticleType::PionZero => "pi0",
+        ParticleType::KaonPlus => "kaon+",
+        ParticleType::KaonMinus => "kaon-",
         _ => "unknown",
     }
 }
@@ -381,11 +386,14 @@ fn get_pdg_mass(pdg_code: c_int) -> f64 {
 }
 
 fn get_pdg_charge(pdg_code: c_int) -> f64 {
+    // A more complete mapping would be needed
     match pdg_code {
-        11 | 13 => -1.602176634e-19,   // Negative charge
-        -11 | -13 => 1.602176634e-19,  // Positive charge
-        2212 => 1.602176634e-19,       // Proton
-        _ => 0.0,                      // Neutral
+        22 => 0.0,    // Photon
+        11 => -1.0,   // Electron
+        -11 => 1.0,   // Positron
+        2212 => 1.0,  // Proton
+        2112 => 0.0,  // Neutron
+        _ => 0.0,
     }
 }
 
@@ -470,23 +478,37 @@ struct G4ParticleData {
 // Helper function implementations
 fn process_type_to_interaction(process_type: c_int) -> InteractionType {
     match process_type {
-        1 => InteractionType::ElectromagneticScattering,
-        2 => InteractionType::WeakDecay,
-        3 => InteractionType::StrongInteraction,
-        4 => InteractionType::PairProduction,
-        5 => InteractionType::Annihilation,
+        1 => InteractionType::Elastic,
+        2 => InteractionType::Inelastic,
+        3 => InteractionType::Fission,
+        4 => InteractionType::Fusion,
         _ => InteractionType::ElectromagneticScattering,
     }
 }
 
-fn extract_secondary_particles(data: &G4InteractionData) -> Vec<ParticleType> {
+fn extract_secondary_particles(data: &G4InteractionData) -> Vec<FundamentalParticle> {
     let mut particles = Vec::new();
-    if !data.secondary_particles.is_null() {
-        unsafe {
-            for i in 0..data.n_secondaries {
-                let pdg_code = *data.secondary_particles.add(i as usize);
-                particles.push(pdg_to_particle_type(pdg_code));
-            }
+    if data.n_secondaries > 0 {
+        for i in 0..data.n_secondaries as isize {
+            let pdg_code = unsafe { *data.secondary_particles.offset(i) };
+            let energy_mev = unsafe { *data.secondary_energies.offset(i) };
+            let particle_type = pdg_to_particle_type(pdg_code);
+
+            particles.push(FundamentalParticle {
+                particle_type,
+                position: Vector3::zeros(),
+                momentum: Vector3::zeros(),
+                velocity: Vector3::zeros(),
+                spin: Vector3::new(Complex::new(0.0, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
+                color_charge: None,
+                electric_charge: get_pdg_charge(pdg_code),
+                mass: get_pdg_mass(pdg_code),
+                energy: energy_mev * 1.602e-13,
+                creation_time: 0.0,
+                decay_time: None,
+                quantum_state: QuantumState::default(),
+                interaction_history: Vec::new(),
+            });
         }
     }
     particles

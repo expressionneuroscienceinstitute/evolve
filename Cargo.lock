@@ -793,7 +793,9 @@ dependencies = [
  "log",
  "nalgebra",
  "num_cpus",
+ "physics_types",
  "pkg-config",
+ "serde",
 ]
 
 [[package]]
@@ -1864,17 +1866,30 @@ dependencies = [
  "approx",
  "bevy_ecs",
  "endf_parser",
+ "ffi_integration",
  "log",
  "nalgebra",
  "ndarray",
  "once_cell",
  "ordered-float",
+ "physics_types",
  "rand",
  "rand_chacha",
  "rand_distr",
  "rayon",
  "serde",
  "serde_arrays",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "physics_types"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "nalgebra",
+ "num-complex",
+ "serde",
  "thiserror 1.0.69",
 ]
 

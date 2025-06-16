@@ -4,8 +4,8 @@
 //! This provides access to decades of MD development and validation.
 
 use anyhow::{Result, anyhow};
-use std::ffi::{CString, CStr};
-use std::os::raw::{c_char, c_double, c_int, c_void};
+use std::ffi::CString;
+use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use nalgebra::Vector3;
 
@@ -76,7 +76,7 @@ impl LammpsEngine {
             lammps_command(self.lammps_handle, atom_style_cmd.as_ptr());
             
             // Create atoms
-            for (i, (pos, vel, mass, atom_type)) in atoms.iter().enumerate() {
+            for (_i, (pos, _vel, _mass, atom_type)) in atoms.iter().enumerate() {
                 let create_atom_cmd = CString::new(format!(
                     "create_atoms {} single {} {} {}",
                     atom_type, pos.x, pos.y, pos.z

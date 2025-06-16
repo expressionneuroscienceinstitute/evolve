@@ -5,7 +5,10 @@
 //! such as temperature and pressure, are not fundamental to individual particles but
 //! arise from their statistical mechanics.
 
+use nalgebra::Vector3;
+use crate::*;
 use anyhow::Result;
+use std::collections::HashMap;
 
 use crate::{constants::BOLTZMANN, PhysicsState};
 // use crate::particles::Particle;
@@ -247,4 +250,9 @@ pub fn update_emergent_properties(monitor: &mut EmergenceMonitor, particles: &[P
         monitor.entropy.as_joules_per_kelvin()
     );
     Ok(())
+}
+
+/// Calculates the Shannon entropy of a set of states.
+pub fn shannon_entropy(states: &[PhysicsState]) -> f64 {
+    // ... existing code ...
 }

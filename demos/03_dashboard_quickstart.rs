@@ -2,6 +2,8 @@
 use physics_engine::{PhysicsEngine, ParticleType, FundamentalParticle, QuantumState};
 use nalgebra::Vector3;
 use anyhow::Result;
+use std::f64::consts::PI;
+use std::f64::Complex;
 
 fn main() -> Result<()> {
     let mut engine = PhysicsEngine::new(1e-19)?;
@@ -29,14 +31,14 @@ fn simple_particle(ptype: ParticleType, charge: f64) -> FundamentalParticle {
         particle_type: ptype,
         position: Vector3::zeros(),
         momentum: Vector3::zeros(),
-        spin: Vector3::zeros(),
+        spin: Vector3::new(Complex::new(0.0, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
         color_charge: None,
         electric_charge: charge,
-        mass: 0.0,
+        mass: 938.272,
         energy: 0.0,
         creation_time: 0.0,
         decay_time: None,
-        quantum_state: QuantumState::new(),
+        quantum_state: QuantumState::default(),
         interaction_history: Vec::new(),
     }
 }

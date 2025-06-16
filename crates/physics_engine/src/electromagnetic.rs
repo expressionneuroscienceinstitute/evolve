@@ -4,6 +4,7 @@
 //! electric and magnetic fields with Coulomb and Lorentz forces
 
 use nalgebra::Vector3;
+use crate::*;
 use anyhow::Result;
 use crate::{PhysicsState, PhysicsConstants};
 

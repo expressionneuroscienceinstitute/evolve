@@ -249,24 +249,32 @@ pub fn pair_produce(
             Complex::new(electron_dir.z * 0.5, 0.0),
         ),
         color_charge: None,
-        creation_time: photon.creation_time, // Will be updated by engine
-        decay_time: None,
-        quantum_state: crate::QuantumState::new(),
+        creation_time: photon.creation_time,
+        decay_time: None, // Stable
+        quantum_state: Default::default(),
         interaction_history: vec![],
-        velocity: electron_dir * electron_momentum_mag / ELECTRON_MASS,
-        charge: -ELEMENTARY_CHARGE,
+        velocity: electron_dir * (electron_ke * 2.0 / ELECTRON_MASS).sqrt(),
     };
     
-    let mut positron = electron.clone();
-    positron.particle_type = ParticleType::Positron;
-    positron.momentum = positron_dir * positron_momentum_mag;
-    positron.energy = positron_energy;
-    positron.electric_charge = ELEMENTARY_CHARGE;
-    positron.spin = Vector3::new(
-        Complex::new(positron_dir.x * 0.5, 0.0),
-        Complex::new(positron_dir.y * 0.5, 0.0),
-        Complex::new(positron_dir.z * 0.5, 0.0),
-    );
+    let positron = FundamentalParticle {
+        particle_type: ParticleType::Positron,
+        position: photon.position,
+        momentum: positron_dir * positron_momentum_mag,
+        energy: positron_energy,
+        mass: ELECTRON_MASS,
+        electric_charge: ELEMENTARY_CHARGE,
+        spin: Vector3::new(
+            Complex::new(positron_dir.x * 0.5, 0.0),
+            Complex::new(positron_dir.y * 0.5, 0.0),
+            Complex::new(positron_dir.z * 0.5, 0.0),
+        ),
+        color_charge: None,
+        creation_time: photon.creation_time,
+        decay_time: None, // Stable
+        quantum_state: Default::default(),
+        interaction_history: vec![],
+        velocity: positron_dir * (positron_ke * 2.0 / ELECTRON_MASS).sqrt(),
+    };
     
     Some((electron, positron))
 }

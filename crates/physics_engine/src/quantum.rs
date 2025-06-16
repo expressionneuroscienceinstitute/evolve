@@ -3,20 +3,10 @@
 //! Implements tight-binding valence model for electron shells
 //! and stochastic Pauli Monte Carlo for new compounds
 
-use anyhow::Result;
+use nalgebra::{Vector3, Complex};
+use crate::*;
 use rand::{Rng, thread_rng};
-use crate::{PhysicsState, PhysicsConstants};
-
-/// Quantum state information
-#[derive(Debug, Clone)]
-pub struct QuantumState {
-    pub principal_quantum_number: u32,     // n
-    pub orbital_angular_momentum: u32,     // l
-    pub magnetic_quantum_number: i32,      // m_l
-    pub spin_quantum_number: f64,          // m_s
-    pub energy_level: f64,                 // eV
-    pub occupation_probability: f64,       // 0.0 to 1.0
-}
+use anyhow::Result;
 
 /// Quantum mechanics solver
 pub struct QuantumSolver {

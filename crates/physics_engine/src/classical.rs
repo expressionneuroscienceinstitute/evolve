@@ -2,7 +2,8 @@
 //! 
 //! Implements leap-frog integration with relativistic corrections when v ≥ 0.1c
 
-use nalgebra::Vector3;
+use nalgebra::{Vector3, Matrix3};
+use crate::*;
 use anyhow::Result;
 use crate::{PhysicsState, PhysicsConstants};
 

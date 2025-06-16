@@ -7,6 +7,7 @@ members = [
     "crates/networking",
     "crates/diagnostics",
     "crates/ffi_integration",
+    "crates/physics_types",
     "demos",
     "viz_web"
 ]
@@ -29,6 +30,7 @@ rayon = "1.7"
 
 # Physics and math
 nalgebra = { version = "0.32", features = ["serde-serialize"] }
+num-complex = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 rand_distr = "0.4"
 rand_chacha = "0.3"

@@ -4,9 +4,7 @@
 //! This provides access to the same algorithms used in the Millennium Simulation.
 
 use anyhow::{Result, anyhow};
-use std::ffi::{CString, CStr};
-use std::os::raw::{c_char, c_double, c_int, c_void};
-use std::ptr;
+use std::os::raw::{c_double, c_int};
 use nalgebra::Vector3;
 
 // Include generated bindings

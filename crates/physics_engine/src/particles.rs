@@ -6,8 +6,7 @@ use nalgebra::Vector3;
 use anyhow::Result;
 
 use crate::constants::*;
-use crate::FundamentalParticle;
-use crate::ParticleType;
+use physics_types::*;
 
 /// Initialise particle constants - PDG constants and Standard Model parameters are already loaded
 pub fn init_particles() -> Result<()> {
@@ -109,10 +108,9 @@ pub fn spawn_rest(pt: ParticleType) -> FundamentalParticle {
         energy: 0.0,
         creation_time: 0.0,
         decay_time: None,
-        quantum_state: crate::QuantumState::new(),
+        quantum_state: QuantumState::default(),
         interaction_history: Vec::new(),
         velocity: Vector3::zeros(),
-        charge: props.charge_c,
     }
 }
 

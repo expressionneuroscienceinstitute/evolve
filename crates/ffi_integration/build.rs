@@ -39,7 +39,7 @@ fn build_geant4_bindings() {
         let bindings = bindgen::Builder::default()
             .header("src/ffi/geant4_wrapper.h")
             .clang_arg(format!("-I{}/include/Geant4", geant4_dir))
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
             .expect("Unable to generate Geant4 bindings");
             
@@ -60,7 +60,7 @@ fn build_lammps_bindings() {
         let bindings = bindgen::Builder::default()
             .header("src/ffi/lammps_wrapper.h")
             .clang_arg(format!("-I{}/src", lammps_dir))
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
             .expect("Unable to generate LAMMPS bindings");
             
@@ -97,7 +97,7 @@ fn build_gadget_bindings() {
         let bindings = bindgen::Builder::default()
             .header("src/ffi/gadget_wrapper.h")
             .clang_arg(format!("-I{}", gadget_src))
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
             .expect("Unable to generate GADGET bindings");
             
@@ -116,7 +116,7 @@ fn build_endf_parser() {
         
         let bindings = bindgen::Builder::default()
             .header("src/ffi/endf_wrapper.h")
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
             .expect("Unable to generate ENDF bindings");
             

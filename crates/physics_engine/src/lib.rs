@@ -33,6 +33,9 @@ use bevy_ecs::prelude::Component;
 
 use self::nuclear_physics::StellarNucleosynthesis;
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
+use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT};
+use ffi_integration::geant4::{StoppingPowerTable, DecayData, MaterialProperties};
+use physics_types as shared_types;
 
 pub use constants::*;
 
@@ -144,7 +147,7 @@ pub enum FieldType {
 }
 
 /// Main physics engine for universe simulation
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug)]
 pub struct PhysicsEngine {
     pub particles: Vec<FundamentalParticle>,
     pub quantum_fields: HashMap<FieldType, QuantumField>,
@@ -174,11 +177,10 @@ pub struct PhysicsEngine {
     pub neutron_decay_count: u64, // Track neutron beta decay events
     pub fusion_count: u64, // Track nuclear fusion events
     pub fission_count: u64, // Track nuclear fission events
-    // TODO: Restore FFI support when ffi module is created
-    // pub ffi_available: crate::ffi::LibraryStatus,
-    // pub geant4_engine: Option<ffi::geant4::Geant4Engine>,
-    // pub lammps_engine: Option<ffi::lammps::LammpsEngine>,
-    // pub gadget_engine: Option<ffi::gadget::GadgetEngine>,
+    pub ffi_available: ffi_integration::LibraryStatus,
+    pub geant4_engine: Option<ffi_integration::Geant4Engine>,
+    pub lammps_engine: Option<ffi_integration::LammpsEngine>,
+    pub gadget_engine: Option<ffi_integration::GadgetEngine>,
     pub spatial_grid: SpatialHashGrid,
     pub interaction_history: Vec<InteractionEvent>,
 }
@@ -370,23 +372,10 @@ impl PhysicsEngine {
             neutron_decay_count: 0,
             fusion_count: 0,
             fission_count: 0,
-            // TODO: Restore FFI engines when ffi module exists
-            // ffi_available: ffi_status,
-            // geant4_engine: if ffi_status.geant4_available {
-            //     Some(ffi::geant4::Geant4Engine::new("QBBC")?)
-            // } else {
-            //     None
-            // },
-            // lammps_engine: if ffi_status.lammps_available {
-            //     Some(ffi::lammps::LammpsEngine::new()?)
-            // } else {
-            //     None
-            // },
-            // gadget_engine: if ffi_status.gadget_available {
-            //     Some(ffi::gadget::GadgetEngine::new()?)
-            // } else {
-            //     None
-            // },
+            ffi_available: ffi_integration::check_library_status(),
+            geant4_engine: None,
+            lammps_engine: None,
+            gadget_engine: None,
             spatial_grid: SpatialHashGrid::new(1e-14), // 10 femtometer interaction range
             interaction_history: Vec::new(),
         };
@@ -704,7 +693,7 @@ impl PhysicsEngine {
     }
 
     /// High-fidelity particle interactions using Geant4
-    fn process_geant4_interactions(&mut self, geant4: &mut ffi::geant4::Geant4Engine) -> Result<()> {
+    fn process_geant4_interactions(&mut self, geant4: &mut ffi_integration::Geant4Engine) -> Result<()> {
         let mut new_interactions = Vec::new();
         
         for (i, particle) in self.particles.iter().enumerate() {
@@ -713,12 +702,14 @@ impl PhysicsEngine {
             
             // Transport particle through material using Geant4
             let step_length = self.calculate_step_length(particle);
-            match geant4.transport_particle(particle, &material, step_length) {
-                Ok(interactions) => {
-                    for interaction in interactions {
-                        new_interactions.push(interaction);
-                        // Update particle based on interaction
+            let shared_particle = shared_types::FundamentalParticle::from(particle);
+            match geant4.transport_particle(&shared_particle, &material, step_length) {
+                Ok(shared_interactions) => {
+                    for s in shared_interactions {
+                        let interaction: InteractionEvent = s.into();
+                        // Update particle based on interaction before moving it
                         self.apply_geant4_interaction(i, &interaction)?;
+                        new_interactions.push(interaction);
                     }
                 }
                 Err(e) => {
@@ -760,8 +751,9 @@ impl PhysicsEngine {
         Ok(())
     }
 
-    /// High-fidelity molecular dynamics using LAMMPS
-    fn process_lammps_dynamics(&mut self, lammps: &mut ffi::lammps::LammpsEngine) -> Result<()> {
+    /// High-fidelity molecular dynamics using LAMMPS (requires `lammps` feature)
+    #[cfg(feature = "lammps")]
+    fn process_lammps_dynamics(&mut self, lammps: &mut ffi_integration::LammpsEngine) -> Result<()> {
         // Convert particles to LAMMPS format
         lammps.clear_atoms()?;
         
@@ -792,6 +784,11 @@ impl PhysicsEngine {
         Ok(())
     }
 
+    #[cfg(not(feature = "lammps"))]
+    fn process_lammps_dynamics(&mut self, _lammps: &mut ffi_integration::LammpsEngine) -> Result<()> {
+        anyhow::bail!("LAMMPS support not compiled in")
+    }
+
     /// Process gravitational dynamics using GADGET if available
     pub fn process_gravitational_dynamics(&mut self) -> Result<()> {
         // TODO: Restore when FFI engines are available
@@ -804,24 +801,25 @@ impl PhysicsEngine {
         Ok(())
     }
 
-    /// High-fidelity N-body gravity using GADGET
-    fn process_gadget_gravity(&mut self, gadget: &mut ffi::gadget::GadgetEngine) -> Result<()> {
+    /// High-fidelity N-body gravity using GADGET (requires `gadget` feature)
+    #[cfg(feature = "gadget")]
+    fn process_gadget_gravity(&mut self, gadget: &mut ffi_integration::GadgetEngine) -> Result<()> {
         // Convert particles to GADGET format
         gadget.clear_particles()?;
         
         for particle in &self.particles {
-            gadget.add_particle(ffi::gadget::GadgetParticle {
+            gadget.add_particle(ffi_integration::GadgetParticle {
                 particle_type: match particle.particle_type {
-                    ParticleType::DarkMatter => ffi::gadget::ParticleType::DarkMatter,
-                    ParticleType::Proton | ParticleType::Neutron => ffi::gadget::ParticleType::Gas,
-                    _ => ffi::gadget::ParticleType::Stars,
+                    ParticleType::DarkMatter => ffi_integration::GadgetParticleType::DarkMatter,
+                    ParticleType::Proton | ParticleType::Neutron => ffi_integration::GadgetParticleType::Gas,
+                    _ => ffi_integration::GadgetParticleType::Stars,
                 },
                 mass: particle.mass,
                 position: particle.position,
                 velocity: particle.velocity,
                 acceleration: Vector3::zeros(),
                 gravitational_potential: 0.0,
-                smoothing_length: 1e-15, // 1 fm for nuclear scale
+                softening_length: 1e-15, // 1 fm for nuclear scale
                 density: 1e17, // Nuclear density
                 active: true,
             })?;
@@ -843,6 +841,11 @@ impl PhysicsEngine {
         }
         
                 Ok(())
+    }
+
+    #[cfg(not(feature = "gadget"))]
+    fn process_gadget_gravity(&mut self, _gadget: &mut ffi_integration::GadgetEngine) -> Result<()> {
+        anyhow::bail!("GADGET support not compiled in")
     }
 
     /// Process native particle interactions with spatial optimization (O(N) instead of O(N²))
@@ -3629,7 +3632,7 @@ pub mod geant4_integration {
     use super::*;
     
     /// Particle physics process types (from Geant4)
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub enum PhysicsProcess {
         // Electromagnetic processes
         PhotoElectricEffect,
@@ -4105,7 +4108,7 @@ pub mod geant4_integration {
                 .ok_or_else(|| anyhow::anyhow!("Unknown material: {}", material))?;
             
             let beta = 0.5; // Simplified - would calculate from energy
-            let gamma = 1.0 / (1.0 - beta * beta).sqrt();
+            let gamma = 1.0_f64 / ((1.0_f64 - beta * beta).sqrt());
             
             let k = 0.307; // MeV cm²/g
             let me_c2 = 0.511; // MeV
@@ -4282,60 +4285,6 @@ pub mod geant4_integration {
                 }
             ]
         }
-    }
-}
-
-/// Geant4-style particle physics integration
-/// Based on PDF recommendation to use proven particle interaction libraries
-pub mod geant4_integration {
-    use super::*;
-    
-    /// Particle physics process types (from Geant4)
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-    pub enum PhysicsProcess {
-        // Electromagnetic processes
-        PhotoElectricEffect,
-        ComptonScattering,
-        PairProduction,
-        Bremsstrahlung,
-        Ionization,
-        MultipleScattering,
-        
-        // Hadronic processes
-        HadronElastic,
-        HadronInelastic,
-        NeutronCapture,
-        NeutronFission,
-        
-        // Decay processes
-        RadioactiveDecay,
-        MuonDecay,
-        PionDecay,
-        
-        // High energy processes
-        PhotoNuclear,
-        ElectroNuclear,
-        MuonNuclear,
-    }
-    
-    /// Particle interaction database (Geant4-style)
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct ParticlePhysicsDatabase {
-        pub cross_sections: HashMap<(ParticleType, ParticleType, PhysicsProcess), CrossSectionTable>,
-        pub stopping_powers: HashMap<ParticleType, StoppingPowerTable>,
-        pub decay_data: HashMap<ParticleType, DecayData>,
-        pub material_properties: HashMap<String, MaterialProperties>,
-        pub physics_lists: Vec<PhysicsList>,
-    }
-    
-    /// Cross-section data table with energy dependence
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct CrossSectionTable {
-        pub energies_mev: Vec<f64>,
-        pub cross_sections_barn: Vec<f64>,
-        pub interpolation_method: InterpolationMethod,
-        pub temperature_dependence: Option<TemperatureDependence>,
-        pub source: String, // Reference to experimental data
     }
 }
 
@@ -4534,694 +4483,191 @@ pub mod gadget_gravity {
     }
 }
 
-/// GADGET-style N-body gravity solver
-/// Based on PDF recommendation to use proven cosmological simulation algorithms
-pub mod gadget_gravity {
-    use super::*;
-    
-    /// GADGET-style particle for N-body simulation
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct GadgetParticle {
-        pub id: usize,
-        pub particle_type: GadgetParticleType,
-        pub position: Vector3<f64>,
-        pub velocity: Vector3<f64>,
-        pub mass: f64,
-        pub acceleration: Vector3<f64>,
-        pub gravitational_potential: f64,
-        pub softening_length: f64,
-        pub time_step: f64,
-        pub active: bool,
-    }
-    
-    /// Particle types in GADGET-style simulation
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-    pub enum GadgetParticleType {
-        DarkMatter,
-        Stars,
-        Gas,
-        BlackHole,
-        Boundary,
-    }
-    
-    /// GADGET-style tree node for hierarchical force calculation
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct TreeNode {
-        pub center_of_mass: Vector3<f64>,
-        pub total_mass: f64,
-        pub geometric_center: Vector3<f64>,
-        pub size: f64,
-        pub children: Vec<usize>,
-        pub particle_indices: Vec<usize>,
-        pub is_leaf: bool,
-        pub opening_angle: f64,
-        pub multipole_moments: MultipoleExpansion,
-    }
-    
-    /// Multipole expansion for accurate force calculation
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct MultipoleExpansion {
-        pub monopole: f64,
-        pub dipole: Vector3<f64>,
-        pub quadrupole: Matrix3<f64>,
-        pub octupole: Vec<f64>, // Simplified as vector
-        pub max_order: usize,
-    }
-    
-    /// GADGET-style gravity solver
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct GadgetGravitySolver {
-        pub particles: Vec<GadgetParticle>,
-        pub tree: OctTree,
-        pub force_accuracy: f64, // θ parameter for tree opening criterion
-        pub softening_length: f64,
-        pub periodic_boundary: bool,
-        pub box_size: f64,
-        pub force_calculation_method: ForceMethod,
-        pub time_integration_method: IntegrationMethod,
-        pub adaptive_time_stepping: bool,
-        pub cosmological_parameters: CosmologicalParameters,
-    }
-    
-    /// Octree for hierarchical force calculation
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct OctTree {
-        pub nodes: Vec<TreeNode>,
-        pub root_node: usize,
-        pub max_depth: usize,
-        pub max_particles_per_node: usize,
-        pub opening_criterion: OpeningCriterion,
-    }
-    
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-    pub enum ForceMethod {
-        TreeMethod,         // O(N log N) tree algorithm
-        DirectSummation,    // O(N²) direct force calculation
-        PM,                 // Particle-Mesh
-        TreePM,             // Hybrid Tree-PM
-        FastMultipole,      // Fast Multipole Method
-    }
-    
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-    pub enum IntegrationMethod {
-        LeapFrog,           // Standard leap-frog
-        Verlet,             // Velocity Verlet
-        RungeKutta,         // 4th order Runge-Kutta
-        AdaptiveRungeKutta, // Adaptive step size
-    }
-    
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-    pub enum OpeningCriterion {
-        GeometricMean,      // Standard GADGET opening criterion
-        MaximumDistance,    // Maximum distance criterion
-        RelativeError,      // Relative force error criterion
-    }
-    
-    /// Cosmological parameters for expanding universe
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct CosmologicalParameters {
-        pub hubble_constant: f64,      // H₀ in km/s/Mpc
-        pub omega_matter: f64,         // Ωₘ
-        pub omega_lambda: f64,         // ΩΛ
-        pub omega_baryon: f64,         // Ωᵦ
-        pub scale_factor: f64,         // a(t)
-        pub redshift: f64,             // z
-        pub age_of_universe: f64,      // t in Gyr
-        pub enable_expansion: bool,
-    }
-    
-    impl GadgetGravitySolver {
-        /// Create new GADGET-style gravity solver
-        pub fn new(
-            force_accuracy: f64,
-            softening_length: f64,
-            box_size: f64,
-            cosmological: bool,
-        ) -> Self {
-            let cosmological_parameters = if cosmological {
-                CosmologicalParameters {
-                    hubble_constant: 67.4,      // Planck 2018
-                    omega_matter: 0.315,
-                    omega_lambda: 0.685,
-                    omega_baryon: 0.049,
-                    scale_factor: 1.0,
-                    redshift: 0.0,
-                    age_of_universe: 13.8,
-                    enable_expansion: true,
-                }
-            } else {
-                CosmologicalParameters {
-                    hubble_constant: 0.0,
-                    omega_matter: 1.0,
-                    omega_lambda: 0.0,
-                    omega_baryon: 0.0,
-                    scale_factor: 1.0,
-                    redshift: 0.0,
-                    age_of_universe: 0.0,
-                    enable_expansion: false,
-                }
-            };
-            
-            Self {
-                particles: Vec::new(),
-                tree: OctTree::new(),
-                force_accuracy,
-                softening_length,
-                periodic_boundary: true,
-                box_size,
-                force_calculation_method: ForceMethod::TreeMethod,
-                time_integration_method: IntegrationMethod::LeapFrog,
-                adaptive_time_stepping: true,
-                cosmological_parameters,
-            }
-        }
-        
-        /// Add particle to simulation
-        pub fn add_particle(&mut self, particle: GadgetParticle) {
-            self.particles.push(particle);
-        }
-        
-        /// Calculate gravitational forces using tree method
-        pub fn calculate_forces(&mut self) -> Result<()> {
-            // Build tree structure
-            self.build_tree()?;
-            
-            // Calculate forces for each particle
-            for i in 0..self.particles.len() {
-                let force = match self.force_calculation_method {
-                    ForceMethod::TreeMethod => self.calculate_tree_force(i)?,
-                    ForceMethod::DirectSummation => self.calculate_direct_force(i)?,
-                    ForceMethod::PM => self.calculate_pm_force(i)?,
-                    ForceMethod::TreePM => self.calculate_tree_pm_force(i)?,
-                    ForceMethod::FastMultipole => self.calculate_fmm_force(i)?,
-                };
-                
-                self.particles[i].acceleration = force / self.particles[i].mass;
-                self.particles[i].gravitational_potential = self.calculate_potential(i)?;
-            }
-            
-            Ok(())
-        }
-        
-        /// Build octree for hierarchical force calculation
-        fn build_tree(&mut self) -> Result<()> {
-            self.tree = OctTree::new();
-            
-            // Find bounding box
-            let (min_pos, max_pos) = self.find_bounding_box();
-            
-            // Create root node
-            let root = TreeNode {
-                center_of_mass: Vector3::zeros(),
-                total_mass: 0.0,
-                geometric_center: (min_pos + max_pos) * 0.5,
-                size: (max_pos - min_pos).magnitude(),
-                children: Vec::new(),
-                particle_indices: (0..self.particles.len()).collect(),
-                is_leaf: false,
-                opening_angle: self.force_accuracy,
-                multipole_moments: MultipoleExpansion::new(),
-            };
-            
-            self.tree.nodes.push(root);
-            self.tree.root_node = 0;
-            
-            // Recursively build tree
-            self.subdivide_node(0, min_pos, max_pos)?;
-            
-            // Calculate multipole moments
-            self.calculate_multipole_moments(0)?;
-            
-            Ok(())
-        }
-        
-        /// Recursively subdivide tree nodes
-        fn subdivide_node(
-            &mut self,
-            node_index: usize,
-            min_pos: Vector3<f64>,
-            max_pos: Vector3<f64>,
-        ) -> Result<()> {
-            let node = &self.tree.nodes[node_index].clone();
-            
-            // Stop if too few particles or maximum depth reached
-            if node.particle_indices.len() <= self.tree.max_particles_per_node || 
-               self.tree.nodes.len() > (1 << (3 * self.tree.max_depth)) {
-                return Ok(());
-            }
-            
-            // Create 8 child nodes (octree)
-            let center = (min_pos + max_pos) * 0.5;
-            let child_positions = [
-                (min_pos, center),
-                (Vector3::new(center.x, min_pos.y, min_pos.z), Vector3::new(max_pos.x, center.y, center.z)),
-                (Vector3::new(min_pos.x, center.y, min_pos.z), Vector3::new(center.x, max_pos.y, center.z)),
-                (Vector3::new(center.x, center.y, min_pos.z), Vector3::new(max_pos.x, max_pos.y, center.z)),
-                (Vector3::new(min_pos.x, min_pos.y, center.z), Vector3::new(center.x, center.y, max_pos.z)),
-                (Vector3::new(center.x, min_pos.y, center.z), Vector3::new(max_pos.x, center.y, max_pos.z)),
-                (Vector3::new(min_pos.x, center.y, center.z), Vector3::new(center.x, max_pos.y, max_pos.z)),
-                (center, max_pos),
-            ];
-            
-            let mut child_indices = Vec::new();
-            
-            for (child_min, child_max) in child_positions.iter() {
-                let mut child_particles = Vec::new();
-                
-                // Assign particles to child nodes
-                for &particle_idx in &node.particle_indices {
-                    let pos = self.particles[particle_idx].position;
-                    if pos.x >= child_min.x && pos.x < child_max.x &&
-                       pos.y >= child_min.y && pos.y < child_max.y &&
-                       pos.z >= child_min.z && pos.z < child_max.z {
-                        child_particles.push(particle_idx);
-                    }
-                }
-                
-                if !child_particles.is_empty() {
-                    let child_node = TreeNode {
-                        center_of_mass: Vector3::zeros(),
-                        total_mass: 0.0,
-                        geometric_center: (*child_min + *child_max) * 0.5,
-                        size: (*child_max - *child_min).magnitude(),
-                        children: Vec::new(),
-                        particle_indices: child_particles,
-                        is_leaf: true,
-                        opening_angle: self.force_accuracy,
-                        multipole_moments: MultipoleExpansion::new(),
-                    };
-                    
-                    let child_index = self.tree.nodes.len();
-                    self.tree.nodes.push(child_node);
-                    child_indices.push(child_index);
-                    
-                    // Recursively subdivide
-                    self.subdivide_node(child_index, *child_min, *child_max)?;
-                }
-            }
-            
-            // Update parent node
-            self.tree.nodes[node_index].children = child_indices;
-            self.tree.nodes[node_index].is_leaf = child_indices.is_empty();
-            
-            Ok(())
-        }
-        
-        /// Calculate tree force for particle i
-        fn calculate_tree_force(&self, particle_idx: usize) -> Result<Vector3<f64>> {
-            let particle = &self.particles[particle_idx];
-            let mut total_force = Vector3::zeros();
-            
-            // Traverse tree starting from root
-            self.tree_force_recursive(particle_idx, self.tree.root_node, &mut total_force)?;
-            
-            Ok(total_force)
-        }
-        
-        /// Recursive tree force calculation
-        fn tree_force_recursive(
-            &self,
-            particle_idx: usize,
-            node_idx: usize,
-            total_force: &mut Vector3<f64>,
-        ) -> Result<()> {
-            let node = &self.tree.nodes[node_idx];
-            let particle = &self.particles[particle_idx];
-            
-            let r_vec = node.center_of_mass - particle.position;
-            let r = r_vec.magnitude();
-            
-            // Opening criterion: use node if s/r < θ
-            let opening_criterion_met = match self.tree.opening_criterion {
-                OpeningCriterion::GeometricMean => node.size / r < self.force_accuracy,
-                OpeningCriterion::MaximumDistance => r > 2.0 * node.size,
-                OpeningCriterion::RelativeError => true, // Simplified
-            };
-            
-            if node.is_leaf || opening_criterion_met {
-                // Use this node for force calculation
-                let force = self.calculate_node_force(particle, node)?;
-                *total_force += force;
-            } else {
-                // Recurse to children
-                for &child_idx in &node.children {
-                    self.tree_force_recursive(particle_idx, child_idx, total_force)?;
-                }
-            }
-            
-            Ok(())
-        }
-        
-        /// Calculate force from a tree node
-        fn calculate_node_force(&self, particle: &GadgetParticle, node: &TreeNode) -> Result<Vector3<f64>> {
-            let r_vec = node.center_of_mass - particle.position;
-            let r = r_vec.magnitude();
-            
-            if r < 1e-15 {
-                return Ok(Vector3::zeros()); // Avoid self-force
-            }
-            
-            // Softened Newtonian gravity
-            let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
-            let force_magnitude = general_relativity::G * particle.mass * node.total_mass / (softened_r * softened_r * softened_r);
-            
-            // Include multipole corrections for higher accuracy
-            let multipole_correction = self.calculate_multipole_correction(particle, node)?;
-            
-            Ok(r_vec * force_magnitude + multipole_correction)
-        }
-        
-        /// Calculate multipole expansion corrections
-        fn calculate_multipole_correction(&self, _particle: &GadgetParticle, _node: &TreeNode) -> Result<Vector3<f64>> {
-            // Simplified - would implement full multipole expansion
-            Ok(Vector3::zeros())
-        }
-        
-        /// Direct summation force calculation (O(N²))
-        fn calculate_direct_force(&self, particle_idx: usize) -> Result<Vector3<f64>> {
-            let particle = &self.particles[particle_idx];
-            let mut total_force = Vector3::zeros();
-            
-            for (j, other) in self.particles.iter().enumerate() {
-                if j == particle_idx {
-                    continue;
-                }
-                
-                let r_vec = other.position - particle.position;
-                let r = r_vec.magnitude();
-                
-                if r < 1e-15 {
-                    continue;
-                }
-                
-                let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
-                let force_magnitude = general_relativity::G * particle.mass * other.mass / (softened_r * softened_r * softened_r);
-                
-                total_force += r_vec * force_magnitude;
-            }
-            
-            Ok(total_force)
-        }
-        
-        /// Particle-Mesh force calculation
-        fn calculate_pm_force(&self, _particle_idx: usize) -> Result<Vector3<f64>> {
-            // Would implement particle-mesh method using FFT
-            Ok(Vector3::zeros())
-        }
-        
-        /// Hybrid Tree-PM force calculation
-        fn calculate_tree_pm_force(&self, particle_idx: usize) -> Result<Vector3<f64>> {
-            // Combine tree forces (short range) with PM forces (long range)
-            let tree_force = self.calculate_tree_force(particle_idx)?;
-            let pm_force = self.calculate_pm_force(particle_idx)?;
-            Ok(tree_force + pm_force)
-        }
-        
-        /// Fast Multipole Method force calculation
-        fn calculate_fmm_force(&self, _particle_idx: usize) -> Result<Vector3<f64>> {
-            // Would implement Fast Multipole Method
-            Ok(Vector3::zeros())
-        }
-        
-        /// Calculate gravitational potential for particle
-        fn calculate_potential(&self, particle_idx: usize) -> Result<f64> {
-            let particle = &self.particles[particle_idx];
-            let mut potential = 0.0;
-            
-            for (j, other) in self.particles.iter().enumerate() {
-                if j == particle_idx {
-                    continue;
-                }
-                
-                let r_vec = other.position - particle.position;
-                let r = r_vec.magnitude();
-                
-                if r < 1e-15 {
-                    continue;
-                }
-                
-                let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
-                potential -= general_relativity::G * other.mass / softened_r;
-            }
-            
-            Ok(potential)
-        }
-        
-        /// Integrate equations of motion
-        pub fn integrate_step(&mut self, dt: f64) -> Result<()> {
-            match self.time_integration_method {
-                IntegrationMethod::LeapFrog => self.leapfrog_step(dt),
-                IntegrationMethod::Verlet => self.verlet_step(dt),
-                IntegrationMethod::RungeKutta => self.runge_kutta_step(dt),
-                IntegrationMethod::AdaptiveRungeKutta => self.adaptive_rk_step(dt),
-            }
-        }
-        
-        /// Leap-frog integration step
-        fn leapfrog_step(&mut self, dt: f64) -> Result<()> {
-            // Kick-drift-kick algorithm
-            for particle in &mut self.particles {
-                if !particle.active {
-                    continue;
-                }
-                
-                // Kick: v += a * dt/2
-                particle.velocity += particle.acceleration * (dt * 0.5);
-                
-                // Drift: x += v * dt
-                particle.position += particle.velocity * dt;
-                
-                // Apply periodic boundary conditions
-                if self.periodic_boundary {
-                    self.apply_periodic_boundary(&mut particle.position);
-                }
-            }
-            
-            // Recalculate forces
-            self.calculate_forces()?;
-            
-            // Final kick: v += a * dt/2
-            for particle in &mut self.particles {
-                if particle.active {
-                    particle.velocity += particle.acceleration * (dt * 0.5);
-                }
-            }
-            
-            // Apply cosmological expansion
-            if self.cosmological_parameters.enable_expansion {
-                self.apply_cosmological_expansion(dt)?;
-            }
-            
-            Ok(())
-        }
-        
-        /// Velocity Verlet integration step
-        fn verlet_step(&mut self, dt: f64) -> Result<()> {
-            // Store old accelerations
-            let old_accelerations: Vec<Vector3<f64>> = self.particles.iter()
-                .map(|p| p.acceleration)
-                .collect();
-            
-            // Update positions
-            for (i, particle) in self.particles.iter_mut().enumerate() {
-                if !particle.active {
-                    continue;
-                }
-                
-                particle.position += particle.velocity * dt + old_accelerations[i] * (dt * dt * 0.5);
-                
-                if self.periodic_boundary {
-                    self.apply_periodic_boundary(&mut particle.position);
-                }
-            }
-            
-            // Calculate new forces
-            self.calculate_forces()?;
-            
-            // Update velocities
-            for (i, particle) in self.particles.iter_mut().enumerate() {
-                if particle.active {
-                    particle.velocity += (old_accelerations[i] + particle.acceleration) * (dt * 0.5);
-                }
-            }
-            
-            Ok(())
-        }
-        
-        /// 4th order Runge-Kutta step
-        fn runge_kutta_step(&mut self, dt: f64) -> Result<()> {
-            // Store initial state
-            let initial_positions: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.position).collect();
-            let initial_velocities: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity).collect();
-            
-            // K1
-            self.calculate_forces()?;
-            let k1_v: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.acceleration * dt).collect();
-            let k1_r: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity * dt).collect();
-            
-            // K2
-            for (i, particle) in self.particles.iter_mut().enumerate() {
-                particle.position = initial_positions[i] + k1_r[i] * 0.5;
-                particle.velocity = initial_velocities[i] + k1_v[i] * 0.5;
-            }
-            self.calculate_forces()?;
-            let k2_v: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.acceleration * dt).collect();
-            let k2_r: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity * dt).collect();
-            
-            // K3
-            for (i, particle) in self.particles.iter_mut().enumerate() {
-                particle.position = initial_positions[i] + k2_r[i] * 0.5;
-                particle.velocity = initial_velocities[i] + k2_v[i] * 0.5;
-            }
-            self.calculate_forces()?;
-            let k3_v: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.acceleration * dt).collect();
-            let k3_r: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity * dt).collect();
-            
-            // K4
-            for (i, particle) in self.particles.iter_mut().enumerate() {
-                particle.position = initial_positions[i] + k3_r[i];
-                particle.velocity = initial_velocities[i] + k3_v[i];
-            }
-            self.calculate_forces()?;
-            let k4_v: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.acceleration * dt).collect();
-            let k4_r: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity * dt).collect();
-            
-            // Final update
-            for (i, particle) in self.particles.iter_mut().enumerate() {
-                particle.position = initial_positions[i] + (k1_r[i] + k2_r[i] * 2.0 + k3_r[i] * 2.0 + k4_r[i]) / 6.0;
-                particle.velocity = initial_velocities[i] + (k1_v[i] + k2_v[i] * 2.0 + k3_v[i] * 2.0 + k4_v[i]) / 6.0;
-            }
-            
-            Ok(())
-        }
-        
-        /// Adaptive Runge-Kutta step with error control
-        fn adaptive_rk_step(&mut self, dt: f64) -> Result<()> {
-            // Simplified - would implement proper adaptive step size control
-            self.runge_kutta_step(dt)
-        }
-        
-        /// Apply periodic boundary conditions
-        fn apply_periodic_boundary(&self, position: &mut Vector3<f64>) {
-            position.x = position.x.rem_euclid(self.box_size);
-            position.y = position.y.rem_euclid(self.box_size);
-            position.z = position.z.rem_euclid(self.box_size);
-        }
-        
-        /// Apply cosmological expansion
-        fn apply_cosmological_expansion(&mut self, dt: f64) -> Result<()> {
-            let hubble_parameter = self.cosmological_parameters.hubble_constant * 
-                self.hubble_function(self.cosmological_parameters.scale_factor);
-            
-            // Scale factor evolution: da/dt = H * a
-            let scale_factor_derivative = hubble_parameter * self.cosmological_parameters.scale_factor;
-            self.cosmological_parameters.scale_factor += scale_factor_derivative * dt;
-            
-            // Update particle positions and velocities for expansion
-            let expansion_factor = scale_factor_derivative * dt / self.cosmological_parameters.scale_factor;
-            
-            for particle in &mut self.particles {
-                if particle.active {
-                    // Hubble flow: v += H * r
-                    particle.velocity += particle.position * (expansion_factor / dt);
-                }
-            }
-            
-            Ok(())
-        }
-        
-        /// Hubble function H(a) = H₀ * sqrt(Ωₘ/a³ + ΩΛ)
-        fn hubble_function(&self, scale_factor: f64) -> f64 {
-            let omega_m = self.cosmological_parameters.omega_matter;
-            let omega_lambda = self.cosmological_parameters.omega_lambda;
-            let a_cubed = scale_factor * scale_factor * scale_factor;
-            
-            (omega_m / a_cubed + omega_lambda).sqrt()
-        }
-        
-        /// Find bounding box of all particles
-        fn find_bounding_box(&self) -> (Vector3<f64>, Vector3<f64>) {
-            let mut min_pos = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
-            let mut max_pos = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-            
-            for particle in &self.particles {
-                min_pos.x = min_pos.x.min(particle.position.x);
-                min_pos.y = min_pos.y.min(particle.position.y);
-                min_pos.z = min_pos.z.min(particle.position.z);
-                
-                max_pos.x = max_pos.x.max(particle.position.x);
-                max_pos.y = max_pos.y.max(particle.position.y);
-                max_pos.z = max_pos.z.max(particle.position.z);
-            }
-            
-            (min_pos, max_pos)
-        }
-        
-        /// Calculate multipole moments for tree node
-        fn calculate_multipole_moments(&mut self, node_idx: usize) -> Result<()> {
-            let node = &mut self.tree.nodes[node_idx];
-            
-            // Calculate center of mass and total mass
-            let mut total_mass = 0.0;
-            let mut center_of_mass = Vector3::zeros();
-            
-            for &particle_idx in &node.particle_indices {
-                let particle = &self.particles[particle_idx];
-                total_mass += particle.mass;
-                center_of_mass += particle.position * particle.mass;
-            }
-            
-            if total_mass > 0.0 {
-                center_of_mass /= total_mass;
-            }
-            
-            node.total_mass = total_mass;
-            node.center_of_mass = center_of_mass;
-            
-            // Calculate higher-order moments (simplified)
-            node.multipole_moments.monopole = total_mass;
-            node.multipole_moments.dipole = Vector3::zeros();
-            node.multipole_moments.quadrupole = Matrix3::zeros();
-            
-            // Recursively calculate for children
-            for &child_idx in &node.children.clone() {
-                self.calculate_multipole_moments(child_idx)?;
-            }
-            
-            Ok(())
-        }
-    }
-    
-    impl OctTree {
-        pub fn new() -> Self {
-            Self {
-                nodes: Vec::new(),
-                root_node: 0,
-                max_depth: 20,
-                max_particles_per_node: 8,
-                opening_criterion: OpeningCriterion::GeometricMean,
-            }
-        }
-    }
-    
-    impl MultipoleExpansion {
-        pub fn new() -> Self {
-            Self {
-                monopole: 0.0,
-                dipole: Vector3::zeros(),
-                quadrupole: Matrix3::zeros(),
-                octupole: vec![0.0; 10], // Simplified
-                max_order: 2,
-            }
-        }
-    }
-}
-
 impl Drop for PhysicsEngine {
     fn drop(&mut self) {
         // Cleanup FFI libraries
         if let Err(e) = crate::ffi::cleanup_ffi_libraries() {
             log::error!("Failed to cleanup FFI libraries: {}", e);
         }
+    }
+}
+
+impl Default for ForceFieldParameters {
+    fn default() -> Self {
+        Self {
+            bond_parameters: HashMap::new(),
+            angle_parameters: HashMap::new(),
+            dihedral_parameters: HashMap::new(),
+            van_der_waals_parameters: HashMap::new(),
+        }
+    }
+}
+
+/// Stopping power data for particles in materials
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoppingPowerTable {
+    pub energies_mev: Vec<f64>,
+    pub stopping_powers_mev_cm2_g: Vec<f64>,
+    pub range_mev_cm2_g: Vec<f64>,
+    pub material: String,
+}
+
+/// Nuclear decay data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecayData {
+    pub half_life_seconds: f64,
+    pub decay_modes: Vec<DecayMode>,
+    pub q_value_mev: f64,
+    pub daughter_products: Vec<(ParticleType, f64)>, // (particle, branching_ratio)
+}
+
+/// Material properties for particle interactions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialProperties {
+    pub name: String,
+    pub density_g_cm3: f64,
+    pub atomic_composition: Vec<(u32, f64)>, // (Z, fraction)
+    pub mean_excitation_energy_ev: f64,
+    pub radiation_length_cm: f64,
+    pub nuclear_interaction_length_cm: f64,
+}
+
+impl crate::quantum_chemistry::BasisSet {
+    /// Return a minimal placeholder STO-3G basis set.
+    pub fn sto_3g() -> Self {
+        Self {
+            name: "STO-3G".to_string(),
+            angular_momentum_functions: HashMap::new(),
+            contraction_coefficients: Vec::new(),
+            exponents: Vec::new(),
+        }
+    }
+}
+
+impl crate::quantum_chemistry::QuantumChemistryEngine {
+    fn initialize_reaction_database() -> Vec<crate::quantum_chemistry::ChemicalReaction> {
+        Vec::new()
+    }
+
+    fn lda_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
+    fn gga_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
+    fn hybrid_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
+    fn meta_gga_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
+
+    fn get_atomic_energy(&self, _atomic_number: &u32) -> f64 { 0.0 }
+    fn get_bond_energy(&self, _bond_type: &crate::BondType, _bond_length: f64) -> f64 { 0.0 }
+    fn are_bonded(&self, _i: usize, _j: usize, _molecule: &crate::Molecule) -> bool { false }
+    fn van_der_waals_energy(&self, _i: usize, _j: usize, _distance: f64, _molecule: &crate::Molecule) -> f64 { 0.0 }
+
+    fn get_atom_type(&self, _atom: &crate::Atom) -> crate::ParticleType { crate::ParticleType::HydrogenAtom }
+
+    fn calculate_angle_energy(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
+    fn calculate_dihedral_energy(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
+    fn calculate_nonbonded_energy(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
+
+    fn partition_qm_mm(&self, molecule: &crate::Molecule) -> (Vec<crate::Atom>, Vec<crate::Atom>) {
+        (molecule.atoms.clone(), Vec::new())
+    }
+
+    fn calculate_qm_region_energy(&self, _atoms: &[crate::Atom]) -> Result<f64> { Ok(0.0) }
+    fn calculate_mm_region_energy(&self, _atoms: &[crate::Atom]) -> Result<f64> { Ok(0.0) }
+    fn calculate_qm_mm_interaction(&self, _qm: &[crate::Atom], _mm: &[crate::Atom]) -> Result<f64> { Ok(0.0) }
+
+    fn reactants_match(&self, _db_reactants: &[crate::ParticleType], _reactants: &[crate::ParticleType]) -> bool { false }
+    fn calculate_reaction_rate(&self, _reaction: &ChemicalReaction, _temperature: f64) -> f64 { 0.0 }
+    fn predict_new_reaction(&self, _reactants: &[crate::ParticleType], _temperature: f64) -> Result<Option<ChemicalReaction>> { Ok(None) }
+}
+
+impl Default for crate::quantum_chemistry::ForceFieldParameters {
+    fn default() -> Self {
+        Self {
+            bond_parameters: HashMap::new(),
+            angle_parameters: HashMap::new(),
+            dihedral_parameters: HashMap::new(),
+            van_der_waals_parameters: HashMap::new(),
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------//
+// Type conversions between internal representations and shared physics types  //
+//-----------------------------------------------------------------------------//
+
+impl From<&FundamentalParticle> for shared_types::FundamentalParticle {
+    fn from(p: &FundamentalParticle) -> Self {
+        Self {
+            particle_type: map_particle_type_to_shared(p.particle_type),
+            position: p.position,
+            momentum: p.momentum,
+            velocity: p.velocity,
+            spin: p.spin,
+            color_charge: p.color_charge.map(|c| match c {
+                ColorCharge::Red => shared_types::ColorCharge::Red,
+                ColorCharge::Green => shared_types::ColorCharge::Green,
+                ColorCharge::Blue => shared_types::ColorCharge::Blue,
+                ColorCharge::AntiRed => shared_types::ColorCharge::AntiRed,
+                ColorCharge::AntiGreen => shared_types::ColorCharge::AntiGreen,
+                ColorCharge::AntiBlue => shared_types::ColorCharge::AntiBlue,
+                ColorCharge::ColorSinglet => shared_types::ColorCharge::ColorSinglet,
+            }),
+            electric_charge: p.electric_charge,
+            mass: p.mass,
+            energy: p.energy,
+            creation_time: p.creation_time,
+            decay_time: p.decay_time,
+            quantum_state: shared_types::QuantumState::default(),
+            interaction_history: Vec::new(),
+        }
+    }
+}
+
+impl From<shared_types::InteractionEvent> for InteractionEvent {
+    fn from(e: shared_types::InteractionEvent) -> Self {
+        Self {
+            timestamp: e.timestamp,
+            interaction_type: map_interaction_type(e.interaction_type),
+            participants: Vec::new(),
+            energy_exchanged: e.energy_exchanged,
+            momentum_transfer: e.momentum_transfer,
+            products: e.particles_out.iter().map(|p| map_particle_type_from_shared(p.particle_type)).collect(),
+            cross_section: e.cross_section,
+        }
+    }
+}
+
+fn map_particle_type_to_shared(pt: ParticleType) -> shared_types::ParticleType {
+    use shared_types::ParticleType as S;
+    match pt {
+        ParticleType::WBoson | ParticleType::WBosonMinus => S::WMinus,
+        ParticleType::ZBoson => S::Z,
+        ParticleType::Photon => S::Photon,
+        // Fallback simple mapping
+        ParticleType::Electron => S::Electron,
+        ParticleType::Positron => S::Positron,
+        _ => S::Other(pt as u32),
+    }
+}
+
+fn map_particle_type_from_shared(pt: shared_types::ParticleType) -> ParticleType {
+    match pt {
+        shared_types::ParticleType::WPlus | shared_types::ParticleType::WMinus => ParticleType::WBoson,
+        shared_types::ParticleType::Z => ParticleType::ZBoson,
+        shared_types::ParticleType::Photon => ParticleType::Photon,
+        shared_types::ParticleType::Electron => ParticleType::Electron,
+        _ => ParticleType::DarkMatter,
+    }
+}
+
+fn map_interaction_type(it: shared_types::InteractionType) -> InteractionType {
+    match it {
+        shared_types::InteractionType::Elastic | shared_types::InteractionType::Inelastic | shared_types::InteractionType::ElectromagneticScattering => InteractionType::ElectromagneticScattering,
+        shared_types::InteractionType::WeakDecay | shared_types::InteractionType::Decay => InteractionType::WeakDecay,
+        shared_types::InteractionType::StrongInteraction => InteractionType::StrongInteraction,
+        shared_types::InteractionType::GravitationalAttraction => InteractionType::GravitationalAttraction,
+        shared_types::InteractionType::Fusion => InteractionType::NuclearFusion,
+        shared_types::InteractionType::Fission => InteractionType::NuclearFission,
+        shared_types::InteractionType::PairProduction => InteractionType::PairProduction,
+        shared_types::InteractionType::Annihilation => InteractionType::Annihilation,
+        _ => InteractionType::ElectromagneticScattering,
     }
 }

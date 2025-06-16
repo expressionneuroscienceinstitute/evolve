@@ -9,6 +9,7 @@ use anyhow::Result;
 use nalgebra::Vector3;
 
 use crate::{PhysicsState, constants::{ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY}};
+use crate::*;
 
 /// Represents the parameters for a force field, e.g., Lennard-Jones.
 #[derive(Debug, Clone, Default)]
@@ -125,4 +126,9 @@ pub fn step_molecular_dynamics(
     }
 
     Ok(())
+}
+
+/// Calculates the Lennard-Jones potential between two particles.
+pub fn lennard_jones_potential(r: f64, epsilon: f64, sigma: f64) -> f64 {
+    // ... existing code ...
 }

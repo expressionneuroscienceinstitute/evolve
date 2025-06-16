@@ -7,9 +7,9 @@ target_ups = 1000.0                    # Updates per second target
 # max_ticks = 0                         # No limit (infinite simulation) - 0 means infinite
 
 # Initial conditions
-initial_particle_count = 5000          # Starting particles after Big Bang
-universe_radius_ly = 5000.0            # Initial universe radius (light-years)
-big_bang_temperature = 30000.0          # Initial temperature (K)
+initial_particle_count = 1000          # Starting particles after Big Bang
+universe_radius_ly = 1000.0            # Initial universe radius (light-years)
+big_bang_temperature = 3000.0          # Initial temperature (K)
 
 # Physics parameters
 physics_timestep = 0.000001            # 1 microsecond integration timestep

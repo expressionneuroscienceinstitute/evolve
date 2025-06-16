@@ -45,9 +45,13 @@ impl SpatialHashGrid {
     
     /// Convert position to grid cell coordinates
     fn position_to_cell(&self, position: &Vector3<f64>) -> (i32, i32, i32) {
-        let x = (position.x / self.cell_size).floor() as i32;
-        let y = (position.y / self.cell_size).floor() as i32;
-        let z = (position.z / self.cell_size).floor() as i32;
+        // Clamp coordinates to prevent overflow when converting to i32
+        const MAX_CELL_COORD: f64 = (i32::MAX / 2) as f64; // Use half of i32::MAX for safety
+        const MIN_CELL_COORD: f64 = (i32::MIN / 2) as f64;
+        
+        let x = (position.x / self.cell_size).floor().clamp(MIN_CELL_COORD, MAX_CELL_COORD) as i32;
+        let y = (position.y / self.cell_size).floor().clamp(MIN_CELL_COORD, MAX_CELL_COORD) as i32;
+        let z = (position.z / self.cell_size).floor().clamp(MIN_CELL_COORD, MAX_CELL_COORD) as i32;
         (x, y, z)
     }
     
@@ -65,11 +69,15 @@ impl SpatialHashGrid {
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
-                    let cell = (
-                        center_cell.0 + dx,
-                        center_cell.1 + dy,
-                        center_cell.2 + dz,
-                    );
+                    // Use checked_add to prevent overflow
+                    let cell = match (
+                        center_cell.0.checked_add(dx),
+                        center_cell.1.checked_add(dy),
+                        center_cell.2.checked_add(dz),
+                    ) {
+                        (Some(x), Some(y), Some(z)) => (x, y, z),
+                        _ => continue, // Skip this cell if overflow would occur
+                    };
                     
                     if let Some(cell_particles) = self.grid.get(&cell) {
                         for &other_idx in cell_particles {
@@ -374,10 +382,18 @@ mod tests {
         FundamentalParticle {
             particle_type: ParticleType::Electron,
             position,
-            velocity: Vector3::zeros(),
+            momentum: Vector3::zeros(),
+            spin: Vector3::new(Complex::new(0.5, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
+            color_charge: None,
+            electric_charge: -1.602e-19,
             mass: 9.109e-31,
-            charge: -1.602e-19,
             energy: 1e-13,
+            creation_time: 0.0,
+            decay_time: None,
+            quantum_state: QuantumState::new(),
+            interaction_history: Vec::new(),
+            velocity: Vector3::zeros(),
+            charge: -1.602e-19,
         }
     }
     

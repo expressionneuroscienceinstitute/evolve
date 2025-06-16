@@ -311,7 +311,7 @@ impl UniverseSimulation {
     /// Update physics simulation
     fn update_physics(&mut self) -> Result<()> {
         // Get all physics states
-        let mut physics_states: Vec<PhysicsState> = self.world
+        let physics_states: Vec<PhysicsState> = self.world
             .query::<&PhysicsState>()
             .iter(&self.world)
             .map(|state| state.clone())
@@ -442,7 +442,7 @@ impl UniverseSimulation {
         let mut stellar_query = self.world.query::<(Entity, &mut CelestialBody, &mut StellarEvolution)>();
         let stellar_data: Vec<(Entity, CelestialBody, StellarEvolution)> = stellar_query.iter_mut(&mut self.world)
             .filter(|(_, body, _)| matches!(body.body_type, CelestialBodyType::Star))
-            .map(|(entity, body.clone(), evolution)| (entity, body.clone(), evolution.clone()))
+            .map(|(entity, body, evolution)| (entity, body.clone(), evolution.clone()))
             .collect();
         
         for (entity, mut body, mut evolution) in stellar_data {

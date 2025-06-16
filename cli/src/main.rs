@@ -373,6 +373,15 @@ async fn cmd_start(
         println!("Starting new simulation from Big Bang...");
         let mut sim = UniverseSimulation::new(config.clone())?;
         sim.init_big_bang()?;
+        
+        // Also initialize Big Bang conditions in the physics engine
+        println!("🔬 Initializing physics engine Big Bang conditions...");
+        sim.physics_engine.initialize_big_bang()?;
+        
+        println!("✅ Simulation initialized with {} particles in ECS and {} particles in physics engine",
+            sim.world.query::<&universe_sim::physics_engine::PhysicsState>().iter(&sim.world).count(),
+            sim.physics_engine.particles.len());
+        
         sim
     };
 
@@ -549,6 +558,21 @@ async fn cmd_start(
                     physics.atoms.len(),
                     physics.temperature)
             });
+            
+            // Debug print physics values being sent to dashboard (every 10 seconds)
+            if stats.current_tick % 10 == 0 {
+                println!("📡 WEBSOCKET DATA (Tick {})", stats.current_tick);
+                println!("   Temperature: {:.2e} K", physics.temperature);
+                println!("   Energy density: {:.2e} J/m³", physics.energy_density);
+                println!("   Particles: {}", physics.particles.len());
+                println!("   Nuclei: {}", physics.nuclei.len());
+                println!("   Atoms: {}", physics.atoms.len());
+                println!("   Molecules: {}", physics.molecules.len());
+                println!("   Particle data entries: {}", particle_data.len());
+                println!("   Average age: {:.1} GYr", stats.universe_age_gyr);
+                println!("   Cosmic era: {:?}", stats.cosmic_era);
+            }
+            
             drop(sim_guard); // Release the lock quickly
             
             if tx.send(simulation_state.to_string()).is_err() {
@@ -630,14 +654,15 @@ async fn cmd_map(zoom: f64, layer: &str) -> Result<()> {
             // Try to parse simulation data
             if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
                 if let Some(map_data) = rpc_res.result {
+                    println!("🌌 Connected to simulation - showing real {} data", layer);
                     render_simulation_map(&map_data, width, height, layer)?;
                     return Ok(());
                 }
             }
         }
         _ => {
-            println!("Warning: Could not connect to simulation. Showing sample data.");
-            println!("Start simulation with 'universectl start' for real data.\n");
+            println!("⚠️  Could not connect to simulation RPC server");
+            println!("💡 Start simulation with 'universectl start' for real data");
         }
     }
     
@@ -690,7 +715,7 @@ fn render_simulation_map(map_data: &serde_json::Value, fallback_width: usize, fa
 }
 
 fn render_sample_map(width: usize, height: usize, layer: &str, zoom: f64) {
-
+    println!("📍 Showing sample {} data (simulation not connected)", layer);
     
     for y in 0..height {
         for x in 0..width {
@@ -830,14 +855,16 @@ async fn cmd_list_planets(class: Option<String>, habitable: bool) -> Result<()> 
         Ok(res) if res.status().is_success() => {
             if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
                 if let Some(planets_data) = rpc_res.result {
+                    println!("🌍 Connected to simulation - showing real data");
                     render_planet_list(&planets_data, &class, habitable)?;
                     return Ok(());
                 }
             }
         }
         _ => {
-            println!("Warning: Could not connect to simulation. Showing sample data.");
-            println!("Start simulation with 'universectl start' for real data.\n");
+            println!("⚠️  Could not connect to simulation RPC server");
+            println!("📍 Showing sample planetary data");
+            println!("💡 Start simulation with 'universectl start' for real data\n");
         }
     }
     
@@ -1895,105 +1922,69 @@ async fn cmd_oracle(action: OracleAction) -> Result<()> {
 /// Interactive mode for real-time simulation control and monitoring
 async fn cmd_interactive() -> Result<()> {
     use std::io::{self, Write};
-    use tokio::time::{timeout, Duration};
     
     println!("🎮 Interactive Simulation Control");
     println!("=================================");
     println!("Commands: status, stats, speed <factor>, map [layer], planets, quit");
     println!("Press Ctrl+C to exit\n");
     
-    // Real-time monitoring setup
+    // Real-time monitoring setup - much less frequent to avoid interference
     let mut last_stats_update = Instant::now();
-    let stats_update_interval = Duration::from_secs(5);
-    
-    // Initial prompt
-    print!("universe> ");
-    io::stdout().flush()?;
+    let stats_update_interval = Duration::from_secs(60); // Only update every minute
     
     loop {
-        // Auto-update stats every 5 seconds (only if enough time has passed)
-        let should_update = last_stats_update.elapsed() >= stats_update_interval;
-        
-        // Read user input with reasonable timeout (1 second instead of 100ms)
-        let read_result = timeout(Duration::from_secs(1), tokio::task::spawn_blocking(|| {
-            let mut line = String::new();
-            match io::stdin().read_line(&mut line) {
-                Ok(_) => Ok(line),
-                Err(e) => Err(e),
-            }
-        })).await;
-        
-        match read_result {
-            Ok(join_result) => {
-                match join_result {
-                    Ok(stdin_result) => {
-                        match stdin_result {
-                            Ok(input_line) => {
-                                let command: &str = input_line.trim();
-                                if command.is_empty() {
-                                    // Show prompt again for empty input
-                                    print!("universe> ");
-                                    io::stdout().flush()?;
-                                    continue;
-                                }
-                                
-                                match execute_interactive_command(command).await {
-                                    Ok(should_exit) => {
-                                        if should_exit {
-                                            break;
-                                        }
-                                    },
-                                    Err(e) => {
-                                        println!("❌ Error: {}", e);
-                                    }
-                                }
-                                
-                                // Show prompt after command execution
-                                print!("universe> ");
-                                io::stdout().flush()?;
-                            },
-                            Err(_) => {
-                                // stdin error, show prompt and continue
-                                print!("universe> ");
-                                io::stdout().flush()?;
-                                continue;
-                            }
-                        }
-                    },
-                    Err(_) => {
-                        // join error, show prompt and continue
-                        print!("universe> ");
-                        io::stdout().flush()?;
-                        continue;
+        // Check if we should show status update (but only if no recent command)
+        if last_stats_update.elapsed() >= stats_update_interval {
+            match rpc::call_rpc("status", &json!({})).await {
+                Ok(response) => {
+                    print!("📊 Status: ");
+                    if let Some(age_gyr) = response.get("universe_age_gyr").and_then(|v| v.as_f64()) {
+                        print!("Age: {:.2} GYr", age_gyr);
                     }
-                }
-            },
-            Err(_) => {
-                // Timeout - check if we should show status update
-                if should_update {
-                    print!("\r\x1b[K📊 Auto-update: ");
-                    match rpc::call_rpc("status", &json!({})).await {
-                        Ok(response) => {
-                            if let Some(age_gyr) = response.get("universe_age_gyr").and_then(|v| v.as_f64()) {
-                                if let Some(particle_count) = response.get("particle_count").and_then(|v| v.as_u64()) {
-                                    print!("Age: {:.2} GYr, Particles: {}", age_gyr, particle_count);
-                                }
-                            }
-                            if let Some(era) = response.get("cosmic_era").and_then(|v| v.as_str()) {
-                                print!(", Era: {}", era);
-                            }
-                        },
-                        Err(_) => print!("Simulation offline"),
+                    if let Some(era) = response.get("cosmic_era").and_then(|v| v.as_str()) {
+                        print!(", Era: {}", era);
                     }
                     println!();
-                    last_stats_update = Instant::now();
-                    
-                    // Show prompt again after status update
-                    print!("universe> ");
-                    io::stdout().flush()?;
+                },
+                Err(_) => println!("📊 Status: Simulation offline"),
+            }
+            last_stats_update = Instant::now();
+        }
+        
+        // Show prompt
+        print!("universe> ");
+        io::stdout().flush()?;
+        
+        // Read user input (blocking)
+        let mut input_line = String::new();
+        match io::stdin().read_line(&mut input_line) {
+            Ok(_) => {
+                let command = input_line.trim();
+                if command.is_empty() {
+                    continue;
                 }
-                // Continue loop without showing extra prompts
-                continue;
+                
+                // Execute command
+                match execute_interactive_command(command).await {
+                    Ok(should_exit) => {
+                        if should_exit {
+                            break;
+                        }
+                    },
+                    Err(e) => {
+                        println!("❌ Error: {}", e);
+                    }
+                }
+                
+                // Reset auto-update timer after command execution
+                last_stats_update = Instant::now();
+                
+                // Add some spacing after command output
+                println!();
+            },
+            Err(e) => {
+                println!("❌ Input error: {}", e);
+                break;
             }
         }
     }
@@ -2009,27 +2000,37 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
         return Ok(false);
     }
     
+    println!("🔧 Processing command: {}", parts[0]); // Debug output
+    
     match parts[0] {
         "quit" | "exit" | "q" => {
             return Ok(true);
         },
         
         "status" => {
+            println!("📊 Fetching simulation status...");
             cmd_status().await?;
+            println!("✅ Status command completed.");
         },
         
         "stats" => {
+            println!("📈 Fetching universe statistics...");  
             cmd_inspect(InspectTarget::Universe).await?;
+            println!("✅ Stats command completed.");
         },
         
         "physics" => {
+            println!("⚗️ Fetching physics diagnostics...");
             cmd_inspect(InspectTarget::Physics).await?;
+            println!("✅ Physics command completed.");
         },
         
         "speed" => {
             if parts.len() > 1 {
                 if let Ok(factor) = parts[1].parse::<f64>() {
+                    println!("⏱️ Setting simulation speed to {}x...", factor);
                     cmd_speed(factor).await?;
+                    println!("✅ Speed command completed.");
                 } else {
                     println!("❌ Invalid speed factor. Use: speed <number>");
                 }
@@ -2040,11 +2041,15 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
         
         "map" => {
             let layer = parts.get(1).unwrap_or(&"stars");
+            println!("🗺️ Generating {} map...", layer);
             cmd_map(1.0, layer).await?;
+            println!("✅ Map command completed.");
         },
         
         "planets" => {
+            println!("🪐 Fetching planetary data...");
             cmd_list_planets(None, false).await?;
+            println!("✅ Planets command completed.");
         },
         
         "help" => {

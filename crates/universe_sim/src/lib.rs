@@ -165,11 +165,41 @@ impl UniverseSimulation {
         // Set initial cosmic era
         self.cosmic_era = cosmic_era::CosmicEra::ParticleSoup;
         
+        // Print initial configuration
+        println!("🚀 INITIALIZING BIG BANG CONDITIONS");
+        println!("   Initial particle count: {}", self.config.initial_particle_count);
+        println!("   Tick span years: {}", self.tick_span_years);
+        println!("   Target UPS: {}", self.target_ups);
+        
         // Create initial particle soup
         self.spawn_initial_particles()?;
         
         // Initialize cosmic background
         self.init_cosmic_background()?;
+        
+        // Print physics engine initial state
+        println!("📊 PHYSICS ENGINE INITIAL STATE:");
+        println!("   Temperature: {:.2e} K", self.physics_engine.temperature);
+        println!("   Energy density: {:.2e} J/m³", self.physics_engine.energy_density);
+        println!("   Volume: {:.2e} m³", self.physics_engine.volume);
+        println!("   Particles: {}", self.physics_engine.particles.len());
+        println!("   Nuclei: {}", self.physics_engine.nuclei.len());
+        println!("   Atoms: {}", self.physics_engine.atoms.len());
+        println!("   Molecules: {}", self.physics_engine.molecules.len());
+        
+        // Count ECS entities
+        let physics_state_count = self.world.query::<&PhysicsState>().iter(&self.world).count();
+        println!("   ECS Physics States: {}", physics_state_count);
+        
+        // Print sample of initial particles
+        if physics_state_count > 0 {
+            println!("📍 SAMPLE OF INITIAL PARTICLES:");
+            let mut query = self.world.query::<&PhysicsState>();
+            for (i, state) in query.iter(&self.world).enumerate().take(5) {
+                println!("   Particle {}: mass={:.2e} kg, temp={:.1} K, pos=({:.1e}, {:.1e}, {:.1e})", 
+                    i, state.mass, state.temperature, state.position.x, state.position.y, state.position.z);
+            }
+        }
         
         Ok(())
     }
@@ -287,6 +317,26 @@ impl UniverseSimulation {
             .map(|state| state.clone())
             .collect();
         
+        // Print physics state before update (every 1000 ticks to avoid spam)
+        if self.current_tick % 1000 == 0 {
+            println!("⚙️  PHYSICS UPDATE (Tick {})", self.current_tick);
+            println!("   Physics states from ECS: {}", physics_states.len());
+            println!("   Physics engine particles: {}", self.physics_engine.particles.len());
+            println!("   Physics engine temperature: {:.2e} K", self.physics_engine.temperature);
+            println!("   Physics engine energy density: {:.2e} J/m³", self.physics_engine.energy_density);
+            
+            // Calculate total energy from ECS states
+            let total_kinetic_energy: f64 = physics_states.iter()
+                .map(|s| 0.5 * s.mass * s.velocity.magnitude_squared())
+                .sum();
+            let avg_temperature: f64 = if !physics_states.is_empty() {
+                physics_states.iter().map(|s| s.temperature).sum::<f64>() / physics_states.len() as f64
+            } else { 0.0 };
+            
+            println!("   ECS total kinetic energy: {:.2e} J", total_kinetic_energy);
+            println!("   ECS average temperature: {:.2e} K", avg_temperature);
+        }
+        
         // Record allocation for physics state vector
         let physics_state_size = physics_states.len() * std::mem::size_of::<PhysicsState>();
         self.diagnostics.record_allocation(
@@ -294,6 +344,27 @@ impl UniverseSimulation {
             "update_physics".to_string(),
             AllocationType::Particle
         );
+        
+        // Sync ECS states to physics engine particles if needed
+        if self.physics_engine.particles.is_empty() && !physics_states.is_empty() {
+            println!("🔄 Syncing ECS states to physics engine particles...");
+            self.sync_ecs_to_physics_engine_particles()?;
+            println!("   Synced {} particles to physics engine", self.physics_engine.particles.len());
+        }
+        
+        // Update physics engine temperature and energy from ECS data
+        if !physics_states.is_empty() {
+            let total_kinetic_energy: f64 = physics_states.iter()
+                .map(|s| 0.5 * s.mass * s.velocity.magnitude_squared())
+                .sum();
+            let avg_temperature: f64 = physics_states.iter()
+                .map(|s| s.temperature)
+                .sum::<f64>() / physics_states.len() as f64;
+            
+            // Update physics engine state from ECS
+            self.physics_engine.temperature = avg_temperature;
+            self.physics_engine.energy_density = total_kinetic_energy / self.physics_engine.volume;
+        }
         
         // Run physics step and record interactions
         let interactions_before = self.physics_engine.compton_count + 
@@ -310,6 +381,14 @@ impl UniverseSimulation {
         
         let interactions_this_step = (interactions_after - interactions_before) as u32;
         self.diagnostics.record_interaction(interactions_this_step);
+        
+        // Print interactions (every 1000 ticks)
+        if self.current_tick % 1000 == 0 && interactions_this_step > 0 {
+            println!("   Interactions this step: {}", interactions_this_step);
+            println!("   Compton scattering: {}", self.physics_engine.compton_count);
+            println!("   Pair production: {}", self.physics_engine.pair_production_count);
+            println!("   Fusion events: {}", self.physics_engine.fusion_count);
+        }
         
         // Update entities with new physics states
         let mut query = self.world.query::<&mut PhysicsState>();
@@ -363,7 +442,7 @@ impl UniverseSimulation {
         let mut stellar_query = self.world.query::<(Entity, &mut CelestialBody, &mut StellarEvolution)>();
         let stellar_data: Vec<(Entity, CelestialBody, StellarEvolution)> = stellar_query.iter_mut(&mut self.world)
             .filter(|(_, body, _)| matches!(body.body_type, CelestialBodyType::Star))
-            .map(|(entity, body, evolution)| (entity, body.clone(), evolution.clone()))
+            .map(|(entity, body.clone(), evolution)| (entity, body.clone(), evolution.clone()))
             .collect();
         
         for (entity, mut body, mut evolution) in stellar_data {

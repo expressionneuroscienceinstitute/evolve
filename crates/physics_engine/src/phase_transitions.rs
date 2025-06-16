@@ -146,13 +146,9 @@ impl PhaseTransitionModel {
             *entry = *phase;
 
             // Use proper logging instead of direct stdout to avoid interfering with CLI
-            tracing::info!(
-                substance = %self.substance_name,
-                phase = ?phase,
-                temperature_k = temp_k,
-                pressure_pa = pres_pa,
-                density_kg_m3 = dens_kg_m3,
-                "Phase transition occurred"
+            log::info!(
+                "Phase transition: {} to {:?} at {:.2} K, {:.2} Pa, {:.2} kg/m³",
+                self.substance_name, phase, temp_k, pres_pa, dens_kg_m3
             );
         }
     }

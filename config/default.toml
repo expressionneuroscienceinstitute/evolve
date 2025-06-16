@@ -7,9 +7,9 @@ target_ups = 1000.0                    # Updates per second target
 # max_ticks = 0                         # No limit (infinite simulation) - 0 means infinite
 
 # Initial conditions
-initial_particle_count = 1000          # Starting particles after Big Bang
-universe_radius_ly = 1000.0            # Initial universe radius (light-years)
-big_bang_temperature = 3000.0          # Initial temperature (K)
+initial_particle_count = 5000          # Starting particles after Big Bang
+universe_radius_ly = 5000.0            # Initial universe radius (light-years)
+big_bang_temperature = 30000.0          # Initial temperature (K)
 
 # Physics parameters
 physics_timestep = 0.000001            # 1 microsecond integration timestep
@@ -28,7 +28,7 @@ memory_limit_gb = 4.0                  # Memory usage limit (GB)
 cpu_limit_percent = 70.0               # CPU usage limit (0-100%)
 auto_save_interval = 10000             # Ticks between autosaves
 auto_save_path = "./checkpoints/"      # Path for autosaved checkpoints
-checkpoint_retention = 10              # Number of checkpoints to keep
+checkpoint_retention = 3               # Number of checkpoints to keep
 
 # God-mode parameters
 god_mode_enabled = false               # Disable divine intervention by default
@@ -38,7 +38,7 @@ divine_entropy_cost = 100000000000000000000.0  # High entropy cost for miracles
 # Networking and distribution
 enable_clustering = false              # Single-node by default
 cluster_node_limit = 16                # Maximum cluster nodes
-enable_oracle_link = true              # Enable agent-operator communication
+enable_oracle_link = false           # Enable agent-operator communication
 
 # Validation and safety
 strict_physics_validation = true       # Enforce conservation laws strictly

@@ -398,6 +398,17 @@ impl PhysicsEngine {
         // Set larger volume for demo
         engine.volume = 1e-42; // Cubic femtometer scale
         
+        // Print physics engine initialization values
+        println!("🔬 PHYSICS ENGINE INITIALIZATION:");
+        println!("   Initial temperature: {:.2e} K", engine.temperature);
+        println!("   Initial energy density: {:.2e} J/m³", engine.energy_density);
+        println!("   Simulation volume: {:.2e} m³", engine.volume);
+        println!("   Time step: {:.2e} s", engine.time_step);
+        println!("   Particle creation threshold: {:.2e}", engine.particle_creation_threshold);
+        println!("   FFI libraries available: {:?}", engine.ffi_available);
+        println!("   Quantum fields initialized: {}", engine.quantum_fields.len());
+        println!("   Cross sections loaded: {}", engine.cross_sections.len());
+        
         Ok(engine)
     }
     
@@ -468,6 +479,11 @@ impl PhysicsEngine {
         // Start with high but computationally reasonable temperature
         self.temperature = 1e12; // 1 TeV scale (reduced from Planck temperature)
         self.energy_density = 1e30; // Reduced accordingly
+        
+        println!("🌌 BIG BANG INITIALIZATION:");
+        println!("   Set temperature: {:.2e} K", self.temperature);
+        println!("   Set energy density: {:.2e} J/m³", self.energy_density);
+        println!("   Creating primordial plasma...");
         
         // Create initial quantum soup of all particle types
         self.create_primordial_plasma()?;

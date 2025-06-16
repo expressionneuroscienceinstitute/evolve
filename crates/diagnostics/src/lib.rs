@@ -466,18 +466,27 @@ impl DiagnosticsSystem {
     /// Retrieves the current network bandwidth usage (bytes per second).
     /// This calculates the difference in total network bytes since the last call.
     fn get_network_bandwidth(&mut self) -> f64 {
-        self.networks.refresh_list(); // Refresh networks to get current stats
+        // Refresh networks to get current stats
+        self.networks.refresh_list();
+
+        // Aggregate bytes received + transmitted across all interfaces
         let current_total: u64 = self
             .networks
             .iter()
             .map(|(_, n)| n.received() + n.transmitted())
             .sum();
 
-        let bandwidth = if self.prev_network_bytes > 0 {
-            (current_total - self.prev_network_bytes) as f64 / (self.collection_interval_ms as f64 / 1000.0)
-        } else {
-            0.0
-        };
+        // Safely compute the delta between successive samples. The underlying counters
+        // can reset (e.g. interface reset or 32-bit wrap-around) which would make
+        // `current_total` smaller than `prev_network_bytes` and lead to an unsigned
+        // subtraction underflow. `saturating_sub` prevents this panic by returning 0
+        // in such cases so we simply report zero bandwidth for that interval.
+        let delta_bytes = current_total.saturating_sub(self.prev_network_bytes);
+
+        // Avoid division by zero if the collection interval is somehow set to 0 ms.
+        let interval_secs = (self.collection_interval_ms as f64).max(1.0) / 1000.0;
+
+        let bandwidth = delta_bytes as f64 / interval_secs;
         self.prev_network_bytes = current_total;
         bandwidth
     }

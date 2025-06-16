@@ -76,7 +76,7 @@ No functional code changes were successfully applied in this mini-session due to
 3. Change `PARTICLE_DATA` and `BRANCHING_RATIOS` to use the local `crate::ParticleType` for their `HashMap` keys (still pending but the file was opened and is ready for edit).
 4. Re-run `cargo check --workspace` to surface the next wave of errors once the above compile blockers are fixed. 
 
-#### Progress (Session: 2025-01-16 - Final Resolution)
+#### Progress (Session: 2025-06-16 - Final Resolution)
 **BUILD SUCCESSFUL!** All compilation errors have been resolved. The workspace now compiles cleanly with only warnings.
 
 **Key fixes applied:**

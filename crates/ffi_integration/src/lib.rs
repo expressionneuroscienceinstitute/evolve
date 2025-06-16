@@ -16,7 +16,6 @@ pub mod mod_file;
 pub use mod_file::*;
 
 use anyhow::Result;
-use physics_types::{ParticleTransport, NuclearCrossSections};
 
 /// Initialize all available FFI libraries
 pub fn initialize_all_libraries() -> Result<()> {
@@ -76,5 +75,5 @@ pub enum FfiPrecision {
 // Re-export commonly used types
 pub use geant4::{Geant4Engine};
 pub use lammps::{LammpsEngine, ForceFieldType, MolecularState, ThermodynamicState};
-pub use gadget::{GadgetEngine, CosmologicalParticle, CosmologicalParameters, Halo};
+pub use gadget::{GadgetEngine, GadgetParticle, CosmologicalParameters, Halo};
 pub use endf::{EndfEngine, ReactionType, ThermalCrossSections, ResonanceParameter}; 

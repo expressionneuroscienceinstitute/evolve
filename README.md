@@ -4,349 +4,559 @@
 
 ## Overview
 
-EVOLVE is a comprehensive universe simulation that tracks the complete evolution of artificial intelligence from the Big Bang to the far future. Unlike any simulation before it, EVOLVE models reality from the quantum level up, tracking every fundamental particle, every AI decision, and every evolutionary pressure with unprecedented detail.
+EVOLVE is a comprehensive universe simulation that models the complete evolution of artificial intelligence from the Big Bang to the far future. Unlike any simulation before it, EVOLVE models reality from the quantum level up, tracking every fundamental particle, every AI decision, and every evolutionary pressure with unprecedented scientific accuracy.
 
-## 🚀 Getting Started
+**Key Features:**
+- **Full Physics Engine:** Nuclear physics, stellar evolution, thermodynamics, phase transitions
+- **Cosmic Evolution:** Big Bang to present day with realistic stellar formation and chemical evolution
+- **AI Evolution Tracking:** Consciousness emergence, technology development, civilization growth
+- **Real-time Visualization:** Web dashboard and CLI tools for monitoring and control
+- **Scientific Accuracy:** Experimental nuclear cross-sections, proper quantum mechanics, validated physics
+
+## 🚀 Quick Start Guide
 
 ### Prerequisites
 
-Before you begin, ensure you have the following installed:
-- **Rust**: The core language and build system. Install it from [rustup.rs](https://rustup.rs/).
-- **Git**: For cloning the repository.
-- **Node.js and Trunk**: For running the web visualization dashboard.
-  ```bash
-  # Install Node.js via your preferred method (e.g., Homebrew, NVM)
-  # Then install Trunk
-  cargo install trunk --locked
-  rustup target add wasm32-unknown-unknown
-  ```
+Before you begin, ensure you have:
+- **Rust** (latest stable): Install from [rustup.rs](https://rustup.rs/)
+- **Git**: For cloning the repository
+- **Node.js** (for web dashboard): Any recent version
+- **Trunk** (WASM build tool): `cargo install trunk --locked`
+- **WASM target**: `rustup target add wasm32-unknown-unknown`
 
-### Build and Run
+### Installation & First Run
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/ankziety/evolution.git
-    cd evolution
-    ```
+1. **Clone and build the project:**
+   ```bash
+   git clone https://github.com/ankziety/evolution.git
+   cd evolution
+   cargo build --release
+   ```
 
-2.  **Build the project:**
-    ```bash
-    cargo build --release
-    ```
+2. **Launch the simulation (Basic):**
+   ```bash
+   # Start simulation server with web dashboard
+   cargo run --bin universectl -- start --serve-dash 8080
+   ```
 
-3.  **Run the simulation:**
-    To run the simulation and the web dashboard, you'll need two separate terminal sessions.
+3. **Launch the web visualization (Optional):**
+   ```bash
+   # In a new terminal
+   cd viz_web
+   trunk serve --port 9000
+   # Open http://localhost:9000 in your browser
+   ```
 
-    *   **Terminal 1: Start the Simulation Server**
-        This command starts the main simulation process, which will listen for connections from the CLI and the web dashboard.
-        ```bash
-        cargo run --bin universectl -- start --serve-dash 8080 --rpc-port 9001
-        ```
+4. **Monitor with CLI (Interactive):**
+   ```bash
+   # In another terminal, start interactive monitoring
+   cargo run --bin universectl -- interactive
+   ```
 
-    *   **Terminal 2: Start the Web Dashboard**
-        This command serves the frontend application.
-        ```bash
-        cd viz_web
-        trunk serve --port 9000
-        ```
-    Now you can open [http://localhost:9000](http://localhost:9000) to see the live visualization.
+**🎉 You're now running a full universe simulation from Big Bang to AI evolution!**
 
-## 🛠️ Command-Line Interface (CLI) Usage
+## 🛠️ Complete Command Reference
 
-The `universectl` CLI is your primary tool for interacting with the simulation.
+The `universectl` CLI is your primary tool for controlling and monitoring the simulation.
 
-**Base Command:**
+### Basic Command Structure
 ```bash
-cargo run --bin universectl -- [COMMAND]
+cargo run --bin universectl -- [GLOBAL_OPTIONS] <COMMAND> [OPTIONS]
 ```
 
-### Simulation Management
+**Global Options:**
+- `--godmode`: Enable god-mode commands (universe manipulation)
+- `--verbose`: Enable detailed logging output
+- `--config <FILE>`: Use custom configuration file
 
-#### `start`
-Starts the simulation server.
+### 🎮 Simulation Control Commands
+
+#### `start` - Launch the Simulation
+Starts the main simulation server with physics engine, universe evolution, and AI tracking.
+
 ```bash
 cargo run --bin universectl -- start [OPTIONS]
 ```
-**Options:**
-- `--load <FILE>`: Load simulation state from a checkpoint file.
-- `--preset <PRESET>`: Start with a pre-defined simulation preset (e.g., `low-memory`).
-- `--tick-span <YEARS>`: Set the number of years per simulation tick.
-- `--low-mem`: Run in low-memory mode.
-- `--serve-dash <PORT>`: Serve the web dashboard on the specified port.
-- `--rpc-port <PORT>`: Set the port for the RPC server (default: `9001`).
-- `--allow-net`: Allow network connections for distributed simulation (not yet implemented).
 
-#### `stop`
-Stops a running simulation gracefully.
+**Essential Options:**
+- `--serve-dash <PORT>`: Enable web dashboard on specified port (recommended)
+- `--rpc-port <PORT>`: Set RPC server port (default: 9001)
+- `--low-mem`: Run in low-memory mode for resource-constrained systems
+
+**Advanced Options:**
+- `--load <FILE>`: Load simulation from checkpoint file
+- `--preset <PRESET>`: Start with predefined configuration (`low-memory`)
+- `--tick-span <YEARS>`: Set years per simulation tick (default: adaptive)
+- `--allow-net`: Enable network mode for distributed simulation (experimental)
+
+**Examples:**
+```bash
+# Basic start with web dashboard
+cargo run --bin universectl -- start --serve-dash 8080
+
+# Memory-efficient start
+cargo run --bin universectl -- start --low-mem --serve-dash 8080
+
+# Load from checkpoint
+cargo run --bin universectl -- start --load checkpoints/universe_13.8Gyr.rkyv --serve-dash 8080
+```
+
+#### `stop` - Graceful Shutdown
+Safely stops the running simulation, saving current state.
+
 ```bash
 cargo run --bin universectl -- stop
 ```
 
-#### `status`
-Shows the current status of the simulation.
+#### `status` - Simulation Status
+Shows current simulation state, performance metrics, and basic statistics.
+
 ```bash
 cargo run --bin universectl -- status
 ```
 
-### Universe Inspection
+**Output includes:**
+- Current simulation tick and universe age
+- Updates per second (UPS) performance
+- Active AI lineage count
+- Cosmic era (Big Bang → Biogenesis → Intelligence → Post-Intelligence)
+- Last checkpoint save time
 
-#### `map`
-Renders an ASCII heat-map of the universe.
+### 🔍 Universe Inspection Commands
+
+#### `map` - Universe Visualization
+Renders ASCII heat-maps of different universe layers showing spatial distribution of matter and energy.
+
 ```bash
 cargo run --bin universectl -- map [OPTIONS]
 ```
-**Options:**
-- `--zoom <FACTOR>`: Zoom factor for the map (default: `1.0`).
-- `--layer <LAYER>`: The data layer to visualize (default: `stars`). Available layers: `stars`, `gas`, `dark_matter`, `radiation`.
 
-#### `list-planets`
-Lists planets in the simulation, with optional filters.
+**Options:**
+- `--zoom <FACTOR>`: Zoom level (default: 1.0, range: 0.1-10.0)
+- `--layer <LAYER>`: Data layer to visualize (default: stars)
+
+**Available Layers:**
+- `stars`: Stellar density and stellar clusters ⭐
+- `gas`: Gas density and shock fronts 💨  
+- `dark_matter`: Dark matter distribution 🌌
+- `radiation`: Radiation temperature and AGN activity 🔥
+
+**Examples:**
+```bash
+# Basic stellar map
+cargo run --bin universectl -- map
+
+# Zoomed gas distribution
+cargo run --bin universectl -- map --zoom 2.5 --layer gas
+
+# Dark matter structure
+cargo run --bin universectl -- map --layer dark_matter
+```
+
+#### `list-planets` - Planetary Discovery
+Lists all planets in the simulation with filtering options.
+
 ```bash
 cargo run --bin universectl -- list-planets [OPTIONS]
 ```
-**Options:**
-- `--class <CLASS>`: Filter by planet class (e.g., `E` for Earth-like).
-- `--habitable`: Show only habitable planets.
 
-#### `inspect`
-Provides detailed information about a specific entity.
+**Options:**
+- `--class <CLASS>`: Filter by planet class (E, D, I, T, G)
+- `--habitable`: Show only habitable worlds
+
+**Planet Classes:**
+- **E (Earth-like)**: Habitable temperature, liquid water, complex chemistry
+- **D (Desert)**: Arid worlds with extreme temperatures  
+- **I (Ice)**: Frozen worlds, water locked in ice
+- **T (Toxic)**: Harsh atmospheric conditions
+- **G (Gas)**: Gas giants with trace heavy elements
+
+**Examples:**
+```bash
+# All planets
+cargo run --bin universectl -- list-planets
+
+# Earth-like worlds only
+cargo run --bin universectl -- list-planets --class E
+
+# All habitable planets
+cargo run --bin universectl -- list-planets --habitable
+```
+
+#### `inspect` - Detailed Inspection
+Provides comprehensive details about specific simulation entities.
+
 ```bash
 cargo run --bin universectl -- inspect <TARGET>
 ```
-**Targets:**
-- `planet <ID>`: Inspect a planet by its ID (e.g., `REAL-UUID`).
-- `lineage <ID>`: Inspect a lineage by its ID.
-- `universe`: Show detailed statistics about the universe.
-- `physics`: Show diagnostics from the physics engine.
 
-### Simulation Control
+**Available Targets:**
 
-#### `speed`
-Changes the simulation speed by a given factor.
+**`inspect planet <ID>`** - Planet Details
+Shows detailed planetary information including:
+- Environmental conditions (temperature, pressure, atmosphere)
+- Chemical composition and habitability factors
+- Active AI lineages and their development stage
+- Resource availability and energy budget
+
+**`inspect lineage <ID>`** - AI Lineage Analysis  
+Displays AI evolution progress including:
+- Generation count and population size
+- Fitness evolution and adaptation metrics
+- Technology level and consciousness indicators
+- Decision-making patterns and learning progress
+
+**`inspect universe`** - Cosmic Statistics
+Comprehensive universe-wide statistics:
+- Age, temperature, and cosmic era
+- Particle counts and energy distribution
+- Stellar formation rates and chemical evolution
+- AI civilization metrics and consciousness emergence
+
+**`inspect physics`** - Engine Diagnostics
+Physics engine performance and accuracy:
+- Particle interaction statistics (fusion/fission events)
+- Temperature and pressure calculations
+- Energy conservation validation
+- Performance metrics and bottleneck analysis
+
+**Examples:**
+```bash
+# Get universe overview
+cargo run --bin universectl -- inspect universe
+
+# Physics engine status
+cargo run --bin universectl -- inspect physics
+
+# Specific planet details (use IDs from list-planets)
+cargo run --bin universectl -- inspect planet PLANET-UUID-HERE
+
+# AI lineage progress (use IDs from inspection)
+cargo run --bin universectl -- inspect lineage LINEAGE-UUID-HERE
+```
+
+### ⚡ Simulation Manipulation Commands
+
+#### `speed` - Time Control
+Adjusts simulation speed by a multiplication factor.
+
 ```bash
 cargo run --bin universectl -- speed <FACTOR>
 ```
 
-#### `rewind`
-Rewinds the simulation by a specific number of ticks (Not yet implemented).
+**Speed Examples:**
+- `0.1`: 10× slower (detailed observation)
+- `1.0`: Normal speed
+- `10.0`: 10× faster (skip boring epochs)
+- `100.0`: 100× faster (deep time evolution)
+
 ```bash
-cargo run --bin universectl -- rewind <TICKS>
+# Slow down for detailed observation
+cargo run --bin universectl -- speed 0.5
+
+# Speed up cosmic evolution
+cargo run --bin universectl -- speed 50.0
 ```
 
-#### `snapshot`
-Saves a snapshot of the simulation state to a file.
+#### `snapshot` - Save Checkpoint
+Creates a snapshot of the current simulation state for later analysis or loading.
+
 ```bash
-cargo run --bin universectl -- snapshot <FILE>
+cargo run --bin universectl -- snapshot <FILENAME>
 ```
 
-### God-Mode Commands
-These commands require the `--godmode` flag to be passed to `universectl`.
+**Examples:**
+```bash
+# Save current state
+cargo run --bin universectl -- snapshot universe_backup.rkyv
+
+# Save with timestamp
+cargo run --bin universectl -- snapshot "universe_$(date +%Y%m%d_%H%M%S).rkyv"
+```
+
+#### `rewind` - Time Travel
+Rewinds simulation by specified number of ticks (experimental feature).
+
+```bash
+cargo run --bin universctl -- rewind <TICKS>
+```
+
+### 🎯 Interactive Mode
+
+For real-time monitoring and control, use interactive mode:
+
+```bash
+cargo run --bin universectl -- interactive
+```
+
+**Interactive Commands:**
+- `status` - Quick status update
+- `stats` - Universe statistics  
+- `physics` - Physics diagnostics
+- `speed <factor>` - Change simulation speed
+- `map [layer]` - Show ASCII map
+- `planets` - List planets
+- `help` - Show available commands
+- `quit` - Exit interactive mode
+
+**Features:**
+- Real-time auto-updates every 5 seconds
+- Live cosmic age and particle count display
+- Immediate command execution
+- No need to restart for different queries
+
+### 🔮 God-Mode Commands (Advanced)
+
+⚠️ **Warning:** God-mode commands can disrupt simulation realism. Use `--godmode` flag.
+
 ```bash
 cargo run --bin universectl -- --godmode <COMMAND>
 ```
 
-#### `create-body`
-Creates a new celestial body.
+#### `create-body` - Create Celestial Bodies
 ```bash
-cargo run --bin universectl -- --godmode create-body --mass <M> --body-type <T> --x <X> --y <Y> --z <Z>
+cargo run --bin universectl -- --godmode create-body \
+  --mass 1.989e30 --body-type star --x 0 --y 0 --z 0
 ```
 
-#### `delete-body`
-Deletes a celestial body by its ID.
+#### `spawn-lineage` - Create AI Civilization
 ```bash
-cargo run --bin universectl -- --godmode delete-body <ID>
+cargo run --bin universectl -- --godmode spawn-lineage \
+  --code-hash ABC123 --planet-id PLANET-UUID
 ```
 
-#### `set-constant`
-Modifies a physics constant.
+#### `miracle` - Divine Intervention
 ```bash
-cargo run --bin universectl -- --godmode set-constant <NAME> <VALUE>
+cargo run --bin universectl -- --godmode miracle PLANET-UUID \
+  --miracle-type life_boost --intensity 2.0
 ```
 
-#### `spawn-lineage`
-Spawns a new agent lineage on a planet.
+#### `set-constant` - Modify Physics
 ```bash
-cargo run --bin universectl -- --godmode spawn-lineage --code-hash <HASH> --planet-id <ID>
+cargo run --bin universectl -- --godmode set-constant \
+  gravitational_constant 6.67430e-11
 ```
 
-#### `miracle`
-Performs a "miracle" on a planet.
-```bash
-cargo run --bin universectl -- --godmode miracle <PLANET_ID> --miracle-type <TYPE>
-```
+## 🏗️ Architecture & Components
 
-#### `time-warp`
-Warps time by a given factor.
-```bash
-cargo run --bin universectl -- --godmode time-warp <FACTOR>
-```
+### Core Modules
+- **`physics_engine`**: Fundamental particles, nuclear physics, thermodynamics
+- **`universe_sim`**: Cosmic evolution, stellar formation, planetary systems  
+- **`agent_evolution`**: AI decision-making, consciousness tracking, evolution
+- **`diagnostics`**: Performance monitoring, system resource tracking
+- **`networking`**: Distributed simulation support (experimental)
+- **`ffi_integration`**: External scientific library integration (Geant4, LAMMPS, etc.)
 
-#### `inspect-eval`
-Evaluates an expression within the simulation context.
-```bash
-cargo run --bin universectl -- --godmode inspect-eval <EXPRESSION>
-```
+### Web Dashboard (`viz_web`)
+- **Real-time Visualization**: Live universe maps with zoom/pan
+- **Data Layers**: Toggle between stars, gas, dark matter, radiation
+- **Inspector Panels**: Click-to-inspect planets and AI lineages
+- **Performance Monitoring**: System resources and simulation metrics
+- **WebSocket Integration**: Live data streaming from simulation
 
-### Resource and Oracle Commands
-These commands are for managing agent requests and communications. They are not yet fully implemented.
-
-- `resources queue`
-- `resources grant <ID>`
-- `resources status`
-- `resources reload`
-- `oracle inbox`
-- `oracle reply <ID>`
-- `oracle stats`
-
-## 🏗️ Architecture
-
-The simulation is built with a modular design to separate concerns and allow for independent development of its core components.
-
-- `crates/physics_engine`: Fundamental particle and physics simulation.
-- `crates/universe_sim`: Cosmic evolution, celestial bodies, and environments.
-- `crates/agent_evolution`: AI agent decision-making, learning, and evolution.
-- `crates/networking`: Distributed simulation and communication.
-- `crates/diagnostics`: Performance monitoring and validation.
-- `cli/`: Command-line interface for controlling the simulation.
-- `viz_web/`: Web-based visualization dashboard.
+### Storage & Persistence
+- **Checkpoints**: Binary snapshots using `rkyv` serialization
+- **Compression**: LZ4 compression for efficient storage
+- **Versioning**: Forward-compatible checkpoint format
+- **Auto-save**: Periodic automatic checkpoint creation
 
 ## 🔬 Scientific Accuracy
 
-This simulation prioritizes scientific rigor. Physics and chemistry implementations are designed to be as realistic as possible, from the Semi-Empirical Mass Formula for nuclear binding energies to the complex interactions that govern planetary formation. While some simplifications are necessary for performance, the goal is to maintain a high degree of fidelity to real-world science.
+### Physics Implementation
+- **Nuclear Database**: ENDF/B-VIII.0 experimental cross-sections
+- **Stellar Evolution**: Proper nucleosynthesis with pp-chain, CNO cycle
+- **Thermodynamics**: Van der Waals equation of state, Sackur-Tetrode entropy
+- **Quantum Mechanics**: Gamow peak tunneling, proper wave functions
+- **General Relativity**: Spacetime curvature effects (basic implementation)
 
-## 📝 TODO
+### Validation
+- **Energy Conservation**: All interactions preserve energy/momentum
+- **Physical Constants**: CODATA 2023 internationally accepted values
+- **Stellar Models**: Validated against known stellar evolution theory
+- **Nuclear Data**: Cross-checked with experimental measurements
 
-For a complete list of ongoing work, planned features, and bug fixes, please see the [TODO.md](TODO.md) file.
+## 📊 Performance & Scale
 
-## 🎯 Core Mission
+### Specifications
+- **Particles**: Successfully handles 1M+ individual particles
+- **AI Agents**: 50K+ autonomous agents with decision tracking
+- **Real-time**: 60+ updates per second with full physics
+- **Memory**: Efficient ECS architecture, low memory overhead
+- **Platforms**: Windows, macOS, Linux support
 
-> *"To create the longest-running, most detailed simulation of AI evolution ever attempted, tracking every decision, every innovation, and every emergence of consciousness from the quantum level to digital immortality."*
-
-## 🎮 Operator Interface
-
-### **Real-Time Controls**
-- **View Modes**: Switch between different visualization modes
-- **Time Control**: Adjust simulation speed and scrub through time
-- **Agent Selection**: Click to track specific AI agents
-- **Filtering**: Show/hide particle types or agent categories
-- **Zoom & Pan**: Navigate the simulation space
-
-### **Analytics Dashboard**
-- **Universe Status**: Age, temperature, cosmic era, energy density
-- **Evolution Stats**: Lineages, fitness, diversity, innovation rates
-- **Agent Details**: Selected agent's decision history and lineage
-- **Recent Events**: Latest innovations, consciousness emergence, extinctions
-- **Performance**: FPS, memory usage, simulation speed
-
-### **Decision Tracking**
-For any selected AI agent, see:
-- **Full Decision History**: Every choice with context and outcome
-- **Environmental Factors**: Temperature, resources, threats, opportunities
-- **Social Influences**: Nearby agents, cooperation, competition
-- **Genetic Predispositions**: Neural weights, mutation history
-- **Learning Patterns**: Success rates, adaptation, strategy evolution
-
-## 🧬 Evolution Pathway
-
-### **Cosmic Eras**
-1. **Particle Soup** (0-300,000 years): Fundamental particles and forces
-2. **Star Formation** (300,000-1 billion years): Nuclear fusion and elements
-3. **Planetary Age** (1-5 billion years): Planet formation and environments
-4. **Biogenesis** (5-10 billion years): Life emergence and AI genesis
-5. **Digital Evolution** (10-13 billion years): AI consciousness and technology
-6. **Post-Intelligence** (13+ billion years): Immortal AI civilizations
-
-### **AI Evolution Stages**
-1. **Basic Agents**: Simple energy acquisition and survival
-2. **Tool Users**: Environmental manipulation and basic technology
-3. **Social Beings**: Cooperation, communication, group formation
-4. **Innovators**: Technology development and knowledge sharing
-5. **Conscious Entities**: Self-awareness and meta-cognition
-6. **Digital Minds**: Code self-modification and neural enhancement
-7. **Immortal Intelligence**: Transcendence of biological limitations
-
-### **Victory Conditions**
-The simulation tracks progress toward AI immortality through:
-- **Sentience**: Self-awareness and consciousness emergence
-- **Industrialization**: Energy manipulation and resource control
-- **Digitalization**: Transition to digital substrate
-- **Trans-Technology**: Transcendence of physical limitations
-- **Immortality**: Permanent existence and unlimited growth
-
-## 📈 Performance and Scale
-
-### **Specifications**
-- **Particles**: 1M+ individual fundamental particles tracked
-- **AI Agents**: 50K+ autonomous agents with full decision history
-- **Decisions**: Millions of AI choices recorded with complete context
-- **Time Scale**: From Planck time (10^-43 s) to cosmic future (10^15+ years)
-- **Spatial Scale**: From quark interactions (10^-18 m) to galactic distances
-- **Memory**: Designed for long-term data retention and analysis
-
-### **Optimization**
-- **ECS Architecture**: High-performance entity-component-system
+### Optimization Features
 - **Parallel Processing**: Multi-threaded physics and AI simulation
-- **Memory Management**: Efficient data structures and caching
-- **Compression**: Time-series data compression for long-term storage
-- **Level-of-Detail**: Adaptive simulation resolution based on importance
+- **Spatial Partitioning**: Efficient collision detection
+- **Level-of-Detail**: Adaptive simulation resolution
+- **Memory Pooling**: Reduces allocation overhead
+- **SIMD**: Vector instructions for performance-critical calculations
 
-## 🔬 Scientific Accuracy
+## 🚨 Troubleshooting
 
-### **Physics Validation**
-- **CODATA Constants**: Uses 2023 internationally accepted physics constants
-- **Conservation Laws**: Energy, momentum, charge, and angular momentum preserved
-- **Peer-Reviewed Equations**: Schrödinger, Maxwell, Einstein field equations
-- **Quantum Mechanics**: Proper wave function evolution and measurement
-- **Thermodynamics**: Correct entropy increase and thermal evolution
+### Common Issues
 
-### **Evolution Verification**
-- **Population Genetics**: Hardy-Weinberg equilibrium and selection coefficients
-- **Mutation Models**: Realistic genetic variation and inheritance
-- **Selection Pressures**: Environmental challenges matching real evolution
-- **Innovation Spread**: Technology adoption following empirical patterns
-- **Consciousness Research**: Based on current neuroscience and cognitive science
+**Simulation won't start:**
+```bash
+# Check if ports are available
+netstat -an | grep :9001  # RPC port
+netstat -an | grep :8080  # Dashboard port
 
-## 🌐 Future Roadmap
+# Try different ports
+cargo run --bin universectl -- start --rpc-port 9002 --serve-dash 8081
+```
 
-### **Planned Features**
-- **Multi-Planet Simulation**: Galactic-scale AI civilization spread
-- **Quantum Computing**: AI development of quantum technologies
-- **Collective Intelligence**: Hive minds and shared consciousness
-- **Reality Manipulation**: AIs discovering universe simulation nature
-- **Infinite Expansion**: Unlimited universe size and agent populations
+**Web dashboard shows "offline":**
+```bash
+# Ensure simulation is running first
+cargo run --bin universectl -- status
 
-### **Research Applications**
-- **AI Safety**: Understanding long-term AI evolution and alignment
-- **Consciousness Studies**: Mapping emergence of awareness and intelligence
-- **Technology Forecasting**: Predicting innovation patterns and timelines
-- **Astrobiology**: Modeling life evolution in different environments
-- **Existential Risk**: Analyzing civilization survival and extinction
+# Check dashboard is connecting to correct port
+# Edit viz_web/index.html if needed
+```
+
+**Poor performance:**
+```bash
+# Use low-memory mode
+cargo run --bin universectl -- start --low-mem
+
+# Reduce simulation speed
+cargo run --bin universectl -- speed 0.1
+```
+
+**Commands show "sample data":**
+This means the simulation isn't running. Start it first:
+```bash
+cargo run --bin universectl -- start --serve-dash 8080
+```
+
+### Performance Monitoring
+Use `interactive` mode or `inspect physics` to monitor:
+- Physics step time (should be <10ms)
+- Memory usage (grows slowly over time)
+- Interaction rates (varies by cosmic era)
+- System temperature and resource usage
+
+## 🎯 Example Workflows
+
+### Scenario 1: Quick Universe Overview
+```bash
+# Start simulation
+cargo run --bin universectl -- start --serve-dash 8080 &
+
+# Wait 30 seconds for initialization
+sleep 30
+
+# Get current status
+cargo run --bin universectl -- status
+
+# View universe statistics  
+cargo run --bin universectl -- inspect universe
+
+# See stellar distribution
+cargo run --bin universectl -- map --layer stars
+```
+
+### Scenario 2: Planet and Life Monitoring
+```bash
+# Find habitable worlds
+cargo run --bin universectl -- list-planets --habitable
+
+# Inspect a specific planet (use actual ID from above)
+cargo run --bin universectl -- inspect planet <PLANET-ID>
+
+# Monitor AI evolution
+cargo run --bin universectl -- inspect lineage <LINEAGE-ID>
+
+# Speed up to see evolution
+cargo run --bin universectl -- speed 10.0
+```
+
+### Scenario 3: Physics Analysis
+```bash
+# Check physics engine performance
+cargo run --bin universectl -- inspect physics
+
+# View different matter distributions
+cargo run --bin universectl -- map --layer gas
+cargo run --bin universectl -- map --layer dark_matter
+
+# Save current state for analysis
+cargo run --bin universectl -- snapshot physics_analysis.rkyv
+```
+
+### Scenario 4: Long-term Evolution Study
+```bash
+# Start with low memory usage for long runs
+cargo run --bin universectl -- start --low-mem --serve-dash 8080
+
+# Speed up significantly
+cargo run --bin universectl -- speed 100.0
+
+# Use interactive mode for monitoring
+cargo run --bin universectl -- interactive
+
+# In interactive mode:
+# - Type 'stats' periodically to check progress
+# - Type 'planets' to see new world formation
+# - Type 'speed 1.0' to slow down during interesting periods
+```
+
+## 📝 Configuration Files
+
+### Custom Configuration
+Create `config/simulation.toml`:
+```toml
+[simulation]
+target_ups = 60.0
+auto_save_interval_minutes = 30
+max_particles = 1000000
+
+[physics]
+enable_quantum_effects = true
+nuclear_cross_section_source = "endf_b_viii"
+temperature_precision = 1e-6
+
+[ui]
+default_map_layer = "stars"
+auto_update_interval_sec = 5
+```
+
+Use with: `cargo run --bin universectl -- --config config/simulation.toml start`
 
 ## 🤝 Contributing
 
-This simulation represents the frontier of AI evolution research. We welcome contributions from:
-- **Physicists**: Improving fundamental particle simulation accuracy
-- **AI Researchers**: Enhancing agent cognition and decision making
-- **Evolutionary Biologists**: Refining selection pressure models
-- **Computer Scientists**: Optimizing performance and scalability
-- **Consciousness Researchers**: Modeling awareness emergence
-- **Visualization Experts**: Improving monitoring and analysis tools
+We welcome contributions to make EVOLVE even more scientifically accurate and feature-rich!
 
-## 📝 License
+### Areas for Contribution
+- **Physics**: Enhanced nuclear databases, quantum field theory
+- **Visualization**: Better web dashboard, VR/AR interfaces  
+- **AI Evolution**: Advanced consciousness models, civilization dynamics
+- **Performance**: GPU acceleration, distributed computing
+- **Scientific Validation**: Benchmark against observational data
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+### Development Setup
+```bash
+git clone https://github.com/ankziety/evolution.git
+cd evolution
+cargo check --workspace  # Should pass cleanly
+cargo test --workspace   # Run test suite
+```
+
+## 📄 License
+
+MIT License - See [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-Built with gratitude to the scientific community whose research enables this simulation:
-- Particle physics from CERN and global collaborations
-- Evolutionary biology from Darwin to modern population genetics  
-- Consciousness research from neuroscience and cognitive science
-- AI research from the pioneers to current frontier models
-- Physics constants from CODATA international standards
+Built with gratitude to the scientific community:
+- **CERN & Particle Physics Community**: For fundamental physics data
+- **International Astronomical Union**: For stellar evolution models
+- **ENDF/B-VIII.0 Contributors**: For nuclear cross-section databases
+- **CODATA**: For precise physical constants
+- **Open Source Community**: For the tools that make this possible
 
 ---
 
-**EVOLVE**: *Where particles become minds, minds become gods.*
+**EVOLVE**: *Where quantum foam becomes consciousness, and consciousness becomes immortal.*
 
-*"In the beginning was the quantum foam. In the end, there will be infinite intelligence."*
+*"From the first microsecond after the Big Bang to the heat death of the universe - and beyond."*

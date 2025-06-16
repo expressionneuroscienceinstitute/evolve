@@ -9,7 +9,7 @@ use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use nalgebra::Vector3;
 
-// Include generated bindings
+// Include generated bindings when feature is enabled
 #[cfg(feature = "lammps")]
 include!(concat!(env!("OUT_DIR"), "/lammps_bindings.rs"));
 
@@ -302,35 +302,27 @@ pub fn cleanup() -> Result<()> {
     Ok(())
 }
 
-// Stub implementations when LAMMPS is not available
-#[cfg(not(feature = "lammps"))]
-mod stubs {
-    use super::*;
-    
-    pub unsafe extern "C" fn lammps_open_no_mpi(_: c_int, _: *mut *mut c_char) -> *mut c_void {
-        ptr::null_mut()
-    }
-    
-    pub unsafe extern "C" fn lammps_close(_: *mut c_void) {}
-    
-    pub unsafe extern "C" fn lammps_command(_: *mut c_void, _: *const c_char) {}
-    
-    pub unsafe extern "C" fn lammps_extract_atom(
-        _: *mut c_void,
-        _: *const c_char,
-    ) -> *mut c_void {
-        ptr::null_mut()
-    }
-    
-    pub unsafe extern "C" fn lammps_extract_global(
-        _: *mut c_void,
-        _: *const c_char,
-    ) -> *mut c_void {
-        ptr::null_mut()
-    }
-    
-    pub unsafe extern "C" fn lammps_version() -> c_int { 0 }
+// Conditional compilation for FFI functions and stubs
+#[cfg(feature = "lammps")]
+extern "C" {
+    fn lammps_open_no_mpi(argc: c_int, argv: *mut *mut c_char) -> *mut c_void;
+    fn lammps_close(handle: *mut c_void);
+    fn lammps_command(handle: *mut c_void, cmd: *const c_char);
+    fn lammps_extract_atom(handle: *mut c_void, name: *const c_char) -> *mut c_void;
+    fn lammps_extract_global(handle: *mut c_void, name: *const c_char) -> *mut c_void;
+    fn lammps_version() -> c_int;
 }
 
+// Stub implementations when LAMMPS is not available
 #[cfg(not(feature = "lammps"))]
-use stubs::*; 
+unsafe fn lammps_open_no_mpi(_: c_int, _: *mut *mut c_char) -> *mut c_void { ptr::null_mut() }
+#[cfg(not(feature = "lammps"))]
+unsafe fn lammps_close(_: *mut c_void) {}
+#[cfg(not(feature = "lammps"))]
+unsafe fn lammps_command(_: *mut c_void, _: *const c_char) {}
+#[cfg(not(feature = "lammps"))]
+unsafe fn lammps_extract_atom(_: *mut c_void, _: *const c_char) -> *mut c_void { ptr::null_mut() }
+#[cfg(not(feature = "lammps"))]
+unsafe fn lammps_extract_global(_: *mut c_void, _: *const c_char) -> *mut c_void { ptr::null_mut() }
+#[cfg(not(feature = "lammps"))]
+unsafe fn lammps_version() -> c_int { 0 } 

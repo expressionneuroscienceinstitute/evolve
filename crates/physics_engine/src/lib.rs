@@ -34,7 +34,6 @@ use bevy_ecs::prelude::Component;
 use self::nuclear_physics::StellarNucleosynthesis;
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
 use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT};
-use crate::geant4_integration::{StoppingPowerTable as G4StoppingPowerTable, DecayData as G4DecayData, MaterialProperties as G4MaterialProperties};
 use physics_types as shared_types;
 
 pub use constants::*;

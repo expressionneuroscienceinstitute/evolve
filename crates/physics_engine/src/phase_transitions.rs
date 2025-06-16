@@ -6,6 +6,16 @@
 
 use anyhow::Result;
 use crate::emergent_properties::{Temperature, Pressure, Density};
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use once_cell::sync::Lazy;
+
+// Global map tracking the last phase printed for each substance so we only log
+// when the phase actually changes. `Lazy`+`Mutex` is sufficient because the
+// overhead is negligible compared to a full simulation tick and it avoids
+// bringing in a heavier dependency.
+static LAST_PHASE: Lazy<Mutex<HashMap<String, Phase>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Represents the possible phases of matter for a substance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,13 +128,33 @@ impl PhaseTransitionModel {
 
     /// Notifies about a phase transition event.
     fn log_phase_transition(&self, phase: &Phase, temp: &Temperature, pres: &Pressure, density: &Density) {
-        println!(
-            "Phase transition to {:?}. Conditions: {:.2} K, {:.2} Pa, Density: {:.2} kg/m^3.",
-            phase,
-            temp.as_kelvin(),
-            pres.as_pascals(),
-            density.as_kg_per_m3()
-        );
+        // Don't log transitions with zero or invalid values as they indicate uninitialized state
+        let temp_k = temp.as_kelvin();
+        let pres_pa = pres.as_pascals();
+        let dens_kg_m3 = density.as_kg_per_m3();
+        
+        if temp_k <= 0.0 || pres_pa <= 0.0 || dens_kg_m3 <= 0.0 {
+            return; // Skip logging for uninitialized or invalid states
+        }
+        
+        // Check if the phase actually changed compared with last recorded for this substance
+        let mut map = LAST_PHASE.lock().unwrap();
+        let entry = map.entry(self.substance_name.clone()).or_insert(*phase);
+
+        if *entry != *phase {
+            // Update stored phase
+            *entry = *phase;
+
+            // Use proper logging instead of direct stdout to avoid interfering with CLI
+            tracing::info!(
+                substance = %self.substance_name,
+                phase = ?phase,
+                temperature_k = temp_k,
+                pressure_pa = pres_pa,
+                density_kg_m3 = dens_kg_m3,
+                "Phase transition occurred"
+            );
+        }
     }
 }
 

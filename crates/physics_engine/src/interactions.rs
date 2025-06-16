@@ -253,6 +253,8 @@ pub fn pair_produce(
         decay_time: None,
         quantum_state: crate::QuantumState::new(),
         interaction_history: vec![],
+        velocity: electron_dir * electron_momentum_mag / ELECTRON_MASS,
+        charge: -ELEMENTARY_CHARGE,
     };
     
     let mut positron = electron.clone();

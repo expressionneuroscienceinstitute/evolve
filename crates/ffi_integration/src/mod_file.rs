@@ -6,6 +6,7 @@
 // Module declarations are in lib.rs
 
 use anyhow::Result;
+use crate::{geant4, lammps, gadget, endf};
 
 /// Initialize all FFI libraries
 pub fn initialize_ffi_libraries() -> Result<()> {

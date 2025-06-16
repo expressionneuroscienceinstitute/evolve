@@ -111,6 +111,8 @@ pub fn spawn_rest(pt: ParticleType) -> FundamentalParticle {
         decay_time: None,
         quantum_state: crate::QuantumState::new(),
         interaction_history: Vec::new(),
+        velocity: Vector3::zeros(),
+        charge: props.charge_c,
     }
 }
 

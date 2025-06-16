@@ -7,6 +7,7 @@
 //! - GADGET: Cosmological N-body simulation
 //! - ENDF: Nuclear data library
 
+pub mod types;
 pub mod geant4;
 pub mod lammps; 
 pub mod gadget;

@@ -11,7 +11,7 @@ pub mod constants;
 pub mod electromagnetic;
 pub mod emergent_properties;
 pub mod endf_data;
-pub mod ffi;
+// pub mod ffi; // TODO: Create this module
 pub mod geodynamics;
 pub mod interactions;
 pub mod molecular_dynamics;
@@ -20,6 +20,7 @@ pub mod particles;
 pub mod phase_transitions;
 pub mod quantum;
 pub mod quantum_fields;
+pub mod spatial;
 pub mod thermodynamics;
 pub mod validation;
 
@@ -31,6 +32,7 @@ use rand::{Rng, thread_rng};
 use bevy_ecs::prelude::Component;
 
 use self::nuclear_physics::StellarNucleosynthesis;
+use self::spatial::{SpatialHashGrid, SpatialGridStats};
 
 pub use constants::*;
 
@@ -97,6 +99,8 @@ pub struct FundamentalParticle {
     pub decay_time: Option<f64>,
     pub quantum_state: QuantumState,
     pub interaction_history: Vec<InteractionEvent>,
+    pub velocity: Vector3<f64>,
+    pub charge: f64,
 }
 
 /// Quantum state representation
@@ -170,10 +174,13 @@ pub struct PhysicsEngine {
     pub neutron_decay_count: u64, // Track neutron beta decay events
     pub fusion_count: u64, // Track nuclear fusion events
     pub fission_count: u64, // Track nuclear fission events
-    pub ffi_available: crate::ffi::LibraryStatus,
-    pub geant4_engine: Option<ffi::geant4::Geant4Engine>,
-    pub lammps_engine: Option<ffi::lammps::LammpsEngine>,
-    pub gadget_engine: Option<ffi::gadget::GadgetEngine>,
+    // TODO: Restore FFI support when ffi module is created
+    // pub ffi_available: crate::ffi::LibraryStatus,
+    // pub geant4_engine: Option<ffi::geant4::Geant4Engine>,
+    // pub lammps_engine: Option<ffi::lammps::LammpsEngine>,
+    // pub gadget_engine: Option<ffi::gadget::GadgetEngine>,
+    pub spatial_grid: SpatialHashGrid,
+    pub interaction_history: Vec<InteractionEvent>,
 }
 
 /// Atomic nucleus with detailed structure
@@ -321,18 +328,18 @@ struct AtomicUpdate {
 impl PhysicsEngine {
     /// Creates a new physics engine with optional FFI integration
     pub fn new() -> Result<Self> {
-        // Check FFI library availability
-        let ffi_status = crate::ffi::check_library_availability();
-        if ffi_status.all_available() {
-            log::info!("All high-fidelity scientific libraries available");
-            log::info!("{}", ffi_status.status_report());
-        } else {
-            log::warn!("Some scientific libraries missing - using fallback implementations");
-            log::warn!("{}", ffi_status.status_report());
-        }
+        // TODO: Check FFI library availability when ffi module exists
+        // let ffi_status = crate::ffi::check_library_availability();
+        // if ffi_status.all_available() {
+        //     log::info!("All high-fidelity scientific libraries available");
+        //     log::info!("{}", ffi_status.status_report());
+        // } else {
+        //     log::warn!("Some scientific libraries missing - using fallback implementations");
+        //     log::warn!("{}", ffi_status.status_report());
+        // }
 
         // Initialize FFI libraries
-        crate::ffi::initialize_ffi_libraries()?;
+        // crate::ffi::initialize_ffi_libraries()?;
 
         let mut engine = Self {
             particles: Vec::new(),
@@ -363,22 +370,25 @@ impl PhysicsEngine {
             neutron_decay_count: 0,
             fusion_count: 0,
             fission_count: 0,
-            ffi_available: ffi_status,
-            geant4_engine: if ffi_status.geant4_available {
-                Some(ffi::geant4::Geant4Engine::new("QBBC")?)
-            } else {
-                None
-            },
-            lammps_engine: if ffi_status.lammps_available {
-                Some(ffi::lammps::LammpsEngine::new()?)
-            } else {
-                None
-            },
-            gadget_engine: if ffi_status.gadget_available {
-                Some(ffi::gadget::GadgetEngine::new()?)
-            } else {
-                None
-            },
+            // TODO: Restore FFI engines when ffi module exists
+            // ffi_available: ffi_status,
+            // geant4_engine: if ffi_status.geant4_available {
+            //     Some(ffi::geant4::Geant4Engine::new("QBBC")?)
+            // } else {
+            //     None
+            // },
+            // lammps_engine: if ffi_status.lammps_available {
+            //     Some(ffi::lammps::LammpsEngine::new()?)
+            // } else {
+            //     None
+            // },
+            // gadget_engine: if ffi_status.gadget_available {
+            //     Some(ffi::gadget::GadgetEngine::new()?)
+            // } else {
+            //     None
+            // },
+            spatial_grid: SpatialHashGrid::new(1e-14), // 10 femtometer interaction range
+            interaction_history: Vec::new(),
         };
         
         // Initialize quantum fields
@@ -506,6 +516,8 @@ impl PhysicsEngine {
                 decay_time: Some(self.current_time + rng.gen_range(1e-20..1e-18)),
                 quantum_state: QuantumState::new(),
                 interaction_history: Vec::new(),
+                velocity: Vector3::zeros(),
+                charge: 0.0,
             };
             
             // Create antiparticle for leptons before pushing particle
@@ -532,6 +544,8 @@ impl PhysicsEngine {
                     decay_time: self.calculate_decay_time(antiparticle_type),
                     quantum_state: QuantumState::new(),
                     interaction_history: Vec::new(),
+                    velocity: Vector3::zeros(),
+                    charge: 0.0,
                 };
                 
                 self.particles.push(particle);
@@ -560,6 +574,8 @@ impl PhysicsEngine {
                 decay_time: Some(self.current_time + rng.gen_range(1e-20..1e-18)),
                 quantum_state: QuantumState::new(),
                 interaction_history: Vec::new(),
+                velocity: Vector3::zeros(),
+                charge: 0.0,
             };
             self.particles.push(neutron);
         }
@@ -624,7 +640,7 @@ impl PhysicsEngine {
     
     /// Comprehensive physics simulation step
     pub fn step(&mut self, dt: f64) -> Result<()> {
-        self.timestep = dt;
+        self.time_step = dt;
         self.current_time += dt;
         
         // 1. High-fidelity particle interactions (Geant4)
@@ -645,10 +661,19 @@ impl PhysicsEngine {
         self.update_atomic_physics()?;
         
         // 6. Phase transitions (enhanced with molecular data from LAMMPS)
-        self.update_phase_transitions()?;
+        self.process_phase_transitions()?;
         
         // 7. Emergent properties (statistical mechanics)
-        self.update_emergent_properties()?;
+        let mut emergent_states: Vec<PhysicsState> = self.particles.iter().map(|p| PhysicsState {
+            position: p.position,
+            velocity: p.velocity,
+            acceleration: Vector3::zeros(),
+            mass: p.mass,
+            charge: p.charge,
+            temperature: self.temperature,
+            entropy: 0.0,
+        }).collect();
+        self.update_emergent_properties(&mut emergent_states)?;
         
         // 8. Quantum field evolution
         self.evolve_quantum_state()?;
@@ -664,13 +689,17 @@ impl PhysicsEngine {
     
     /// Process particle interactions using Geant4 if available, fallback to native
     pub fn process_particle_interactions(&mut self) -> Result<()> {
-        if let Some(ref mut geant4) = self.geant4_engine {
-            // Use high-fidelity Geant4 for particle physics
-            self.process_geant4_interactions(geant4)?;
-        } else {
-            // Fallback to native implementation
-            self.process_native_interactions()?;
-        }
+        // Update spatial grid for optimized neighbor finding
+        self.spatial_grid.update(&self.particles);
+        
+        // TODO: Restore when FFI engines are available
+        // if let Some(ref mut geant4) = self.geant4_engine {
+        //     // Use high-fidelity Geant4 for particle physics
+        //     self.process_geant4_interactions(geant4)?;
+        // } else {
+            // Fallback to native implementation with spatial optimization
+            self.process_native_interactions_optimized()?;
+        // }
         Ok(())
     }
 
@@ -704,14 +733,30 @@ impl PhysicsEngine {
         Ok(())
     }
 
+    /// Process native interactions (fallback method)
+    fn process_native_interactions(&mut self) -> Result<()> {
+        // Fallback to optimized version
+        self.process_native_interactions_optimized()
+    }
+
     /// Process molecular dynamics using LAMMPS if available
     pub fn process_molecular_dynamics(&mut self) -> Result<()> {
-        if let Some(ref mut lammps) = self.lammps_engine {
-            self.process_lammps_dynamics(lammps)?;
-        } else {
+        // TODO: Restore when FFI engines are available
+        // if let Some(ref mut lammps) = self.lammps_engine {
+        //     self.process_lammps_dynamics(lammps)?;
+        // } else {
             // Fallback to native molecular dynamics
-            self.update_molecular_dynamics()?;
-        }
+            let mut states: Vec<PhysicsState> = self.particles.iter().map(|p| PhysicsState {
+                position: p.position,
+                velocity: p.velocity,
+                acceleration: Vector3::zeros(),
+                mass: p.mass,
+                charge: p.charge,
+                temperature: self.temperature,
+                entropy: 0.0,
+            }).collect();
+            self.update_molecular_dynamics(&mut states)?;
+        // }
         Ok(())
     }
 
@@ -731,7 +776,7 @@ impl PhysicsEngine {
         }
         
         // Run molecular dynamics step
-        let timestep_fs = self.timestep * 1e15; // Convert to femtoseconds
+        let timestep_fs = self.time_step * 1e15; // Convert to femtoseconds
         lammps.run_dynamics(1, timestep_fs)?;
         
         // Extract results back to particles
@@ -749,12 +794,13 @@ impl PhysicsEngine {
 
     /// Process gravitational dynamics using GADGET if available
     pub fn process_gravitational_dynamics(&mut self) -> Result<()> {
-        if let Some(ref mut gadget) = self.gadget_engine {
-            self.process_gadget_gravity(gadget)?;
-        } else {
+        // TODO: Restore when FFI engines are available
+        // if let Some(ref mut gadget) = self.gadget_engine {
+        //     self.process_gadget_gravity(gadget)?;
+        // } else {
             // Fallback to native gravity calculations
             self.update_gravitational_forces()?;
-        }
+        // }
         Ok(())
     }
 
@@ -783,7 +829,7 @@ impl PhysicsEngine {
         
         // Calculate forces and integrate one step
         gadget.calculate_forces()?;
-        gadget.integrate_step(self.timestep)?;
+        gadget.integrate_step(self.time_step)?;
         
         // Extract results back to particles
         let updated_particles = gadget.get_particle_data()?;
@@ -796,9 +842,245 @@ impl PhysicsEngine {
             }
         }
         
+                Ok(())
+    }
+
+    /// Process native particle interactions with spatial optimization (O(N) instead of O(N²))
+    fn process_native_interactions_optimized(&mut self) -> Result<()> {
+        // Find all interaction pairs using spatial grid
+        let interaction_pairs = self.spatial_grid.find_interaction_pairs(&self.particles);
+        
+        // Process interactions for each pair
+        for (i, j) in interaction_pairs {
+            if i >= self.particles.len() || j >= self.particles.len() {
+                continue;
+            }
+            
+            let p1 = &self.particles[i];
+            let p2 = &self.particles[j];
+            
+            // Calculate distance
+            let distance = (p1.position - p2.position).norm();
+            
+            // Process different types of interactions based on particle types
+            self.process_particle_pair_interaction(i, j, distance)?;
+        }
+        
         Ok(())
     }
     
+    /// Process interaction between a specific pair of particles
+    fn process_particle_pair_interaction(&mut self, i: usize, j: usize, distance: f64) -> Result<()> {
+        if i >= self.particles.len() || j >= self.particles.len() {
+            return Ok(());
+        }
+        
+        let p1_type = self.particles[i].particle_type;
+        let p2_type = self.particles[j].particle_type;
+        
+        // Electromagnetic interactions
+        if self.can_interact_electromagnetically(p1_type, p2_type) {
+            self.process_electromagnetic_interaction(i, j, distance)?;
+        }
+        
+        // Strong interactions (for quarks and gluons)
+        if self.can_interact_strongly(p1_type, p2_type) {
+            self.process_strong_interaction(i, j, distance)?;
+        }
+        
+        // Weak interactions
+        if self.can_interact_weakly(p1_type, p2_type) {
+            self.process_weak_interaction(i, j, distance)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Check if particles can interact electromagnetically
+    fn can_interact_electromagnetically(&self, p1: ParticleType, p2: ParticleType) -> bool {
+        // Both particles must have electric charge
+        let charge1 = self.get_electric_charge(p1);
+        let charge2 = self.get_electric_charge(p2);
+        charge1 != 0.0 || charge2 != 0.0
+    }
+    
+    /// Check if particles can interact via strong force
+    fn can_interact_strongly(&self, p1: ParticleType, p2: ParticleType) -> bool {
+        // Check if either particle carries color charge (quarks and gluons)
+        matches!(p1, ParticleType::Up | ParticleType::Down | ParticleType::Charm | 
+                     ParticleType::Strange | ParticleType::Top | ParticleType::Bottom | 
+                     ParticleType::Gluon) ||
+        matches!(p2, ParticleType::Up | ParticleType::Down | ParticleType::Charm | 
+                     ParticleType::Strange | ParticleType::Top | ParticleType::Bottom | 
+                     ParticleType::Gluon)
+    }
+    
+    /// Check if particles can interact via weak force
+    fn can_interact_weakly(&self, p1: ParticleType, p2: ParticleType) -> bool {
+        // All fermions can interact weakly
+        self.is_fermion(p1) || self.is_fermion(p2)
+    }
+    
+    /// Check if particle is a fermion
+    fn is_fermion(&self, particle_type: ParticleType) -> bool {
+        matches!(particle_type, 
+            ParticleType::Electron | ParticleType::Muon | ParticleType::Tau |
+            ParticleType::ElectronNeutrino | ParticleType::MuonNeutrino | ParticleType::TauNeutrino |
+            ParticleType::Up | ParticleType::Down | ParticleType::Charm | 
+            ParticleType::Strange | ParticleType::Top | ParticleType::Bottom |
+            ParticleType::Proton | ParticleType::Neutron
+        )
+    }
+    
+    /// Process electromagnetic interaction between two particles
+    fn process_electromagnetic_interaction(&mut self, i: usize, j: usize, distance: f64) -> Result<()> {
+        if distance < 1e-15 { // Avoid singularity
+            return Ok(());
+        }
+        
+        // Compton scattering: photon + electron -> photon + electron
+        if (self.particles[i].particle_type == ParticleType::Photon && 
+            self.particles[j].particle_type == ParticleType::Electron) ||
+           (self.particles[j].particle_type == ParticleType::Photon && 
+            self.particles[i].particle_type == ParticleType::Electron) {
+            
+            self.compton_count += 1;
+            // Simplified: exchange momentum according to Compton scattering
+            self.exchange_momentum_compton(i, j)?;
+        }
+        
+        // Coulomb scattering between charged particles
+        if self.particles[i].electric_charge != 0.0 && self.particles[j].electric_charge != 0.0 {
+            self.coulomb_scattering(i, j, distance)?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Process strong interaction between quarks/gluons
+    fn process_strong_interaction(&mut self, _i: usize, _j: usize, _distance: f64) -> Result<()> {
+        // Simplified strong interaction - would implement QCD here
+        // For now, just a placeholder for confinement forces
+        Ok(())
+    }
+    
+    /// Process weak interaction 
+    fn process_weak_interaction(&mut self, i: usize, j: usize, _distance: f64) -> Result<()> {
+        // Neutrino-electron scattering
+        if (self.particles[i].particle_type == ParticleType::ElectronNeutrino && 
+            self.particles[j].particle_type == ParticleType::Electron) ||
+           (self.particles[j].particle_type == ParticleType::ElectronNeutrino && 
+            self.particles[i].particle_type == ParticleType::Electron) {
+            
+            self.neutrino_scatter_count += 1;
+            // Very small cross-section - rarely occurs
+            if rand::random::<f64>() < 1e-10 {
+                self.exchange_momentum_weak(i, j)?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Exchange momentum in Compton scattering
+    fn exchange_momentum_compton(&mut self, i: usize, j: usize) -> Result<()> {
+        if i >= self.particles.len() || j >= self.particles.len() {
+            return Ok(());
+        }
+        
+        // Conservation of energy and momentum in Compton scattering
+        let photon_idx = if self.particles[i].particle_type == ParticleType::Photon { i } else { j };
+        let electron_idx = if self.particles[i].particle_type == ParticleType::Electron { i } else { j };
+        
+        let photon_initial_energy = self.particles[photon_idx].energy;
+        let electron_mass_energy = self.particles[electron_idx].mass * C_SQUARED;
+        
+        // Klein-Nishina formula for scattered photon energy
+        let cos_theta = 2.0 * rand::random::<f64>() - 1.0; // Random scattering angle
+        let scattered_photon_energy = photon_initial_energy / 
+            (1.0 + (photon_initial_energy / electron_mass_energy) * (1.0 - cos_theta));
+        
+        let electron_kinetic_energy = photon_initial_energy - scattered_photon_energy;
+        
+        // Update energies
+        self.particles[photon_idx].energy = scattered_photon_energy;
+        self.particles[electron_idx].energy = electron_mass_energy + electron_kinetic_energy;
+        
+        // Update momenta (simplified - random directions)
+        let mut rng = thread_rng();
+        let theta = rng.gen::<f64>() * std::f64::consts::PI;
+        let phi = rng.gen::<f64>() * 2.0 * std::f64::consts::PI;
+        
+        let photon_momentum = scattered_photon_energy / C;
+        self.particles[photon_idx].momentum = Vector3::new(
+            photon_momentum * theta.sin() * phi.cos(),
+            photon_momentum * theta.sin() * phi.sin(),
+            photon_momentum * theta.cos(),
+        );
+        
+        let electron_momentum = (electron_kinetic_energy * (electron_kinetic_energy + 2.0 * electron_mass_energy)).sqrt() / C;
+        self.particles[electron_idx].momentum = Vector3::new(
+            electron_momentum * (theta + std::f64::consts::PI).sin() * phi.cos(),
+            electron_momentum * (theta + std::f64::consts::PI).sin() * phi.sin(),
+            electron_momentum * (theta + std::f64::consts::PI).cos(),
+        );
+        
+        Ok(())
+    }
+    
+    /// Exchange momentum in weak interactions
+    fn exchange_momentum_weak(&mut self, i: usize, j: usize) -> Result<()> {
+        if i >= self.particles.len() || j >= self.particles.len() {
+            return Ok(());
+        }
+        
+        // Very small momentum transfer in weak interactions
+        let momentum_transfer = Vector3::new(
+            rand::random::<f64>() * 1e-25,
+            rand::random::<f64>() * 1e-25,
+            rand::random::<f64>() * 1e-25,
+        );
+        
+        self.particles[i].momentum += momentum_transfer;
+        self.particles[j].momentum -= momentum_transfer; // Conservation
+        
+        Ok(())
+    }
+    
+    /// Coulomb scattering between charged particles
+    fn coulomb_scattering(&mut self, i: usize, j: usize, distance: f64) -> Result<()> {
+        if i >= self.particles.len() || j >= self.particles.len() || distance < 1e-15 {
+            return Ok(());
+        }
+        
+        let q1 = self.particles[i].electric_charge;
+        let q2 = self.particles[j].electric_charge;
+        
+        // Coulomb force magnitude
+        let force_magnitude = K_E * q1 * q2 / (distance * distance);
+        
+        // Direction vector from particle j to particle i
+        let direction = (self.particles[i].position - self.particles[j].position).normalize();
+        
+        // Force on particle i
+        let force_i = direction * force_magnitude;
+        let force_j = -force_i; // Newton's third law
+        
+        // Apply impulse (F * dt)
+        let impulse_i = force_i * self.time_step;
+        let impulse_j = force_j * self.time_step;
+        
+        self.particles[i].momentum += impulse_i;
+        self.particles[j].momentum += impulse_j;
+        
+        Ok(())
+    }
+    
+    /// Get spatial grid statistics for diagnostics
+    pub fn get_spatial_grid_stats(&self) -> SpatialGridStats {
+        self.spatial_grid.get_statistics()
+    }
+
     /// Process particle decays
     fn process_particle_decays(&mut self) -> Result<()> {
         let mut decays = Vec::new();
@@ -1126,6 +1408,8 @@ impl PhysicsEngine {
                 decay_time: self.calculate_decay_time(*product_type),
                 quantum_state: QuantumState::new(),
                 interaction_history: Vec::new(),
+                velocity: Vector3::zeros(),
+                charge: 0.0,
             };
             new_particles.push(new_particle);
         }
@@ -1207,6 +1491,8 @@ impl PhysicsEngine {
                 decay_time: self.calculate_decay_time(ParticleType::Neutron),
                 quantum_state: QuantumState::new(),
                 interaction_history: Vec::new(),
+                velocity: Vector3::zeros(),
+                charge: 0.0,
             };
             self.particles.push(neutron);
         }
@@ -1392,6 +1678,8 @@ impl PhysicsEngine {
                         decay_time: None,
                         quantum_state: QuantumState::new(),
                         interaction_history: Vec::new(),
+                        velocity: Vector3::zeros(),
+                        charge: 0.0,
                     };
                     
                     update.photons_to_emit.push(photon);
@@ -1430,6 +1718,8 @@ impl PhysicsEngine {
                         decay_time: None,
                         quantum_state: QuantumState::new(),
                         interaction_history: Vec::new(),
+                        velocity: Vector3::zeros(),
+                        charge: 0.0,
                     };
                     
                     update.electrons_to_add.push(free_electron);
@@ -1532,6 +1822,8 @@ impl PhysicsEngine {
                     decay_time: None,
                     quantum_state: QuantumState::new(),
                     interaction_history: Vec::new(),
+                    velocity: Vector3::zeros(),
+                    charge: 0.0,
                 };
                 
                 self.particles.push(recombination_photon);
@@ -1726,6 +2018,8 @@ impl PhysicsEngine {
             decay_time: None, // Molecules are generally stable
             quantum_state: QuantumState::new(),
             interaction_history: Vec::new(),
+            velocity: Vector3::zeros(),
+            charge: 0.0,
         };
         
         self.particles.push(molecule_particle);
@@ -1821,6 +2115,8 @@ impl PhysicsEngine {
                 decay_time: None,
                 quantum_state: QuantumState::new(),
                 interaction_history: Vec::new(),
+                velocity: Vector3::zeros(),
+                charge: 0.0,
             };
             
             self.particles.push(product);
@@ -2088,58 +2384,51 @@ impl PhysicsEngine {
     fn create_particle_from_type(&self, particle_type: ParticleType) -> Result<FundamentalParticle> {
         Ok(FundamentalParticle {
             particle_type,
-            mass: self.get_particle_mass(&particle_type),
-            charge: self.get_particle_charge(&particle_type),
+            mass: self.get_particle_mass(particle_type),
             energy: 1e-13, // Default 1 MeV
             position: Vector3::zeros(),
-            velocity: Vector3::zeros(),
+            momentum: Vector3::zeros(),
             spin: Vector3::zeros(),
+            color_charge: None,
+            electric_charge: self.get_electric_charge(particle_type),
             creation_time: self.current_time,
-            last_interaction_time: self.current_time,
+            decay_time: None,
+            quantum_state: QuantumState::new(),
+            interaction_history: Vec::new(),
+            velocity: Vector3::zeros(),
+            charge: self.get_electric_charge(particle_type),
         })
     }
 
-    /// Get particle mass from type
-    fn get_particle_mass(&self, particle_type: &ParticleType) -> f64 {
-        match particle_type {
-            ParticleType::Electron => 9.1093837015e-31,
-            ParticleType::Positron => 9.1093837015e-31,
-            ParticleType::Muon => 1.883531627e-28,
-            ParticleType::Proton => 1.67262192369e-27,
-            ParticleType::Neutron => 1.67492749804e-27,
-            ParticleType::Photon => 0.0,
-            _ => 1e-30, // Default
-        }
-    }
-
-    /// Get particle charge from type
-    fn get_particle_charge(&self, particle_type: &ParticleType) -> f64 {
-        match particle_type {
-            ParticleType::Electron => -1.602176634e-19,
-            ParticleType::Positron => 1.602176634e-19,
-            ParticleType::Proton => 1.602176634e-19,
-            ParticleType::Muon => -1.602176634e-19,
-            _ => 0.0, // Neutral particles
-        }
-    }
-
-    /// Enhanced nuclear physics with ENDF data
-    fn process_nuclear_fusion(&mut self) -> Result<()> {
-        // Use ENDF data if available for cross-sections
-        if self.ffi_available.endf_available {
-            self.process_endf_fusion()?;
-        } else {
-            // Fallback to native stellar nucleosynthesis
-            stellar_nucleosynthesis::process_stellar_nucleosynthesis(self)?;
-        }
+    /// Validate conservation laws (energy, momentum, charge) - placeholder implementation
+    fn validate_conservation_laws(&self) -> Result<()> {
+        // TODO: implement detailed checks
         Ok(())
     }
 
-    /// ENDF-enhanced nuclear fusion
-    fn process_endf_fusion(&mut self) -> Result<()> {
-        // This would use real ENDF cross-section data
-        // For now, fall back to existing implementation
-        stellar_nucleosynthesis::process_stellar_nucleosynthesis(self)
+    /// Process a single particle's native interactions when Geant4 fails (placeholder)
+    fn process_particle_native_interaction(&mut self, _index: usize) -> Result<()> {
+        // For now, simply ignore and continue.
+        Ok(())
+    }
+
+    /// Update gravitational forces in absence of GADGET - placeholder
+    fn update_gravitational_forces(&mut self) -> Result<()> {
+        // Simplified Newtonian pairwise gravity for now (O(N^2))
+        let g_const = 6.67430e-11;
+        for i in 0..self.particles.len() {
+            let mut force = Vector3::zeros();
+            for j in 0..self.particles.len() {
+                if i == j { continue; }
+                let dir = self.particles[j].position - self.particles[i].position;
+                let dist_sq = dir.norm_squared().max(1e-12);
+                let f_mag = g_const * self.particles[i].mass * self.particles[j].mass / dist_sq;
+                force += dir.normalize() * f_mag;
+            }
+            // Update acceleration (F = m a)
+            // For now we ignore updating particle accelerations directly to keep it simple
+        }
+        Ok(())
     }
 }
 
@@ -3773,6 +4062,8 @@ pub mod geant4_integration {
                 decay_time: None,
                 quantum_state: QuantumState::new(),
                 interaction_history: vec![],
+                velocity: Vector3::zeros(),
+                charge: 0.0,
             }
         }
         

@@ -3,7 +3,7 @@
 //! High-fidelity particle physics using the actual Geant4 Monte Carlo toolkit.
 //! This provides the highest accuracy possible for particle interactions, transport, and detector simulation.
 
-use crate::physics_engine::{FundamentalParticle, ParticleType, InteractionEvent};
+use crate::types::{FundamentalParticle, ParticleType, InteractionEvent, InteractionType};
 use anyhow::{Result, anyhow};
 use std::ffi::{CString, CStr};
 use std::os::raw::{c_char, c_double, c_int, c_void};
@@ -468,14 +468,14 @@ struct G4ParticleData {
 }
 
 // Helper function implementations
-fn process_type_to_interaction(process_type: c_int) -> crate::physics_engine::InteractionType {
+fn process_type_to_interaction(process_type: c_int) -> InteractionType {
     match process_type {
-        1 => crate::physics_engine::InteractionType::ElectromagneticScattering,
-        2 => crate::physics_engine::InteractionType::WeakDecay,
-        3 => crate::physics_engine::InteractionType::StrongInteraction,
-        4 => crate::physics_engine::InteractionType::PairProduction,
-        5 => crate::physics_engine::InteractionType::Annihilation,
-        _ => crate::physics_engine::InteractionType::ElectromagneticScattering,
+        1 => InteractionType::ElectromagneticScattering,
+        2 => InteractionType::WeakDecay,
+        3 => InteractionType::StrongInteraction,
+        4 => InteractionType::PairProduction,
+        5 => InteractionType::Annihilation,
+        _ => InteractionType::ElectromagneticScattering,
     }
 }
 

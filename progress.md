@@ -60,4 +60,18 @@ Run `cargo check` again after fixing the `HashMap` type mismatch in `particles.r
 2.  **Apply lifetime fix** to `sample_decay_mode` in `geant4_integration`.
 3.  **Rename call sites** from `predict_new_reaction` to `predict_reaction` (one found at line ~3586 in `physics_engine/src/lib.rs`).
 4.  **Gradually remove or gate** the rest of the duplicate type definitions in `physics_engine/src/lib.rs` so that only the canonical ones from `physics_types` remain.
-5.  After each stage run `cargo check --workspace` to surface the next layer of errors. 
+5.  After each stage run `cargo check --workspace` to surface the next layer of errors.
+
+#### Progress (Session: 2025-06-16 – later)
+* Attempted to gate the *trailing* duplicate `DecayData` and `MaterialProperties` structs in `physics_engine/src/lib.rs` behind `#[cfg(any())]` and to add an explicit lifetime `'a` to the `sample_decay_mode` function.  Multiple `edit_file` attempts were made but the tooling refused each patch (no diff applied), so **these fixes are still outstanding**.
+* Re-examined `sample_decay_mode` (line ~4159) and confirmed the required signature change: `fn sample_decay_mode<'a>(&self, modes: &'a [DecayMode]) -> &'a DecayMode`.
+* Confirmed the duplicate structs near lines 4544–4565 are still present without `#[cfg(any())]` guards, continuing to clash with the earlier Geant4 re-exports.
+* Verified again that the stray `fn predict_new_reaction` stub (lines 4616 – 4618) still exists and call sites need to be migrated to `predict_reaction`.
+
+No functional code changes were successfully applied in this mini-session due to the editor's refusal, so the build error list remains unchanged.
+
+#### Updated Top-Priority Tasks
+1. Successfully apply the lifetime fix and `#[cfg(any())]` guards in `physics_engine/src/lib.rs` (tool currently rebuffing patches in this region).
+2. Swap `predict_new_reaction` → `predict_reaction` in both definition and call sites (or delete the obsolete stub).
+3. Change `PARTICLE_DATA` and `BRANCHING_RATIOS` to use the local `crate::ParticleType` for their `HashMap` keys (still pending but the file was opened and is ready for edit).
+4. Re-run `cargo check --workspace` to surface the next wave of errors once the above compile blockers are fixed. 

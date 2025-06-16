@@ -11,6 +11,7 @@ pub mod constants;
 pub mod electromagnetic;
 pub mod emergent_properties;
 pub mod endf_data;
+pub mod ffi;
 pub mod geodynamics;
 pub mod interactions;
 pub mod molecular_dynamics;
@@ -169,6 +170,10 @@ pub struct PhysicsEngine {
     pub neutron_decay_count: u64, // Track neutron beta decay events
     pub fusion_count: u64, // Track nuclear fusion events
     pub fission_count: u64, // Track nuclear fission events
+    pub ffi_available: crate::ffi::LibraryStatus,
+    pub geant4_engine: Option<ffi::geant4::Geant4Engine>,
+    pub lammps_engine: Option<ffi::lammps::LammpsEngine>,
+    pub gadget_engine: Option<ffi::gadget::GadgetEngine>,
 }
 
 /// Atomic nucleus with detailed structure
@@ -314,8 +319,21 @@ struct AtomicUpdate {
 }
 
 impl PhysicsEngine {
-    /// Create new physics engine with fundamental particle simulation
-    pub fn new(time_step: f64) -> Result<Self> {
+    /// Creates a new physics engine with optional FFI integration
+    pub fn new() -> Result<Self> {
+        // Check FFI library availability
+        let ffi_status = crate::ffi::check_library_availability();
+        if ffi_status.all_available() {
+            log::info!("All high-fidelity scientific libraries available");
+            log::info!("{}", ffi_status.status_report());
+        } else {
+            log::warn!("Some scientific libraries missing - using fallback implementations");
+            log::warn!("{}", ffi_status.status_report());
+        }
+
+        // Initialize FFI libraries
+        crate::ffi::initialize_ffi_libraries()?;
+
         let mut engine = Self {
             particles: Vec::new(),
             quantum_fields: HashMap::new(),
@@ -332,7 +350,7 @@ impl PhysicsEngine {
             running_couplings: RunningCouplings::new(),
             symmetry_breaking: SymmetryBreaking::new(),
             stellar_nucleosynthesis: StellarNucleosynthesis::new(),
-            time_step,
+            time_step: 1e-15,
             current_time: 0.0,
             temperature: 0.0,
             energy_density: 0.0,
@@ -345,6 +363,22 @@ impl PhysicsEngine {
             neutron_decay_count: 0,
             fusion_count: 0,
             fission_count: 0,
+            ffi_available: ffi_status,
+            geant4_engine: if ffi_status.geant4_available {
+                Some(ffi::geant4::Geant4Engine::new("QBBC")?)
+            } else {
+                None
+            },
+            lammps_engine: if ffi_status.lammps_available {
+                Some(ffi::lammps::LammpsEngine::new()?)
+            } else {
+                None
+            },
+            gadget_engine: if ffi_status.gadget_available {
+                Some(ffi::gadget::GadgetEngine::new()?)
+            } else {
+                None
+            },
         };
         
         // Initialize quantum fields
@@ -589,190 +623,177 @@ impl PhysicsEngine {
     }
     
     /// Comprehensive physics simulation step
-    pub fn step(&mut self, classical_states: &mut [PhysicsState]) -> Result<()> {
-        // Main physics loop
+    pub fn step(&mut self, dt: f64) -> Result<()> {
+        self.timestep = dt;
+        self.current_time += dt;
         
-        // 1. Particle interactions (QED, weak, strong)
+        // 1. High-fidelity particle interactions (Geant4)
         self.process_particle_interactions()?;
         
-        // 2. Particle decays and radioactivity
-        self.process_particle_decays()?;
+        // 2. High-fidelity molecular dynamics (LAMMPS)  
+        self.process_molecular_dynamics()?;
         
-        // 3. Nuclear processes (fusion, fission, nuclear reactions)
-        self.process_nuclear_reactions()?;
+        // 3. High-fidelity gravitational dynamics (GADGET)
+        self.process_gravitational_dynamics()?;
         
-        // 4. Molecular dynamics and chemical reactions
-        self.update_molecular_dynamics(classical_states)?;
+        // 4. Nuclear physics (using ENDF data if available)
+        self.process_nuclear_fusion()?;
+        self.process_nuclear_fission()?;
+        self.update_nuclear_shells()?;
         
-        // 5. Phase transitions (gas/liquid/solid/plasma)
-        self.process_phase_transitions()?;
+        // 5. Atomic physics
+        self.update_atomic_physics()?;
         
-        // 6. Emergent properties (statistical mechanics)
-        self.update_emergent_properties(classical_states)?;
+        // 6. Phase transitions (enhanced with molecular data from LAMMPS)
+        self.update_phase_transitions()?;
         
-        // 7. Update thermodynamic state
-        self.update_thermodynamic_state()?;
+        // 7. Emergent properties (statistical mechanics)
+        self.update_emergent_properties()?;
         
-        // 8. Quantum state evolution
+        // 8. Quantum field evolution
         self.evolve_quantum_state()?;
         
-        // 9. Update particle energies for consistency
-        self.update_particle_energies()?;
+        // 9. Spacetime curvature updates
+        self.update_spacetime_curvature()?;
         
-        // 10. Update current simulation time
-        self.current_time += self.time_step;
+        // 10. Conservation law validation
+        self.validate_conservation_laws()?;
         
         Ok(())
     }
     
-    /// Process particle interactions (QED, weak, strong)
-    fn process_particle_interactions(&mut self) -> Result<()> {
-        use interactions::*;
-        use rand::thread_rng;
-        
-        let mut rng = thread_rng();
-        let mut interactions_to_process = Vec::new();
-        
-        // Find potential Compton scattering pairs
-        for i in 0..self.particles.len() {
-            for j in i+1..self.particles.len() {
-                let (p1, p2) = (&self.particles[i], &self.particles[j]);
-                
-                // Check distance (interaction range ~ 1 fm)
-                let distance = (p1.position - p2.position).norm();
-                if distance > 1e-15 {
-                    continue;
-                }
-                
-                // Check for Compton scattering
-                if can_compton_scatter(p1, p2) {
-                    let (photon_idx, electron_idx) = if p1.particle_type == ParticleType::Photon {
-                        (i, j)
-                    } else {
-                        (j, i)
-                    };
-                    
-                    let photon_energy = self.particles[photon_idx].energy;
-                    let energy_gev = photon_energy / 1.602_176_634e-10; // convert J to GeV
-                    let cross_section = klein_nishina_cross_section(energy_gev);
-                    
-                    // Estimate local number density (simplified)
-                    let volume = 4.0 * std::f64::consts::PI * distance.powi(3) / 3.0;
-                    let number_density = 1.0 / volume;
-                    
-                    let probability = interaction_probability(
-                        cross_section,
-                        number_density,
-                        SPEED_OF_LIGHT,
-                        self.time_step,
-                    );
-                    
-                    if rng.gen::<f64>() < probability {
-                        interactions_to_process.push(Interaction {
-                            particle_indices: (photon_idx, electron_idx),
-                            interaction_type: InteractionType::ComptonScattering,
-                            cross_section,
-                            probability,
-                        });
-                    }
-                }
-
-                // Check for neutrino-electron scattering
-                if (matches!(p1.particle_type, ParticleType::ElectronNeutrino) && matches!(p2.particle_type, ParticleType::Electron))
-                    || (matches!(p2.particle_type, ParticleType::ElectronNeutrino) && matches!(p1.particle_type, ParticleType::Electron)) {
-                    
-                    let (nu_idx, _e_idx) = if matches!(p1.particle_type, ParticleType::ElectronNeutrino | ParticleType::ElectronAntiNeutrino) {
-                        (i, j)
-                    } else {
-                        (j, i)
-                    };
-
-                    let nu = &self.particles[nu_idx];
-                    let is_antineutrino = matches!(nu.particle_type, ParticleType::ElectronAntiNeutrino);
-                    let cross_section = interactions::neutrino_e_scattering_complete(0, nu.energy / (1.602176634e-10), is_antineutrino);
-
-                    // Use same probability formula
-                    let volume = 4.0 * std::f64::consts::PI * distance.powi(3) / 3.0;
-                    let number_density = 1.0 / volume;
-                    let probability = interaction_probability(
-                        cross_section,
-                        number_density,
-                        SPEED_OF_LIGHT,
-                        self.time_step,
-                    );
-                    if rng.gen::<f64>() < probability {
-                        // For now just count scatter without changing momenta
-                        self.neutrino_scatter_count += 1;
-                    }
-                }
-            }
+    /// Process particle interactions using Geant4 if available, fallback to native
+    pub fn process_particle_interactions(&mut self) -> Result<()> {
+        if let Some(ref mut geant4) = self.geant4_engine {
+            // Use high-fidelity Geant4 for particle physics
+            self.process_geant4_interactions(geant4)?;
+        } else {
+            // Fallback to native implementation
+            self.process_native_interactions()?;
         }
-        
-        // Process pair production for high-energy photons
-        let mut new_particles = Vec::new();
-        let mut photons_to_remove = Vec::new();
+        Ok(())
+    }
+
+    /// High-fidelity particle interactions using Geant4
+    fn process_geant4_interactions(&mut self, geant4: &mut ffi::geant4::Geant4Engine) -> Result<()> {
+        let mut new_interactions = Vec::new();
         
         for (i, particle) in self.particles.iter().enumerate() {
-            if particle.particle_type == ParticleType::Photon {
-                let electron_mass_energy = ELECTRON_MASS * SPEED_OF_LIGHT.powi(2);
-                
-                // Check if photon has enough energy for pair production
-                if particle.energy > 2.0 * electron_mass_energy {
-                    // Use hydrogen (Z=1) for early universe
-                    let cross_section = bethe_heitler_cross_section(particle.energy, 1);
-                    
-                    // Estimate probability based on local proton density
-                    let proton_density = self.particles.iter()
-                        .filter(|p| p.particle_type == ParticleType::Proton)
-                        .count() as f64 / self.volume;
-                    
-                    let probability = interaction_probability(
-                        cross_section,
-                        proton_density,
-                        SPEED_OF_LIGHT,
-                        self.time_step,
-                    );
-                    
-                    if rng.gen::<f64>() < probability {
-                        if let Some((electron, positron)) = pair_produce(particle, &mut rng) {
-                            new_particles.push(electron);
-                            new_particles.push(positron);
-                            photons_to_remove.push(i);
-                        }
+            // Determine material based on local environment
+            let material = self.determine_local_material(&particle.position);
+            
+            // Transport particle through material using Geant4
+            let step_length = self.calculate_step_length(particle);
+            match geant4.transport_particle(particle, &material, step_length) {
+                Ok(interactions) => {
+                    for interaction in interactions {
+                        new_interactions.push(interaction);
+                        // Update particle based on interaction
+                        self.apply_geant4_interaction(i, &interaction)?;
                     }
+                }
+                Err(e) => {
+                    log::warn!("Geant4 transport failed for particle {}: {}", i, e);
+                    // Fallback to native interaction
+                    self.process_particle_native_interaction(i)?;
                 }
             }
         }
         
-        // Apply Compton scattering
-        for interaction in interactions_to_process {
-            let (photon_idx, electron_idx) = interaction.particle_indices;
-            
-            // Clone particles to avoid borrow issues
-            let mut photon = self.particles[photon_idx].clone();
-            let mut electron = self.particles[electron_idx].clone();
-            
-            scatter_compton(&mut photon, &mut electron, &mut rng);
-            
-            // Update particles
-            self.particles[photon_idx] = photon;
-            self.particles[electron_idx] = electron;
-            
-            // Count the event
-            self.compton_count += 1;
+        self.interaction_history.extend(new_interactions);
+        Ok(())
+    }
+
+    /// Process molecular dynamics using LAMMPS if available
+    pub fn process_molecular_dynamics(&mut self) -> Result<()> {
+        if let Some(ref mut lammps) = self.lammps_engine {
+            self.process_lammps_dynamics(lammps)?;
+        } else {
+            // Fallback to native molecular dynamics
+            self.update_molecular_dynamics()?;
+        }
+        Ok(())
+    }
+
+    /// High-fidelity molecular dynamics using LAMMPS
+    fn process_lammps_dynamics(&mut self, lammps: &mut ffi::lammps::LammpsEngine) -> Result<()> {
+        // Convert particles to LAMMPS format
+        lammps.clear_atoms()?;
+        
+        for particle in &self.particles {
+            lammps.add_atom(
+                particle.particle_type.clone(),
+                particle.position,
+                particle.velocity,
+                particle.mass,
+                particle.charge,
+            )?;
         }
         
-        // Remove photons that pair-produced (in reverse order)
-        for &idx in photons_to_remove.iter().rev() {
-            self.particles.swap_remove(idx);
+        // Run molecular dynamics step
+        let timestep_fs = self.timestep * 1e15; // Convert to femtoseconds
+        lammps.run_dynamics(1, timestep_fs)?;
+        
+        // Extract results back to particles
+        let updated_particles = lammps.get_atom_data()?;
+        for (i, updated) in updated_particles.iter().enumerate() {
+            if i < self.particles.len() {
+                self.particles[i].position = updated.position;
+                self.particles[i].velocity = updated.velocity;
+                self.particles[i].energy = 0.5 * updated.mass * updated.velocity.magnitude_squared();
+            }
         }
         
-        // Count pair production events
-        self.pair_production_count += new_particles.len() as u64 / 2;
+        Ok(())
+    }
+
+    /// Process gravitational dynamics using GADGET if available
+    pub fn process_gravitational_dynamics(&mut self) -> Result<()> {
+        if let Some(ref mut gadget) = self.gadget_engine {
+            self.process_gadget_gravity(gadget)?;
+        } else {
+            // Fallback to native gravity calculations
+            self.update_gravitational_forces()?;
+        }
+        Ok(())
+    }
+
+    /// High-fidelity N-body gravity using GADGET
+    fn process_gadget_gravity(&mut self, gadget: &mut ffi::gadget::GadgetEngine) -> Result<()> {
+        // Convert particles to GADGET format
+        gadget.clear_particles()?;
         
-        // Add new particles from pair production
-        for particle in new_particles {
-            self.particles.push(particle);
+        for particle in &self.particles {
+            gadget.add_particle(ffi::gadget::GadgetParticle {
+                particle_type: match particle.particle_type {
+                    ParticleType::DarkMatter => ffi::gadget::ParticleType::DarkMatter,
+                    ParticleType::Proton | ParticleType::Neutron => ffi::gadget::ParticleType::Gas,
+                    _ => ffi::gadget::ParticleType::Stars,
+                },
+                mass: particle.mass,
+                position: particle.position,
+                velocity: particle.velocity,
+                acceleration: Vector3::zeros(),
+                gravitational_potential: 0.0,
+                smoothing_length: 1e-15, // 1 fm for nuclear scale
+                density: 1e17, // Nuclear density
+                active: true,
+            })?;
+        }
+        
+        // Calculate forces and integrate one step
+        gadget.calculate_forces()?;
+        gadget.integrate_step(self.timestep)?;
+        
+        // Extract results back to particles
+        let updated_particles = gadget.get_particle_data()?;
+        for (i, updated) in updated_particles.iter().enumerate() {
+            if i < self.particles.len() {
+                self.particles[i].position = updated.position;
+                self.particles[i].velocity = updated.velocity;
+                // Update energy from velocity
+                self.particles[i].energy = 0.5 * updated.mass * updated.velocity.magnitude_squared();
+            }
         }
         
         Ok(())
@@ -2009,6 +2030,116 @@ impl PhysicsEngine {
                     q_value, fragment_kinetic_energy, neutron_kinetic_energy);
         
         Ok(())
+    }
+
+    /// Determine local material composition for Geant4
+    fn determine_local_material(&self, position: &Vector3<f64>) -> String {
+        // Simple material determination based on particle density
+        let local_density = self.calculate_local_density(position);
+        
+        if local_density > 1e17 {
+            "NuclearMatter".to_string()
+        } else if local_density > 1e3 {
+            "Iron".to_string()  // Dense stellar material
+        } else if local_density > 1e-3 {
+            "Hydrogen".to_string()  // Interstellar medium
+        } else {
+            "Vacuum".to_string()
+        }
+    }
+
+    /// Calculate appropriate step length for particle transport
+    fn calculate_step_length(&self, particle: &FundamentalParticle) -> f64 {
+        // Adaptive step length based on particle energy and local environment
+        let base_step = 1e-12; // 1 pm base step
+        let energy_factor = (particle.energy / (1e-13)).sqrt(); // Scale with energy
+        let density_factor = 1.0 / (1.0 + self.calculate_local_density(&particle.position) / 1e15);
+        
+        base_step * energy_factor * density_factor
+    }
+
+    /// Apply Geant4 interaction results to particle
+    fn apply_geant4_interaction(&mut self, particle_idx: usize, interaction: &InteractionEvent) -> Result<()> {
+        if particle_idx >= self.particles.len() {
+            return Ok(());
+        }
+        
+        // Update particle energy
+        self.particles[particle_idx].energy -= interaction.energy_exchanged;
+        
+        // Apply momentum transfer
+        let particle_mass = self.particles[particle_idx].mass;
+        if particle_mass > 0.0 {
+            let velocity_change = interaction.momentum_transfer / particle_mass;
+            self.particles[particle_idx].velocity += velocity_change;
+        }
+        
+        // Create secondary particles
+        for product_type in &interaction.products {
+            if let Ok(new_particle) = self.create_particle_from_type(product_type.clone()) {
+                self.particles.push(new_particle);
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Create particle from type (helper for secondary production)
+    fn create_particle_from_type(&self, particle_type: ParticleType) -> Result<FundamentalParticle> {
+        Ok(FundamentalParticle {
+            particle_type,
+            mass: self.get_particle_mass(&particle_type),
+            charge: self.get_particle_charge(&particle_type),
+            energy: 1e-13, // Default 1 MeV
+            position: Vector3::zeros(),
+            velocity: Vector3::zeros(),
+            spin: Vector3::zeros(),
+            creation_time: self.current_time,
+            last_interaction_time: self.current_time,
+        })
+    }
+
+    /// Get particle mass from type
+    fn get_particle_mass(&self, particle_type: &ParticleType) -> f64 {
+        match particle_type {
+            ParticleType::Electron => 9.1093837015e-31,
+            ParticleType::Positron => 9.1093837015e-31,
+            ParticleType::Muon => 1.883531627e-28,
+            ParticleType::Proton => 1.67262192369e-27,
+            ParticleType::Neutron => 1.67492749804e-27,
+            ParticleType::Photon => 0.0,
+            _ => 1e-30, // Default
+        }
+    }
+
+    /// Get particle charge from type
+    fn get_particle_charge(&self, particle_type: &ParticleType) -> f64 {
+        match particle_type {
+            ParticleType::Electron => -1.602176634e-19,
+            ParticleType::Positron => 1.602176634e-19,
+            ParticleType::Proton => 1.602176634e-19,
+            ParticleType::Muon => -1.602176634e-19,
+            _ => 0.0, // Neutral particles
+        }
+    }
+
+    /// Enhanced nuclear physics with ENDF data
+    fn process_nuclear_fusion(&mut self) -> Result<()> {
+        // Use ENDF data if available for cross-sections
+        if self.ffi_available.endf_available {
+            self.process_endf_fusion()?;
+        } else {
+            // Fallback to native stellar nucleosynthesis
+            stellar_nucleosynthesis::process_stellar_nucleosynthesis(self)?;
+        }
+        Ok(())
+    }
+
+    /// ENDF-enhanced nuclear fusion
+    fn process_endf_fusion(&mut self) -> Result<()> {
+        // This would use real ENDF cross-section data
+        // For now, fall back to existing implementation
+        stellar_nucleosynthesis::process_stellar_nucleosynthesis(self)
     }
 }
 
@@ -4791,6 +4922,15 @@ pub mod gadget_gravity {
                 octupole: vec![0.0; 10], // Simplified
                 max_order: 2,
             }
+        }
+    }
+}
+
+impl Drop for PhysicsEngine {
+    fn drop(&mut self) {
+        // Cleanup FFI libraries
+        if let Err(e) = crate::ffi::cleanup_ffi_libraries() {
+            log::error!("Failed to cleanup FFI libraries: {}", e);
         }
     }
 }

@@ -25,8 +25,8 @@ Before you begin, ensure you have the following installed:
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/your-org/evolve.git
-    cd evolve
+    git clone https://github.com/ankziety/evolution.git
+    cd evolution
     ```
 
 2.  **Build the project:**
@@ -350,39 +350,3 @@ Built with gratitude to the scientific community whose research enables this sim
 **EVOLVE**: *Where particles become minds, minds become gods.*
 
 *"In the beginning was the quantum foam. In the end, there will be infinite intelligence."*
-
-# Physics Engine
-
-A high-performance physics simulation engine written in Rust, supporting various physical interactions and phenomena.
-
-## Prerequisites
-
-### Windows
-1. Install [Rust](https://www.rust-lang.org/tools/install) using rustup-init.exe
-2. Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with C++ build tools
-3. Install [Git](https://git-scm.com/download/win)
-
-### macOS
-1. Install [Rust](https://www.rust-lang.org/tools/install) using rustup-init
-2. Install Xcode Command Line Tools:
-   ```bash
-   xcode-select --install
-   ```
-3. Install [Git](https://git-scm.com/download/mac)
-
-### Linux (Ubuntu/Debian)
-1. Install build essentials:
-   ```bash
-   sudo apt update
-   sudo apt install build-essential
-   ```
-2. Install [Rust](https://www.rust-lang.org/tools/install) using rustup-init
-3. Install [Git](https://git-scm.com/download/linux)
-
-## Building
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/physics_engine.git
-   cd physics_engine
-   ```

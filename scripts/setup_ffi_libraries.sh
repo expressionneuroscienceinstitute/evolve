@@ -7,7 +7,7 @@ set -e  # Exit on error
 # Configuration
 INSTALL_PREFIX="/usr/local"
 BUILD_DIR="/tmp/evolve_ffi_build"
-THREADS=$(nproc)
+THREADS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 
 # Color output
 RED='\033[0;31m'

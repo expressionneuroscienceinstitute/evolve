@@ -6,6 +6,7 @@ members = [
     "crates/agent_evolution",
     "crates/networking",
     "crates/diagnostics",
+    "crates/ffi_integration",
     "demos",
     "viz_web"
 ]
@@ -96,7 +97,5 @@ panic = "abort"
 opt-level = 1
 debug = true
 
-[build-dependencies]
-cc = "1.0"
-pkg-config = "0.3"
-bindgen = "0.69"
+
+

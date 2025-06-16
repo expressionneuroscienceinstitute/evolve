@@ -3,10 +3,7 @@
 //! This module provides safe Rust wrappers around high-fidelity C/C++ scientific libraries.
 //! Following the PDF recommendation to use proven open source implementations for maximum accuracy.
 
-pub mod geant4;
-pub mod lammps; 
-pub mod gadget;
-pub mod endf;
+// Module declarations are in lib.rs
 
 use anyhow::Result;
 

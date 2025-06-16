@@ -3603,7 +3603,7 @@ pub mod quantum_chemistry {
             }
             
             // If no exact match, try to predict new reaction
-            self.predict_new_reaction(reactants, temperature)
+            self.predict_reaction(reactants, temperature)
         }
         
         /// Calculate reaction rate using transition state theory
@@ -4157,7 +4157,7 @@ pub mod geant4_integration {
             Ok(dedx * material_props.density_g_cm3 * step_length_cm * 1.602e-13) // Convert to J
         }
         
-        fn sample_decay_mode(&self, modes: &[DecayMode]) -> &DecayMode {
+        fn sample_decay_mode<'a>(&self, modes: &'a [DecayMode]) -> &'a DecayMode {
             let total_branching: f64 = modes.iter().map(|m| m.branching_ratio).sum();
             let random = rand::random::<f64>() * total_branching;
             
@@ -4549,6 +4549,7 @@ pub struct StoppingPowerTable {
 }
 
 /// Nuclear decay data
+#[cfg(any())]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecayData {
     pub half_life_seconds: f64,
@@ -4558,6 +4559,7 @@ pub struct DecayData {
 }
 
 /// Material properties for particle interactions
+#[cfg(any())]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterialProperties {
     pub name: String,
@@ -4610,10 +4612,6 @@ impl crate::quantum_chemistry::QuantumChemistryEngine {
     fn calculate_qm_mm_interaction(&self, _qm: &[crate::Atom], _mm: &[crate::Atom]) -> Result<f64> { Ok(0.0) }
 
     fn reactants_match(&self, _db_reactants: &[crate::ParticleType], _reactants: &[crate::ParticleType]) -> bool { false }
-    #[cfg(any())]
-    fn calculate_reaction_rate(&self, _reaction: &ChemicalReaction, _temperature: f64) -> f64 { 0.0 }
-    #[cfg(any())]
-    fn predict_new_reaction(&self, _reactants: &[crate::ParticleType], _temperature: f64) -> Result<Option<ChemicalReaction>> { Ok(None) }
 }
 
 impl Default for crate::quantum_chemistry::ForceFieldParameters {

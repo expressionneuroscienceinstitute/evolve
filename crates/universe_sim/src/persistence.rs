@@ -21,7 +21,8 @@ use std::io::{BufWriter, BufReader};
 /// A serializable representation of the entire simulation state.
 #[derive(Serialize, Deserialize)]
 struct SerializableUniverse {
-    physics_engine: PhysicsEngine,
+    // Note: PhysicsEngine is not serialized due to complexity
+    // It will be recreated from scratch on load
     current_tick: u64,
     tick_span_years: f64,
     target_ups: f64,
@@ -66,7 +67,6 @@ pub fn save_checkpoint(sim: &mut UniverseSimulation, path: &Path) -> Result<()> 
     }
 
     let serializable_universe = SerializableUniverse {
-        physics_engine: sim.physics_engine.clone(), // Assumes PhysicsEngine is Clone
         current_tick: sim.current_tick,
         tick_span_years: sim.tick_span_years,
         target_ups: sim.target_ups,
@@ -90,7 +90,7 @@ pub fn load_checkpoint(path: &Path) -> Result<UniverseSimulation> {
 
     let mut sim = UniverseSimulation {
         world: World::new(),
-        physics_engine: serializable_universe.physics_engine,
+        physics_engine: PhysicsEngine::new()?, // Recreate physics engine
         current_tick: serializable_universe.current_tick,
         tick_span_years: serializable_universe.tick_span_years,
         target_ups: serializable_universe.target_ups,

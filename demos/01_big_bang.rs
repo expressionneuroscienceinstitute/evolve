@@ -16,7 +16,7 @@ fn main() -> Result<()> {
     // Initialize physics engine with 10^-23 second timestep
     // This is roughly the QCD scale where quarks begin to confine
     let dt = 1e-23;
-    let mut engine = PhysicsEngine::new(dt)?;
+    let mut engine = PhysicsEngine::new()?;
     
     // Initialize with Big Bang conditions
     println!("Initializing Big Bang conditions...");
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     // Run simulation for 1000 steps (1e-20 seconds total)
     for tick in 0..1000 {
         // Step the simulation
-        engine.step(&mut [])?;
+        engine.step(dt)?;
         
         // Every 100 steps, output statistics
         if tick % 100 == 0 {

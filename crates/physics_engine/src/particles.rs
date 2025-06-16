@@ -26,7 +26,7 @@ pub struct ParticleProperties {
 }
 
 /// Lookup table keyed by `ParticleType`
-pub static PARTICLE_DATA: Lazy<HashMap<ParticleType, ParticleProperties>> = Lazy::new(|| {
+pub static PARTICLE_DATA: Lazy<HashMap<crate::ParticleType, ParticleProperties>> = Lazy::new(|| {
     use crate::ParticleType::*;
     let mut m = HashMap::new();
 
@@ -91,12 +91,12 @@ pub static PARTICLE_DATA: Lazy<HashMap<ParticleType, ParticleProperties>> = Lazy
 });
 
 /// Convenience accessor
-pub fn get_properties(pt: ParticleType) -> ParticleProperties {
+pub fn get_properties(pt: crate::ParticleType) -> ParticleProperties {
     *PARTICLE_DATA.get(&pt).expect("Particle data missing")
 }
 
 /// Build a `FundamentalParticle` with zero momentum at origin for quick tests
-pub fn spawn_rest(pt: ParticleType) -> FundamentalParticle {
+pub fn spawn_rest(pt: crate::ParticleType) -> FundamentalParticle {
     let props = get_properties(pt);
     FundamentalParticle {
         particle_type: pt,
@@ -105,6 +105,7 @@ pub fn spawn_rest(pt: ParticleType) -> FundamentalParticle {
         spin: Vector3::zeros(),
         color_charge: None,
         electric_charge: props.charge_c,
+        charge: props.charge_c,
         mass: props.mass_kg,
         energy: 0.0,
         creation_time: 0.0,
@@ -123,7 +124,7 @@ pub static CKM_MATRIX: [[f64; 3]; 3] = [
 ];
 
 /// Dominant branching ratios for selected unstable particles (<channel list>, BR)
-pub static BRANCHING_RATIOS: Lazy<HashMap<ParticleType, Vec<(Vec<ParticleType>, f64)>>> = Lazy::new(|| {
+pub static BRANCHING_RATIOS: Lazy<HashMap<crate::ParticleType, Vec<(Vec<crate::ParticleType>, f64)>>> = Lazy::new(|| {
     use crate::ParticleType::*;
     let mut h = HashMap::new();
 

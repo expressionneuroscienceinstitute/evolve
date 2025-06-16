@@ -132,6 +132,7 @@ impl QuantumSolver {
             spin_quantum_number: 0.5, // Electron spin
             energy_level: self.energy_level(n, 1.0), // Hydrogen-like
             occupation_probability: 1.0,
+            ..Default::default()
         }
     }
 }

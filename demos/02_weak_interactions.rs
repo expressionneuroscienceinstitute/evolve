@@ -11,7 +11,7 @@ use nalgebra::Vector3;
 use anyhow::Result;
 use std::collections::HashMap;
 use rand::{thread_rng, Rng};
-use std::f64::Complex;
+use nalgebra::Complex;
 
 fn main() -> Result<()> {
     println!("=== Universe Evolution Simulator: Weak Interactions Demo ===");
@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     
     // Initialize physics engine with smaller timestep for weak processes
     let dt = 1e-19; // 0.1 attoseconds
-    let mut engine = PhysicsEngine::new(dt)?;
+    let mut engine = PhysicsEngine::new()?;
     
     // Set up initial conditions for weak interaction studies
     setup_weak_interaction_experiment(&mut engine)?;
@@ -37,7 +37,7 @@ fn main() -> Result<()> {
     // Run simulation for longer time to see beta decays
     let total_steps = 10000;
     for tick in 0..total_steps {
-        engine.step(&mut [])?;
+        engine.step(dt)?;
         
         // Output every 1000 steps
         if tick % 1000 == 0 {
@@ -125,9 +125,11 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
                 rng.gen_range(-1e-12..1e-12),
             ),
             momentum: Vector3::zeros(),
+            velocity: Vector3::zeros(),
             spin: Vector3::new(Complex::new(0.5, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
             color_charge: None,
             electric_charge: 0.0,
+            charge: 0.0,
             mass: 939.565,
             energy: 0.0,
             creation_time: engine.current_time,
@@ -152,9 +154,11 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
                 rng.gen_range(-1e-21..1e-21),
                 rng.gen_range(-1e-21..1e-21),
             ),
+            velocity: Vector3::zeros(),
             spin: Vector3::zeros(),
             color_charge: None,
             electric_charge: -1.602176634e-19,
+            charge: -1.602176634e-19,
             mass: 5.48579909e-4,
             energy: 0.0,
             creation_time: engine.current_time,
@@ -179,9 +183,11 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
                 rng.gen_range(-1e-18..1e-18),
                 rng.gen_range(-1e-18..1e-18),
             ),
+            velocity: Vector3::zeros(),
             spin: Vector3::zeros(),
             color_charge: None,
             electric_charge: 0.0,
+            charge: 0.0,
             mass: 1e-36, // Tiny neutrino mass
             energy: 0.0,
             creation_time: engine.current_time,

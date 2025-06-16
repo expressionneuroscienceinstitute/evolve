@@ -146,7 +146,7 @@ impl UniverseSimulation {
     pub fn new(config: config::SimulationConfig) -> Result<Self> {
         let world = World::new();
         
-        let physics_engine = PhysicsEngine::new(1e-6)?; // 1 microsecond timestep
+        let physics_engine = PhysicsEngine::new()?; // 1 microsecond timestep
         
         Ok(Self {
             world,
@@ -300,7 +300,9 @@ impl UniverseSimulation {
                                  self.physics_engine.pair_production_count + 
                                  self.physics_engine.neutrino_scatter_count;
         
-        self.physics_engine.step(&mut physics_states)?;
+        // Convert years to seconds for physics timestep
+        let dt_seconds = self.tick_span_years * 365.25 * 24.0 * 3600.0;
+        self.physics_engine.step(dt_seconds)?;
         
         let interactions_after = self.physics_engine.compton_count + 
                                 self.physics_engine.pair_production_count + 
@@ -1169,15 +1171,23 @@ impl UniverseSimulation {
                 decoherence_time: 0.0,
                 measurement_basis: physics_engine::MeasurementBasis::Position,
                 superposition_amplitudes: std::collections::HashMap::new(),
+                principal_quantum_number: 1,
+                orbital_angular_momentum: 0,
+                magnetic_quantum_number: 0,
+                spin_quantum_number: 0.5,
+                energy_level: 0.0,
+                occupation_probability: 1.0,
             };
 
             let particle = FundamentalParticle {
                 particle_type,
                 position: state.position,
                 momentum: state.velocity * state.mass,
+                velocity: state.velocity,
                 spin: nalgebra::Vector3::new(nalgebra::Complex::new(0.5, 0.0), nalgebra::Complex::new(0.0, 0.0), nalgebra::Complex::new(0.0, 0.0)),
                 color_charge: None,
                 electric_charge: state.charge,
+                charge: state.charge,
                 mass: state.mass,
                 energy: calculate_relativistic_energy(&(state.velocity * state.mass), state.mass),
                 creation_time: 0.0,

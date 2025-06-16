@@ -3,10 +3,10 @@ use physics_engine::{PhysicsEngine, ParticleType, FundamentalParticle, QuantumSt
 use nalgebra::Vector3;
 use anyhow::Result;
 use std::f64::consts::PI;
-use std::f64::Complex;
+use nalgebra::Complex;
 
 fn main() -> Result<()> {
-    let mut engine = PhysicsEngine::new(1e-19)?;
+    let mut engine = PhysicsEngine::new()?;
     engine.particles.clear();
     // Add 100 protons, 100 electrons, 500 photons
     for _ in 0..100 {
@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     // Run a short simulation and stream frames
     let steps = 600; // ~10 s at 60 FPS
     for _ in 0..steps {
-        engine.step(&mut [])?;
+        engine.step(1e-19)?;
         // Export via websocket if flag on physics engine (omitted)
     }
     Ok(())
@@ -31,9 +31,11 @@ fn simple_particle(ptype: ParticleType, charge: f64) -> FundamentalParticle {
         particle_type: ptype,
         position: Vector3::zeros(),
         momentum: Vector3::zeros(),
+        velocity: Vector3::zeros(),
         spin: Vector3::new(Complex::new(0.0, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
         color_charge: None,
         electric_charge: charge,
+        charge: charge,
         mass: 938.272,
         energy: 0.0,
         creation_time: 0.0,

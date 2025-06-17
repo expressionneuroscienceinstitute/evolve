@@ -1,258 +1,332 @@
-//! Cosmic Era Management
+//! Universe Physical State Tracking
 //! 
-//! Defines the different epochs of universe evolution and manages transitions
+//! Tracks the emergent physical state of the universe based on simulation conditions
+//! rather than predetermined cosmic eras or hard-coded checkpoints.
 
 use serde::{Serialize, Deserialize};
 
-/// Cosmic eras with different gameplay mechanics
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CosmicEra {
-    /// 0-0.3 Gyr: Particle Soup (observe only)
-    ParticleSoup,
+/// Emergent universe state based on physical conditions
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UniverseState {
+    /// Current age of universe in billion years
+    pub age_gyr: f64,
     
-    /// 0.3-1 Gyr: Starbirth (set star-forming nebulae parameters)
-    Starbirth,
+    /// Average temperature across all particles (K)
+    pub mean_temperature: f64,
     
-    /// 1-5 Gyr: Planetary Age (influence protoplanetary disks)
-    PlanetaryAge,
+    /// Fraction of matter in stars vs free particles
+    pub stellar_fraction: f64,
     
-    /// 5-10 Gyr: Biogenesis (seed organic molecules, tweak atmospheres)
-    Biogenesis,
+    /// Fraction of heavy elements (metallicity)
+    pub metallicity: f64,
     
-    /// 10-13+ Gyr: Digital Evolution (guide agent mutations, infrastructure)
-    DigitalEvolution,
+    /// Number of habitable environments
+    pub habitable_count: usize,
     
-    /// Post-Intelligence (direct R&D funding, megastructures)
-    PostIntelligence,
+    /// Complexity metric for most advanced life forms
+    pub max_complexity: f64,
+    
+    /// Energy density of the universe (J/m³)
+    pub energy_density: f64,
+    
+    /// Hubble expansion rate
+    pub hubble_constant: f64,
 }
 
-impl CosmicEra {
-    /// Get the age range for this era in billion years
-    pub fn age_range_gyr(&self) -> (f64, f64) {
-        match self {
-            CosmicEra::ParticleSoup => (0.0, 0.0003),
-            CosmicEra::Starbirth => (0.0003, 1.0),
-            CosmicEra::PlanetaryAge => (1.0, 5.0),
-            CosmicEra::Biogenesis => (5.0, 10.0),
-            CosmicEra::DigitalEvolution => (10.0, 13.0),
-            CosmicEra::PostIntelligence => (13.0, f64::INFINITY),
-        }
-    }
-
-    /// Get the key resources for this era
-    pub fn key_resources(&self) -> Vec<&'static str> {
-        match self {
-            CosmicEra::ParticleSoup => vec!["Photon density"],
-            CosmicEra::Starbirth => vec!["Gas clouds"],
-            CosmicEra::PlanetaryAge => vec!["Heavy elements"],
-            CosmicEra::Biogenesis => vec!["Carbon", "Water"],
-            CosmicEra::DigitalEvolution => vec!["Compute capacity", "Energy"],
-            CosmicEra::PostIntelligence => vec!["Stellar energy", "Metals"],
-        }
-    }
-
-    /// Get the primary failure risks for this era
-    pub fn fail_risks(&self) -> Vec<&'static str> {
-        match self {
-            CosmicEra::ParticleSoup => vec!["None"],
-            CosmicEra::Starbirth => vec!["Under-seeding → sterile universe"],
-            CosmicEra::PlanetaryAge => vec!["Too few habitable planets"],
-            CosmicEra::Biogenesis => vec!["Runaway greenhouse", "Frozen planets"],
-            CosmicEra::DigitalEvolution => vec!["Data corruption", "Hardware loss"],
-            CosmicEra::PostIntelligence => vec!["Societal collapse", "AI rebellion"],
-        }
-    }
-
-    /// Get unlockable actions for this era
-    pub fn unlockable_actions(&self) -> Vec<&'static str> {
-        match self {
-            CosmicEra::ParticleSoup => vec!["*None* (observe only)"],
-            CosmicEra::Starbirth => vec![
-                "Set parameters for star-forming nebulae (density, metallicity)"
-            ],
-            CosmicEra::PlanetaryAge => vec![
-                "Influence protoplanetary disks (planet count, distance, water fraction)"
-            ],
-            CosmicEra::Biogenesis => vec![
-                "Seed basic organic molecules",
-                "Tweak atmospheric composition"
-            ],
-            CosmicEra::DigitalEvolution => vec![
-                "Guide agent mutation rates", 
-                "Infrastructure shielding",
-                "Network topology"
-            ],
-            CosmicEra::PostIntelligence => vec![
-                "Direct R&D funding",
-                "Megastructure builds (Dyson swarms, jump drives)"
-            ],
-        }
-    }
-
-    /// Check if this era allows player intervention
-    pub fn allows_intervention(&self) -> bool {
-        !matches!(self, CosmicEra::ParticleSoup)
-    }
-
-    /// Get the next era
-    pub fn next(&self) -> Option<CosmicEra> {
-        match self {
-            CosmicEra::ParticleSoup => Some(CosmicEra::Starbirth),
-            CosmicEra::Starbirth => Some(CosmicEra::PlanetaryAge),
-            CosmicEra::PlanetaryAge => Some(CosmicEra::Biogenesis),
-            CosmicEra::Biogenesis => Some(CosmicEra::DigitalEvolution),
-            CosmicEra::DigitalEvolution => Some(CosmicEra::PostIntelligence),
-            CosmicEra::PostIntelligence => None, // Infinite era
-        }
-    }
-
-    /// Get era description
-    pub fn description(&self) -> &'static str {
-        match self {
-            CosmicEra::ParticleSoup => 
-                "The universe is a hot, dense soup of fundamental particles. Matter and antimatter annihilate, leaving behind the first stable atoms.",
-            CosmicEra::Starbirth => 
-                "Gas clouds begin to collapse under gravity. The first stars ignite, flooding the universe with light and heavy elements.",
-            CosmicEra::PlanetaryAge => 
-                "Around young stars, protoplanetary disks form rocky worlds. The first solid surfaces appear in the cosmos.",
-            CosmicEra::Biogenesis => 
-                "On worlds with suitable conditions, the first organic molecules begin to replicate and evolve toward complexity.",
-            CosmicEra::DigitalEvolution => 
-                "Life develops intelligence and begins to modify its own nature through technology and digital substrates.",
-            CosmicEra::PostIntelligence => 
-                "Transcendent intelligences reshape matter and energy on cosmic scales, building megastructures that span star systems.",
-        }
-    }
-
-    /// Get era duration in billion years
-    pub fn duration_gyr(&self) -> f64 {
-        let (start, end) = self.age_range_gyr();
-        if end == f64::INFINITY {
-            f64::INFINITY
-        } else {
-            end - start
-        }
-    }
-
-    /// Check if age is within this era
-    pub fn contains_age(&self, age_gyr: f64) -> bool {
-        let (start, end) = self.age_range_gyr();
-        age_gyr >= start && (age_gyr < end || end == f64::INFINITY)
-    }
-
-    /// Get era from universe age
-    pub fn from_age_gyr(age_gyr: f64) -> Self {
-        if age_gyr < 0.0003 {
-            CosmicEra::ParticleSoup
-        } else if age_gyr < 1.0 {
-            CosmicEra::Starbirth
-        } else if age_gyr < 5.0 {
-            CosmicEra::PlanetaryAge
-        } else if age_gyr < 10.0 {
-            CosmicEra::Biogenesis
-        } else if age_gyr < 13.0 {
-            CosmicEra::DigitalEvolution
-        } else {
-            CosmicEra::PostIntelligence
-        }
-    }
-}
-
-/// Era transition event
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EraTransition {
-    pub from_era: CosmicEra,
-    pub to_era: CosmicEra,
-    pub universe_age_gyr: f64,
-    pub tick: u64,
-    pub major_events: Vec<String>,
-}
-
-impl EraTransition {
-    pub fn new(from: CosmicEra, to: CosmicEra, age_gyr: f64, tick: u64) -> Self {
-        let major_events = match to {
-            CosmicEra::Starbirth => vec![
-                "First hydrogen clouds begin collapsing".to_string(),
-                "Dark matter halos provide gravitational scaffolding".to_string(),
-            ],
-            CosmicEra::PlanetaryAge => vec![
-                "First generation stars have forged heavy elements".to_string(),
-                "Stellar winds disperse metals into space".to_string(),
-                "Second generation stars ignite with rocky cores".to_string(),
-            ],
-            CosmicEra::Biogenesis => vec![
-                "Terrestrial planets have cooled and formed atmospheres".to_string(),
-                "Liquid water appears on suitable worlds".to_string(),
-                "Complex organic chemistry begins".to_string(),
-            ],
-            CosmicEra::DigitalEvolution => vec![
-                "Self-replicating organisms achieve intelligence".to_string(),
-                "Technology enables modification of biological processes".to_string(),
-                "Digital substrates supplement biological computation".to_string(),
-            ],
-            CosmicEra::PostIntelligence => vec![
-                "Artificial general intelligence achieves superintelligence".to_string(),
-                "Matter and energy can be manipulated at the molecular level".to_string(),
-                "Megascale engineering projects become feasible".to_string(),
-            ],
-            _ => vec![],
-        };
-
+impl UniverseState {
+    /// Create initial universe state (Big Bang conditions)
+    pub fn initial() -> Self {
         Self {
-            from_era: from,
-            to_era: to,
-            universe_age_gyr: age_gyr,
+            age_gyr: 0.0,
+            mean_temperature: 1e12, // Very hot initially
+            stellar_fraction: 0.0,  // No stars yet
+            metallicity: 0.0,       // Only H and He
+            habitable_count: 0,     // No habitable zones
+            max_complexity: 0.0,    // No complex structures
+            energy_density: 1e20,   // Extremely dense
+            hubble_constant: 100.0, // Fast initial expansion
+        }
+    }
+    
+    /// Update state based on current simulation measurements
+    pub fn update_from_simulation(&mut self, 
+                                  current_tick: u64, 
+                                  tick_span_years: f64,
+                                  particles: &[crate::PhysicsState],
+                                  celestial_bodies: &[crate::CelestialBody],
+                                  lineages: &[crate::AgentLineage]) {
+        
+        // Update age
+        self.age_gyr = (current_tick as f64 * tick_span_years) / 1e9;
+        
+        // Calculate mean temperature from particle physics
+        if !particles.is_empty() {
+            self.mean_temperature = particles.iter()
+                .map(|p| p.temperature)
+                .sum::<f64>() / particles.len() as f64;
+        }
+        
+        // Calculate stellar fraction
+        let star_count = celestial_bodies.iter()
+            .filter(|b| matches!(b.body_type, crate::CelestialBodyType::Star))
+            .count();
+        let total_matter_objects = celestial_bodies.len().max(1);
+        self.stellar_fraction = star_count as f64 / total_matter_objects as f64;
+        
+        // Calculate metallicity from heavy element abundance
+        self.metallicity = self.calculate_heavy_element_fraction(celestial_bodies);
+        
+        // Count habitable environments
+        self.habitable_count = celestial_bodies.iter()
+            .filter(|b| self.is_potentially_habitable(b))
+            .count();
+        
+        // Calculate maximum biological/technological complexity
+        if !lineages.is_empty() {
+            self.max_complexity = lineages.iter()
+                .map(|l| l.tech_level + l.sentience_level)
+                .fold(0.0, f64::max);
+        }
+        
+        // Update energy density based on particle energies
+        if !particles.is_empty() {
+            let total_energy: f64 = particles.iter()
+                .map(|p| {
+                    // Calculate kinetic energy: 0.5 * m * v^2
+                    let kinetic = 0.5 * p.mass * p.velocity.magnitude_squared();
+                    // Use mass-energy: E = mc^2
+                    let rest_mass = p.mass * 299_792_458.0_f64.powi(2);
+                    kinetic + rest_mass
+                })
+                .sum();
+            // Assume some volume scaling with age
+            let volume = (self.age_gyr + 0.1).powi(3) * 1e50; // Rough expansion
+            self.energy_density = total_energy / volume;
+        }
+        
+        // Hubble constant decreases with time due to expansion
+        self.hubble_constant = 100.0 / (1.0 + self.age_gyr * 0.1);
+    }
+    
+    /// Calculate heavy element fraction from stellar composition
+    fn calculate_heavy_element_fraction(&self, bodies: &[crate::CelestialBody]) -> f64 {
+        if bodies.is_empty() {
+            return 0.0;
+        }
+        
+        let total_heavy_elements: f64 = bodies.iter()
+            .map(|b| {
+                // Sum elements heavier than helium (Z > 2)
+                let mut heavy_element_mass = 0.0;
+                for z in 3..118 { // From lithium (Z=3) to maximum
+                    heavy_element_mass += b.composition.get_abundance(z) as f64;
+                }
+                heavy_element_mass
+            })
+            .sum();
+            
+        let total_mass: f64 = bodies.iter()
+            .map(|b| b.mass)
+            .sum();
+            
+        if total_mass > 0.0 {
+            total_heavy_elements / total_mass
+        } else {
+            0.0
+        }
+    }
+    
+    /// Check if a celestial body could support life based on physics
+    fn is_potentially_habitable(&self, body: &crate::CelestialBody) -> bool {
+        matches!(body.body_type, crate::CelestialBodyType::Planet) &&
+        body.temperature > 273.0 && // Above freezing
+        body.temperature < 373.0 && // Below boiling
+        body.mass > 0.1 &&          // Minimum mass for atmosphere retention
+        body.age > 1e9              // Minimum time for chemical evolution
+    }
+    
+    /// Get a natural description of current universe state
+    pub fn description(&self) -> String {
+        match self {
+            // Very early universe - hot, dense, no structure
+            s if s.age_gyr < 0.001 => {
+                format!("Universe age {:.3} Myr: Primordial plasma at {:.0}K. No stable structures yet.",
+                       s.age_gyr * 1000.0, s.mean_temperature)
+            },
+            
+            // First structures forming
+            s if s.stellar_fraction < 0.01 => {
+                format!("Universe age {:.2} Gyr: Gas clouds cooling to {:.0}K. First gravitational collapse beginning.",
+                       s.age_gyr, s.mean_temperature)
+            },
+            
+            // Active star formation
+            s if s.stellar_fraction < 0.1 && s.metallicity < 0.01 => {
+                format!("Universe age {:.2} Gyr: {:.1}% matter in stars. Population III stars forging first heavy elements.",
+                       s.age_gyr, s.stellar_fraction * 100.0)
+            },
+            
+            // Mature stellar populations
+            s if s.metallicity < 0.02 => {
+                format!("Universe age {:.2} Gyr: {:.1}% stellar, Z={:.4}. Second-generation stars with rocky cores forming.",
+                       s.age_gyr, s.stellar_fraction * 100.0, s.metallicity)
+            },
+            
+            // Complex chemistry possible
+            s if s.habitable_count == 0 => {
+                format!("Universe age {:.2} Gyr: {:.1}% stellar, Z={:.4}. Complex chemistry possible but no habitable zones detected.",
+                       s.age_gyr, s.stellar_fraction * 100.0, s.metallicity)
+            },
+            
+            // Life emerging
+            s if s.max_complexity < 1.0 => {
+                format!("Universe age {:.2} Gyr: {} habitable environments. Basic chemical evolution in progress.",
+                       s.age_gyr, s.habitable_count)
+            },
+            
+            // Biological complexity
+            s if s.max_complexity < 10.0 => {
+                format!("Universe age {:.2} Gyr: Life complexity {:.1}. Biological evolution developing.",
+                       s.age_gyr, s.max_complexity)
+            },
+            
+            // Intelligence emerging
+            s if s.max_complexity < 100.0 => {
+                format!("Universe age {:.2} Gyr: Intelligence level {:.1}. Technology and self-modification beginning.",
+                       s.age_gyr, s.max_complexity)
+            },
+            
+            // Advanced civilization
+            _ => {
+                format!("Universe age {:.2} Gyr: Advanced civilizations (complexity {:.1}) reshaping matter and energy.",
+                       self.age_gyr, self.max_complexity)
+            },
+        }
+    }
+    
+    /// Check if universe conditions allow star formation
+    pub fn allows_star_formation(&self) -> bool {
+        // Star formation possible when:
+        // - Temperature low enough for gas to collapse
+        // - Not too late in universe evolution (gas exhausted)
+        self.mean_temperature < 50000.0 && 
+        self.stellar_fraction < 0.3 &&
+        self.age_gyr < 20.0
+    }
+    
+    /// Get star formation rate based on physical conditions
+    pub fn star_formation_rate(&self) -> f64 {
+        if !self.allows_star_formation() {
+            return 0.0;
+        }
+        
+        // Rate depends on available gas and cooling efficiency
+        let gas_fraction = 1.0 - self.stellar_fraction;
+        let cooling_efficiency = 1.0 / (1.0 + self.mean_temperature / 10000.0);
+        let age_factor = (-self.age_gyr / 10.0).exp(); // Exponential decline
+        
+        0.01 * gas_fraction * cooling_efficiency * age_factor
+    }
+    
+    /// Check if conditions allow planet formation
+    pub fn allows_planet_formation(&self) -> bool {
+        // Planets need heavy elements from stellar nucleosynthesis
+        self.metallicity > 0.001 && self.stellar_fraction > 0.01
+    }
+    
+    /// Check if life emergence is possible
+    pub fn allows_life_emergence(&self) -> bool {
+        // Life needs complex chemistry and stable environments
+        self.metallicity > 0.01 && self.habitable_count > 0
+    }
+}
+
+/// Record of a significant physical transition in the universe
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhysicalTransition {
+    pub tick: u64,
+    pub age_gyr: f64,
+    pub transition_type: TransitionType,
+    pub description: String,
+    pub physical_parameters: Vec<(String, f64)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TransitionType {
+    /// First stable atoms formed
+    Recombination,
+    /// First gravitational collapse
+    FirstCollapse,
+    /// First stars ignited
+    FirstStars,
+    /// First heavy elements created
+    FirstMetals,
+    /// First planets formed
+    FirstPlanets,
+    /// First life detected
+    FirstLife,
+    /// First intelligence detected
+    FirstIntelligence,
+    /// Major technological milestone
+    TechBreakthrough,
+}
+
+impl PhysicalTransition {
+    pub fn new(tick: u64, age_gyr: f64, transition_type: TransitionType, 
+               description: String, parameters: Vec<(String, f64)>) -> Self {
+        Self {
             tick,
-            major_events,
+            age_gyr,
+            transition_type,
+            description,
+            physical_parameters: parameters,
         }
     }
 }
+
+pub type CosmicEra = UniverseState;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_era_age_ranges() {
-        assert!(CosmicEra::ParticleSoup.contains_age(0.0001));
-        assert!(!CosmicEra::ParticleSoup.contains_age(0.5));
-        
-        assert!(CosmicEra::Starbirth.contains_age(0.5));
-        assert!(!CosmicEra::Starbirth.contains_age(2.0));
-        
-        assert!(CosmicEra::PostIntelligence.contains_age(100.0)); // Infinite era
+    fn test_initial_universe_state() {
+        let state = UniverseState::initial();
+        assert_eq!(state.age_gyr, 0.0);
+        assert!(state.mean_temperature > 1e10);
+        assert_eq!(state.stellar_fraction, 0.0);
+        assert_eq!(state.metallicity, 0.0);
     }
 
     #[test]
-    fn test_era_from_age() {
-        assert_eq!(CosmicEra::from_age_gyr(0.0001), CosmicEra::ParticleSoup);
-        assert_eq!(CosmicEra::from_age_gyr(0.5), CosmicEra::Starbirth);
-        assert_eq!(CosmicEra::from_age_gyr(3.0), CosmicEra::PlanetaryAge);
-        assert_eq!(CosmicEra::from_age_gyr(7.0), CosmicEra::Biogenesis);
-        assert_eq!(CosmicEra::from_age_gyr(12.0), CosmicEra::DigitalEvolution);
-        assert_eq!(CosmicEra::from_age_gyr(20.0), CosmicEra::PostIntelligence);
+    fn test_star_formation_conditions() {
+        let mut state = UniverseState::initial();
+        
+        // Initially too hot for star formation
+        assert!(!state.allows_star_formation());
+        
+        // Cool down - should allow star formation
+        state.mean_temperature = 10000.0;
+        state.stellar_fraction = 0.01;
+        assert!(state.allows_star_formation());
+        
+        // Too much matter already in stars
+        state.stellar_fraction = 0.4;
+        assert!(!state.allows_star_formation());
     }
 
     #[test]
-    fn test_era_transitions() {
-        let transition = EraTransition::new(
-            CosmicEra::ParticleSoup, 
-            CosmicEra::Starbirth, 
-            0.0003, 
-            300
-        );
+    fn test_physics_driven_descriptions() {
+        let mut state = UniverseState::initial();
+        state.age_gyr = 0.0001;
+        let desc = state.description();
+        assert!(desc.contains("Primordial plasma"));
         
-        assert_eq!(transition.from_era, CosmicEra::ParticleSoup);
-        assert_eq!(transition.to_era, CosmicEra::Starbirth);
-        assert!(!transition.major_events.is_empty());
-    }
-
-    #[test]
-    fn test_era_properties() {
-        assert!(!CosmicEra::ParticleSoup.allows_intervention());
-        assert!(CosmicEra::Starbirth.allows_intervention());
-        
-        assert_eq!(CosmicEra::PlanetaryAge.next(), Some(CosmicEra::Biogenesis));
-        assert_eq!(CosmicEra::PostIntelligence.next(), None);
+        state.age_gyr = 1.0;
+        state.stellar_fraction = 0.05;
+        state.metallicity = 0.001;
+        let desc = state.description();
+        assert!(desc.contains("Population III"));
     }
 }

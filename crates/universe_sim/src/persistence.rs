@@ -8,7 +8,7 @@ use crate::{
     PlanetaryEnvironment,
     AgentLineage,
     config::SimulationConfig,
-    cosmic_era::CosmicEra,
+    cosmic_era::{UniverseState, PhysicalTransition},
 };
 use crate::physics_engine::{PhysicsEngine, PhysicsState};
 use bevy_ecs::prelude::*;
@@ -26,7 +26,8 @@ struct SerializableUniverse {
     current_tick: u64,
     tick_span_years: f64,
     target_ups: f64,
-    cosmic_era: CosmicEra,
+    universe_state: UniverseState,
+    physical_transitions: Vec<PhysicalTransition>,
     config: SimulationConfig,
     entities: Vec<SerializableEntity>,
 }
@@ -70,7 +71,8 @@ pub fn save_checkpoint(sim: &mut UniverseSimulation, path: &Path) -> Result<()> 
         current_tick: sim.current_tick,
         tick_span_years: sim.tick_span_years,
         target_ups: sim.target_ups,
-        cosmic_era: sim.cosmic_era.clone(),
+        universe_state: sim.universe_state.clone(),
+        physical_transitions: sim.physical_transitions.clone(),
         config: sim.config.clone(),
         entities: serializable_entities,
     };
@@ -94,7 +96,8 @@ pub fn load_checkpoint(path: &Path) -> Result<UniverseSimulation> {
         current_tick: serializable_universe.current_tick,
         tick_span_years: serializable_universe.tick_span_years,
         target_ups: serializable_universe.target_ups,
-        cosmic_era: serializable_universe.cosmic_era,
+        universe_state: serializable_universe.universe_state,
+        physical_transitions: serializable_universe.physical_transitions,
         config: serializable_universe.config,
         diagnostics: crate::DiagnosticsSystem::new(),
     };

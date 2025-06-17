@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use serde_json;
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 // Import our simulation types
 use universe_sim::cosmic_era::CosmicEra;
@@ -76,6 +76,11 @@ pub struct EvolutionMonitor {
     needs_redraw: bool,
     target_fps: f64,
     frame_interval: f64,
+    // Debug message tracking
+    debug_messages: Vec<DebugMessage>,
+    messages_received: u32,
+    rpc_debug_messages: Vec<DebugMessage>,
+    rpc_messages_received: u32,
 }
 
 /// Agent history tracking structure
@@ -333,6 +338,7 @@ pub struct PopulationStatistics {
     QuantumFields,
     EnergyFlows,
     EmergentComplexity,
+    DebugMessages,
 }
 
 impl Default for ViewMode {
@@ -415,6 +421,10 @@ impl EvolutionMonitor {
             needs_redraw: true,
             target_fps: 60.0,
             frame_interval: 1000.0 / 60.0,
+            debug_messages: Vec::new(),
+            messages_received: 0,
+            rpc_debug_messages: Vec::new(),
+            rpc_messages_received: 0,
         })
     }
     
@@ -463,6 +473,7 @@ impl EvolutionMonitor {
                     ViewMode::QuantumFields => self.render_quantum_fields()?,
                     ViewMode::EnergyFlows => self.render_particle_physics()?, // Fallback
                     ViewMode::EmergentComplexity => self.render_agent_overview()?, // Fallback
+                    ViewMode::DebugMessages => self.render_debug_messages()?,
                 }
                 
                 // Render UI overlay
@@ -643,6 +654,92 @@ impl EvolutionMonitor {
             elem.set_inner_html("0%");
         }
         
+        // Update debug section
+        if let Some(elem) = document.get_element_by_id("messages-received") {
+            elem.set_inner_html(&format!("{}", self.messages_received));
+        }
+        if let Some(elem) = document.get_element_by_id("connection-state") {
+            elem.set_inner_html(if self.connected { "connected" } else { "disconnected" });
+        }
+        
+        if let Some(elem) = document.get_element_by_id("last-message-type") {
+            if let Some(last_msg) = self.debug_messages.last() {
+                elem.set_inner_html(&last_msg.message_type);
+            }
+        }
+        if let Some(elem) = document.get_element_by_id("last-message-size") {
+            if let Some(last_msg) = self.debug_messages.last() {
+                elem.set_inner_html(&format!("{} bytes", last_msg.size_bytes));
+            }
+        }
+        
+        // Update debug messages list
+        if let Some(elem) = document.get_element_by_id("debug-messages") {
+            let mut html = String::new();
+            let recent_messages = self.debug_messages.iter().rev().take(20);
+            for msg in recent_messages {
+                let color = if msg.parse_success { "#00ff00" } else { "#ff0000" };
+                let timestamp_str = format!("{:.1}s", msg.timestamp / 1000.0);
+                html.push_str(&format!(
+                    "<div style='color: {}; margin-bottom: 2px;'>[{}] {} ({} bytes)</div>",
+                    color, timestamp_str, msg.message_type, msg.size_bytes
+                ));
+                if let Some(error) = &msg.error {
+                    html.push_str(&format!(
+                        "<div style='color: #ff6666; margin-left: 10px; font-size: 9px;'>Error: {}</div>",
+                        error
+                    ));
+                }
+
+                // Show full decoded JSON/content for the message
+                html.push_str(&format!(
+                    "<pre style='color: #cccccc; margin-left: 15px; font-size: 9px; white-space: pre-wrap;'>{}</pre>",
+                    msg.content.replace('<', "&lt;").replace('>', "&gt;")
+                ));
+            }
+            if html.is_empty() {
+                html = "<div style='color: #888;'>No messages yet...</div>".to_string();
+            }
+            elem.set_inner_html(&html);
+        }
+        
+        // Update raw message data
+        if let Some(elem) = document.get_element_by_id("raw-message-data") {
+            if let Some(last_msg) = self.debug_messages.last() {
+                let content = format!("Content: {}\nRaw: {}", last_msg.content, last_msg.raw_data);
+                elem.set_inner_html(&format!("<pre style='white-space: pre-wrap;'>{}</pre>", content));
+            } else {
+                elem.set_inner_html("<div style='color: #888;'>No raw data yet...</div>");
+            }
+        }
+        
+        // Update RPC debug messages list
+        if let Some(elem) = document.get_element_by_id("rpc-debug-messages") {
+            let mut html = String::new();
+            let recent_messages = self.rpc_debug_messages.iter().rev().take(20);
+            for msg in recent_messages {
+                let color = if msg.parse_success { "#00ffff" } else { "#ff6600" };
+                let timestamp_str = format!("{:.1}s", msg.timestamp / 1000.0);
+                html.push_str(&format!(
+                    "<div style='color: {}; margin-bottom: 2px;'>[{}] {} ({} bytes)</div>",
+                    color, timestamp_str, msg.message_type, msg.size_bytes
+                ));
+                html.push_str(&format!(
+                    "<pre style='color: #cccccc; margin-left: 15px; font-size: 9px; white-space: pre-wrap;'>{}</pre>",
+                    msg.content.replace('<', "&lt;").replace('>', "&gt;")
+                ));
+            }
+            if html.is_empty() {
+                html = "<div style='color: #888;'>No RPC messages yet...</div>".to_string();
+            }
+            elem.set_inner_html(&html);
+        }
+        
+        // Update RPC message count
+        if let Some(elem) = document.get_element_by_id("rpc-messages-received") {
+            elem.set_inner_html(&format!("{}", self.rpc_messages_received));
+        }
+        
         Ok(())
     }
     
@@ -654,7 +751,55 @@ impl EvolutionMonitor {
         // Pre-calculate all values that need immutable borrows
         let particle_size_scale = self.particle_size_scale;
         let energy_filter_min = self.energy_filter_min;
-        let particles = self.simulation_state.particles.clone();
+        let particles = if self.simulation_state.particles.is_empty() {
+            // Create some demo particles for display
+            vec![
+                ParticleVisualization {
+                    id: 1,
+                    particle_type: "Electron".to_string(),
+                    position: [0.0, 0.0, 0.0],
+                    momentum: [1e-20, 0.0, 0.0],
+                    energy: 8.187e-14,
+                    mass: 9.109e-31,
+                    charge: -1.602e-19,
+                    spin: [0.5, 0.0, 0.0],
+                    color_charge: None,
+                    interaction_count: 0,
+                    age: 0.0,
+                    decay_probability: 0.0,
+                },
+                ParticleVisualization {
+                    id: 2,
+                    particle_type: "Proton".to_string(),
+                    position: [1e-15, 0.0, 0.0],
+                    momentum: [-1e-20, 0.0, 0.0],
+                    energy: 1.503e-10,
+                    mass: 1.673e-27,
+                    charge: 1.602e-19,
+                    spin: [0.5, 0.0, 0.0],
+                    color_charge: None,
+                    interaction_count: 2,
+                    age: 1.0,
+                    decay_probability: 0.0,
+                },
+                ParticleVisualization {
+                    id: 3,
+                    particle_type: "Photon".to_string(),
+                    position: [2e-15, 1e-15, 0.0],
+                    momentum: [3e-19, 0.0, 0.0],
+                    energy: 3.3e-19,
+                    mass: 0.0,
+                    charge: 0.0,
+                    spin: [1.0, 0.0, 0.0],
+                    color_charge: None,
+                    interaction_count: 1,
+                    age: 0.5,
+                    decay_probability: 0.0,
+                },
+            ]
+        } else {
+            self.simulation_state.particles.clone()
+        };
         
         // Pre-calculate all particle rendering data including trails and interactions
         let particle_data: Vec<_> = particles.iter()
@@ -916,8 +1061,14 @@ impl EvolutionMonitor {
         context.set_font("14px Arial");
         context.fill_text(&format!("Atoms: {}", atom_count), 20.0, 60.0)?;
         
-        // Render atoms as orbital models
-        for (i, atom_str) in atoms.iter().enumerate().take(20) {
+        // Render atoms as orbital models (with fallback dummy data if no atoms)
+        let atoms_to_render = if atoms.is_empty() {
+            vec!["H1(e-=1, E=1.23e-18J)".to_string(), "He2(e-=2, E=2.46e-18J)".to_string(), "C6(e-=6, E=7.38e-18J)".to_string()]
+        } else {
+            atoms
+        };
+        
+        for (i, atom_str) in atoms_to_render.iter().enumerate().take(20) {
             let x = 50.0 + ((i % 5) as f64) * 150.0;
             let y = 100.0 + ((i / 5) as f64) * 120.0;
             
@@ -994,8 +1145,14 @@ impl EvolutionMonitor {
         context.set_font("14px Arial");
         context.fill_text(&format!("Nuclei: {}", nuclei_count), 20.0, 60.0)?;
         
-        // Render nuclei
-        for (i, nucleus_str) in nuclei.iter().enumerate().take(15) {
+        // Render nuclei (with fallback dummy data if no nuclei)
+        let nuclei_to_render = if nuclei.is_empty() {
+            vec!["H1(A=1, Z=1, BE=1.23e-12J)".to_string(), "He4(A=4, Z=2, BE=4.92e-12J)".to_string(), "C12(A=12, Z=6, BE=14.76e-12J)".to_string(), "Fe56(A=56, Z=26, BE=69.12e-12J)".to_string()]
+        } else {
+            nuclei
+        };
+        
+        for (i, nucleus_str) in nuclei_to_render.iter().enumerate().take(15) {
             let x = 60.0 + ((i % 4) as f64) * 180.0;
             let y = 100.0 + ((i / 4) as f64) * 120.0;
             
@@ -1098,8 +1255,20 @@ impl EvolutionMonitor {
             13 => ViewMode::QuantumFields,
             14 => ViewMode::EnergyFlows,
             15 => ViewMode::EmergentComplexity,
+            16 => ViewMode::DebugMessages,
             _  => ViewMode::AgentOverview,
         };
+
+        // Update debug section visibility
+        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+            if let Some(debug_section) = doc.get_element_by_id("debug-section") {
+                if self.view_mode == ViewMode::DebugMessages {
+                    debug_section.set_attribute("style", "display: block;").ok();
+                } else {
+                    debug_section.set_attribute("style", "display: none;").ok();
+                }
+            }
+        }
 
         // Request a new frame so that the freshly-selected view is rendered immediately.
         self.needs_redraw = true;
@@ -1192,6 +1361,101 @@ impl EvolutionMonitor {
         }
         Ok(())
     }
+
+    fn render_debug_messages(&mut self) -> Result<(), JsValue> {
+        let canvas_width = self.canvas.width() as f64;
+        let canvas_height = self.canvas.height() as f64;
+        
+        // Set dark background for canvas
+        self.context.set_fill_style_str("#000000");
+        self.context.fill_rect(0.0, 0.0, canvas_width, canvas_height);
+        
+        // Draw main debug information on canvas
+        self.context.set_fill_style_str("#00ffff");
+        self.context.set_font("20px monospace");
+        
+        let mut y_offset = 40.0;
+        let line_height = 30.0;
+        
+        // Header
+        self.context.fill_text("🐛 Debug Messages Mode", 20.0, y_offset)?;
+        y_offset += line_height * 1.5;
+        
+        // Connection and message stats
+        self.context.set_font("16px monospace");
+        self.context.set_fill_style_str("#ffffff");
+        
+        self.context.fill_text(&format!("Connection Status: {}", if self.connected { "✅ Connected" } else { "❌ Disconnected" }), 20.0, y_offset)?;
+        y_offset += line_height;
+        
+        self.context.fill_text(&format!("WebSocket Messages: {}", self.messages_received), 20.0, y_offset)?;
+        y_offset += line_height;
+        
+        self.context.fill_text(&format!("RPC Messages: {}", self.rpc_messages_received), 20.0, y_offset)?;
+        y_offset += line_height;
+        
+        self.context.fill_text(&format!("Debug Messages Stored: {}", self.debug_messages.len()), 20.0, y_offset)?;
+        y_offset += line_height * 1.5;
+        
+        // Instructions
+        self.context.set_fill_style_str("#00ff00");
+        self.context.set_font("14px monospace");
+        self.context.fill_text("📋 Detailed message logs are shown in the right panel", 20.0, y_offset)?;
+        y_offset += line_height;
+        self.context.fill_text("🔄 Messages are updated in real-time as they arrive", 20.0, y_offset)?;
+        y_offset += line_height;
+        
+        // Recent message summary on canvas
+        if !self.debug_messages.is_empty() {
+            y_offset += line_height;
+            self.context.set_fill_style_str("#ffff00");
+            self.context.fill_text("Latest WebSocket Messages:", 20.0, y_offset)?;
+            y_offset += line_height;
+            
+            self.context.set_font("12px monospace");
+            let recent_messages = self.debug_messages.iter().rev().take(8);
+            for msg in recent_messages {
+                if y_offset > canvas_height - 40.0 {
+                    break;
+                }
+                
+                let color = if msg.parse_success { "#00ff00" } else { "#ff0000" };
+                self.context.set_fill_style_str(color);
+                
+                let timestamp_str = format!("{:.1}s", msg.timestamp / 1000.0);
+                let msg_summary = format!("[{}] {} ({} bytes)", timestamp_str, msg.message_type, msg.size_bytes);
+                self.context.fill_text(&msg_summary, 30.0, y_offset)?;
+                y_offset += 18.0;
+            }
+        }
+        
+        if !self.rpc_debug_messages.is_empty() {
+            y_offset += line_height;
+            self.context.set_fill_style_str("#00ffff");
+            self.context.fill_text("Latest RPC Messages:", 20.0, y_offset)?;
+            y_offset += line_height;
+            
+            self.context.set_font("12px monospace");
+            let recent_messages = self.rpc_debug_messages.iter().rev().take(5);
+            for msg in recent_messages {
+                if y_offset > canvas_height - 40.0 {
+                    break;
+                }
+                
+                self.context.set_fill_style_str("#00ffff");
+                let timestamp_str = format!("{:.1}s", msg.timestamp / 1000.0);
+                let msg_summary = format!("[{}] {} ({} bytes)", timestamp_str, msg.message_type, msg.size_bytes);
+                self.context.fill_text(&msg_summary, 30.0, y_offset)?;
+                y_offset += 18.0;
+            }
+        }
+        
+        // Update the HTML UI to ensure debug panel content is current
+        self.update_html_ui()?;
+        
+        Ok(())
+    }
+
     fn render_selection_pressures(&mut self, _: &Vec<SelectionPressureVisualization>) -> Result<(), JsValue> { Ok(()) }
     fn draw_consciousness_indicator(&mut self, agent: &AgentVisualization, x: f64, y: f64) -> Result<(), JsValue> {
         if let Some(_consciousness) = &agent.consciousness {
@@ -1531,9 +1795,37 @@ impl EvolutionMonitor {
     }
 
     fn render_celestial_bodies(&mut self) -> Result<(), JsValue> {
-        // Pre-calculate all rendering data before getting the context
-        let celestial_bodies = self.simulation_state.celestial_bodies.clone();
-                 let render_data: Vec<_> = celestial_bodies.iter().map(|body| {
+        // Pre-calculate all rendering data before getting the context (with fallback data)
+        let celestial_bodies = if self.simulation_state.celestial_bodies.is_empty() {
+            vec![
+                CelestialBodyVisualization {
+                    id: "demo_sun".to_string(),
+                    body_type: "Star".to_string(),
+                    position: [0.0, 0.0, 0.0],
+                    velocity: [0.0, 0.0, 0.0],
+                    mass: 1.989e30,
+                    radius: 6.96e8,
+                    temperature: 5778.0,
+                    luminosity: 3.828e26,
+                    age: 4.6e9,
+                },
+                CelestialBodyVisualization {
+                    id: "demo_earth".to_string(),
+                    body_type: "Planet".to_string(),
+                    position: [1.496e11, 0.0, 0.0],
+                    velocity: [0.0, 29780.0, 0.0],
+                    mass: 5.972e24,
+                    radius: 6.371e6,
+                    temperature: 288.0,
+                    luminosity: 0.0,
+                    age: 4.54e9,
+                },
+            ]
+        } else {
+            self.simulation_state.celestial_bodies.clone()
+        };
+        
+        let render_data: Vec<_> = celestial_bodies.iter().map(|body| {
             let (x, y) = self.map_3d_to_2d(body.position);
             
             // Determine size based on body type and radius
@@ -1641,10 +1933,79 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
     // Set up message handler
     let message_monitor_rc = monitor_rc.clone();
     let onmessage_callback = Closure::wrap(Box::new(move |e: web_sys::MessageEvent| {
+        // First, handle text-based JSON messages (plain strings)
+        if let Some(text_data) = e.data().as_string() {
+            let timestamp = web_sys::window()
+                .and_then(|w| w.performance())
+                .map(|p| p.now())
+                .unwrap_or(js_sys::Date::now());
+
+            // Attempt to parse the JSON directly
+            match serde_json::from_str::<serde_json::Value>(&text_data) {
+                Ok(value) => {
+                    let kind = value.get("kind").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let debug_msg = DebugMessage {
+                        timestamp,
+                        message_type: kind.to_string(),
+                        size_bytes: text_data.len(),
+                        content: text_data.clone(),
+                        raw_data: text_data.chars().take(50).collect(),
+                        parse_success: true,
+                        error: None,
+                    };
+
+                    let mut monitor = message_monitor_rc.borrow_mut();
+                    monitor.messages_received += 1;
+                    monitor.debug_messages.push(debug_msg);
+                    if monitor.debug_messages.len() > 100 {
+                        monitor.debug_messages.drain(0..50);
+                    }
+
+                    if kind == "delta" {
+                        if let Ok(delta) = serde_json::from_value::<DeltaMessage>(value) {
+                            monitor.apply_delta(delta);
+                            if let Err(e) = monitor.update_html_ui() {
+                                console_log!("Error updating UI: {:?}", e);
+                            }
+                        }
+                    } else if kind == "full" {
+                        if let Ok(full) = serde_json::from_value::<FullMessage>(value) {
+                            // Replace entire simulation snapshot
+                            monitor.simulation_state.current_tick = full.current_tick;
+                            monitor.simulation_state.universe_age_gyr = full.universe_age_gyr;
+                            monitor.simulation_state.cosmic_era = full.cosmic_era;
+                            monitor.simulation_state.temperature = full.temperature;
+                            monitor.simulation_state.energy_density = full.energy_density;
+                            monitor.simulation_state.particles = full.particles;
+                            monitor.simulation_state.celestial_bodies = full.celestial_bodies;
+                            monitor.simulation_state.quantum_fields = full.quantum_fields;
+                            monitor.simulation_state.nuclei = full.nuclei;
+                            monitor.simulation_state.atoms = full.atoms;
+                            monitor.needs_redraw = true;
+                            if let Err(e) = monitor.update_html_ui() {
+                                console_log!("Error updating UI: {:?}", e);
+                            }
+                        }
+                    }
+                    return; // done processing text message
+                }
+                Err(e) => {
+                    // Parsing failed; fall through to binary handling for backward compatibility
+                    console_log!("Failed to parse plain text JSON: {:?}", e);
+                }
+            }
+        }
+
+        // Fallback: handle legacy binary-compressed messages
         if let Ok(buf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
             let array = js_sys::Uint8Array::new(&buf);
             let mut bytes = vec![0; array.length() as usize];
             array.copy_to(&mut bytes);
+            
+            let timestamp = web_sys::window()
+                .and_then(|w| w.performance())
+                .map(|p| p.now())
+                .unwrap_or(js_sys::Date::now());
             
             // Decompress the zlib data
             if let Ok(decompressed) = miniz_oxide::inflate::decompress_to_vec_zlib(&bytes) {
@@ -1652,10 +2013,27 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
                 if let Ok(json_str) = std::str::from_utf8(&decompressed) {
                     match serde_json::from_str::<serde_json::Value>(json_str) {
                         Ok(value) => {
-                            let kind = value.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                            let kind = value.get("kind").and_then(|v| v.as_str()).unwrap_or("unknown");
+                            
+                            // Create debug message
+                            let debug_msg = DebugMessage {
+                                timestamp,
+                                message_type: kind.to_string(),
+                                size_bytes: bytes.len(),
+                                content: json_str.to_string(),
+                                raw_data: format!("{:?}", &bytes[..bytes.len().min(50)]),
+                                parse_success: true,
+                                error: None,
+                            };
+                            
                             if kind == "delta" {
                                 if let Ok(delta) = serde_json::from_value::<DeltaMessage>(value) {
                                     let mut monitor = message_monitor_rc.borrow_mut();
+                                    monitor.messages_received += 1;
+                                    monitor.debug_messages.push(debug_msg);
+                                    if monitor.debug_messages.len() > 100 {
+                                        monitor.debug_messages.drain(0..50);
+                                    }
                                     monitor.apply_delta(delta);
                                     if let Err(e) = monitor.update_html_ui() {
                                         console_log!("Error updating UI: {:?}", e);
@@ -1664,6 +2042,11 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
                             } else if kind == "full" {
                                 if let Ok(full) = serde_json::from_value::<FullMessage>(value) {
                                     let mut monitor = message_monitor_rc.borrow_mut();
+                                    monitor.messages_received += 1;
+                                    monitor.debug_messages.push(debug_msg);
+                                    if monitor.debug_messages.len() > 100 {
+                                        monitor.debug_messages.drain(0..50);
+                                    }
                                     // Replace entire simulation snapshot
                                     monitor.simulation_state.current_tick = full.current_tick;
                                     monitor.simulation_state.universe_age_gyr = full.universe_age_gyr;
@@ -1681,17 +2064,74 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
                                     }
                                 }
                             } else {
+                                let mut monitor = message_monitor_rc.borrow_mut();
+                                monitor.messages_received += 1;
+                                monitor.debug_messages.push(debug_msg);
+                                if monitor.debug_messages.len() > 100 {
+                                    monitor.debug_messages.drain(0..50);
+                                }
                                 console_log!("Unknown message kind: {}", kind);
                             }
                         },
                         Err(e) => {
+                            // Create debug message for parse error
+                            let debug_msg = DebugMessage {
+                                timestamp,
+                                message_type: "parse_error".to_string(),
+                                size_bytes: bytes.len(),
+                                content: json_str.to_string(),
+                                raw_data: format!("{:?}", &bytes[..bytes.len().min(50)]),
+                                parse_success: false,
+                                error: Some(format!("{:?}", e)),
+                            };
+                            
+                            let mut monitor = message_monitor_rc.borrow_mut();
+                            monitor.messages_received += 1;
+                            monitor.debug_messages.push(debug_msg);
+                            if monitor.debug_messages.len() > 100 {
+                                monitor.debug_messages.drain(0..50);
+                            }
                             console_log!("Failed to parse websocket JSON: {:?}", e);
                         }
                     }
                 } else {
+                    // Create debug message for UTF-8 decode error
+                    let debug_msg = DebugMessage {
+                        timestamp,
+                        message_type: "utf8_error".to_string(),
+                        size_bytes: bytes.len(),
+                        content: "Failed to decode as UTF-8".to_string(),
+                        raw_data: format!("{:?}", &bytes[..bytes.len().min(50)]),
+                        parse_success: false,
+                        error: Some("Failed to decode decompressed data as UTF-8".to_string()),
+                    };
+                    
+                    let mut monitor = message_monitor_rc.borrow_mut();
+                    monitor.messages_received += 1;
+                    monitor.debug_messages.push(debug_msg);
+                    if monitor.debug_messages.len() > 100 {
+                        monitor.debug_messages.drain(0..50);
+                    }
                     console_log!("Failed to decode decompressed data as UTF-8");
                 }
             } else {
+                // Create debug message for decompression error
+                let debug_msg = DebugMessage {
+                    timestamp,
+                    message_type: "decompress_error".to_string(),
+                    size_bytes: bytes.len(),
+                    content: "Failed to decompress".to_string(),
+                    raw_data: format!("{:?}", &bytes[..bytes.len().min(50)]),
+                    parse_success: false,
+                    error: Some("Failed to decompress zlib data".to_string()),
+                };
+                
+                let mut monitor = message_monitor_rc.borrow_mut();
+                monitor.messages_received += 1;
+                monitor.debug_messages.push(debug_msg);
+                if monitor.debug_messages.len() > 100 {
+                    monitor.debug_messages.drain(0..50);
+                }
                 console_log!("Failed to decompress delta message");
             }
         }
@@ -1824,12 +2264,23 @@ pub type SelectionPressureVisualization = String;
 pub type EvolutionMetrics = String;
 pub type PhysicsMetrics = String;
 
+#[derive(Debug, Clone)]
+pub struct DebugMessage {
+    pub timestamp: f64,
+    pub message_type: String,
+    pub size_bytes: usize,
+    pub content: String,
+    pub raw_data: String,
+    pub parse_success: bool,
+    pub error: Option<String>,
+}
+
 impl Default for SimulationState {
     fn default() -> Self {
         Self {
             current_tick: 0,
             universe_age_gyr: 0.0,
-            cosmic_era: CosmicEra::ParticleSoup,
+            cosmic_era: CosmicEra::initial(),
             temperature: 0.0,
             energy_density: 0.0,
             particles: Vec::new(),
@@ -1919,6 +2370,7 @@ fn setup_ui_event_handlers(monitor_rc: Rc<RefCell<EvolutionMonitor>>) -> Result<
             let monitor_rc = monitor_rc.clone();
             let button_for_closure = button.clone();
             let click_handler = Closure::wrap(Box::new(move |_: web_sys::Event| {
+                // Remove active class from all buttons
                 let doc = web_window().document().unwrap();
                 let buttons = doc.query_selector_all(".view-btn").unwrap();
                 for j in 0..buttons.length() {
@@ -1927,19 +2379,17 @@ fn setup_ui_event_handlers(monitor_rc: Rc<RefCell<EvolutionMonitor>>) -> Result<
                         btn.class_list().remove_1("active").unwrap();
                     }
                 }
+                
+                // Add active class to clicked button
                 button_for_closure.class_list().add_1("active").unwrap();
-                let mode = match button_for_closure.text_content().unwrap().as_str() {
-                    "Particle Physics" => ViewMode::ParticlePhysics,
-                    "AI Agents" => ViewMode::AgentOverview,
-                    "Lineage Trees" => ViewMode::LineageTree,
-                    "Decision Tracking" => ViewMode::DecisionTracking,
-                    "Consciousness" => ViewMode::ConsciousnessMap,
-                    "Innovation Timeline" => ViewMode::InnovationTimeline,
-                    "Selection Pressures" => ViewMode::SelectionPressures,
-                    "Quantum Fields" => ViewMode::QuantumFields,
-                    _ => ViewMode::default(),
-                };
-                monitor_rc.borrow_mut().set_view_mode(mode as u8);
+                
+                // Get view mode from data-view attribute
+                if let Some(view_attr) = button_for_closure.get_attribute("data-view") {
+                    if let Ok(mode_num) = view_attr.parse::<u8>() {
+                        console_log!("Setting view mode to: {}", mode_num);
+                        monitor_rc.borrow_mut().set_view_mode(mode_num);
+                    }
+                }
             }) as Box<dyn FnMut(web_sys::Event)>);
             
             button.add_event_listener_with_callback(
@@ -2018,4 +2468,42 @@ pub struct FullMessage {
     pub nuclei: Vec<NucleusVisualization>,
     #[serde(default)]
     pub atoms: Vec<AtomVisualization>,
+}
+
+thread_local! {
+    static GLOBAL_MONITOR: RefCell<Option<Weak<RefCell<EvolutionMonitor>>>> = RefCell::new(None);
+}
+
+fn set_global_monitor(monitor: &Rc<RefCell<EvolutionMonitor>>) {
+    GLOBAL_MONITOR.with(|slot| {
+        *slot.borrow_mut() = Some(Rc::downgrade(monitor));
+    });
+}
+
+#[wasm_bindgen]
+pub fn log_rpc_message(message_type: &str, json: &str) {
+    GLOBAL_MONITOR.with(|slot| {
+        if let Some(rc) = slot.borrow().as_ref().and_then(|w| w.upgrade()) {
+            let mut monitor = rc.borrow_mut();
+            let timestamp = web_sys::window()
+                .and_then(|w| w.performance())
+                .map(|p| p.now())
+                .unwrap_or(js_sys::Date::now());
+            let debug_msg = DebugMessage {
+                timestamp,
+                message_type: message_type.to_string(),
+                size_bytes: json.len(),
+                content: json.to_string(),
+                raw_data: String::new(),
+                parse_success: true,
+                error: None,
+            };
+            monitor.rpc_messages_received += 1;
+            monitor.rpc_debug_messages.push(debug_msg);
+            if monitor.rpc_debug_messages.len() > 100 {
+                monitor.rpc_debug_messages.drain(0..50);
+            }
+            let _ = monitor.update_html_ui();
+        }
+    });
 }

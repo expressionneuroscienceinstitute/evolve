@@ -45,9 +45,10 @@ pub struct UniverseSimulation {
     pub current_tick: u64,                     // Simulation time
     pub tick_span_years: f64,                  // Years per tick (default 1M)
     pub target_ups: f64,                       // Updates per second target
-    pub cosmic_era: cosmic_era::CosmicEra,     // Current era
+    pub universe_state: cosmic_era::UniverseState, // Current universe physical state
     pub config: config::SimulationConfig,      // Configuration
     pub diagnostics: DiagnosticsSystem,        // Performance monitoring
+    pub physical_transitions: Vec<cosmic_era::PhysicalTransition>, // Record of major transitions
 }
 
 /// Celestial body component
@@ -156,16 +157,17 @@ impl UniverseSimulation {
             current_tick: 0,
             tick_span_years: config.tick_span_years,
             target_ups: config.target_ups,
-            cosmic_era: cosmic_era::CosmicEra::ParticleSoup,
+            universe_state: cosmic_era::UniverseState::initial(),
             config,
             diagnostics: DiagnosticsSystem::new(),
+            physical_transitions: Vec::new(),
         })
     }
 
     /// Initialize with Big Bang conditions
     pub fn init_big_bang(&mut self) -> Result<()> {
-        // Set initial cosmic era
-        self.cosmic_era = cosmic_era::CosmicEra::ParticleSoup;
+        // Reset to initial universe state
+        self.universe_state = cosmic_era::UniverseState::initial();
         
         // Print initial configuration
         println!("🚀 INITIALIZING BIG BANG CONDITIONS");
@@ -265,9 +267,6 @@ impl UniverseSimulation {
     pub fn tick(&mut self) -> Result<()> {
         let tick_start = Instant::now();
         
-        // Update cosmic era based on time
-        self.update_cosmic_era();
-        
         // Update physics for all entities
         let physics_start = Instant::now();
         self.update_physics()?;
@@ -277,10 +276,13 @@ impl UniverseSimulation {
         // Update agent evolution
         self.update_agent_evolution()?;
         
-        // Update cosmic-scale processes
+        // Update cosmic-scale processes based on current physical state
         self.update_cosmic_processes()?;
         
-        // Check win/lose conditions
+        // Update universe state based on current simulation measurements
+        self.update_universe_state()?;
+        
+        // Check victory conditions
         self.check_victory_conditions()?;
         
         // Record total tick time for universe simulation
@@ -296,18 +298,113 @@ impl UniverseSimulation {
         Ok(())
     }
 
-    /// Update cosmic era based on current time
-    fn update_cosmic_era(&mut self) {
-        let age_gyr = self.current_tick as f64 * self.tick_span_years / 1e9;
+    /// Update universe state based on current simulation measurements
+    fn update_universe_state(&mut self) -> Result<()> {
+        // Collect physics states
+        let physics_states: Vec<PhysicsState> = self.world.query::<&PhysicsState>()
+            .iter(&self.world)
+            .cloned()
+            .collect();
         
-        self.cosmic_era = match age_gyr {
-            x if x < 0.0003 => cosmic_era::CosmicEra::ParticleSoup,
-            x if x <= 1.0 => cosmic_era::CosmicEra::Starbirth,
-            x if x < 5.0 => cosmic_era::CosmicEra::PlanetaryAge,
-            x if x < 10.0 => cosmic_era::CosmicEra::Biogenesis,
-            x if x < 13.0 => cosmic_era::CosmicEra::DigitalEvolution,
-            _ => cosmic_era::CosmicEra::PostIntelligence,
-        };
+        // Collect celestial bodies
+        let celestial_bodies: Vec<CelestialBody> = self.world.query::<&CelestialBody>()
+            .iter(&self.world)
+            .cloned()
+            .collect();
+        
+        // Collect agent lineages
+        let lineages: Vec<AgentLineage> = self.world.query::<&AgentLineage>()
+            .iter(&self.world)
+            .cloned()
+            .collect();
+        
+        // Store previous state for transition detection
+        let previous_state = self.universe_state.clone();
+        
+        // Update state based on current measurements
+        self.universe_state.update_from_simulation(
+            self.current_tick,
+            self.tick_span_years,
+            &physics_states,
+            &celestial_bodies,
+            &lineages,
+        );
+        
+        // Detect and record significant physical transitions
+        self.detect_physical_transitions(&previous_state)?;
+        
+        Ok(())
+    }
+    
+    /// Detect and record significant physical transitions
+    fn detect_physical_transitions(&mut self, previous_state: &cosmic_era::UniverseState) -> Result<()> {
+        use cosmic_era::TransitionType;
+        
+        // Check for first stars
+        if previous_state.stellar_fraction < 0.001 && self.universe_state.stellar_fraction >= 0.001 {
+            let transition = cosmic_era::PhysicalTransition::new(
+                self.current_tick,
+                self.universe_state.age_gyr,
+                TransitionType::FirstStars,
+                "First stars have ignited, beginning hydrogen fusion".to_string(),
+                vec![
+                    ("stellar_fraction".to_string(), self.universe_state.stellar_fraction),
+                    ("temperature".to_string(), self.universe_state.mean_temperature),
+                ],
+            );
+            self.physical_transitions.push(transition);
+            info!("🌟 PHYSICAL TRANSITION: First stars have formed at age {:.3} Gyr", self.universe_state.age_gyr);
+        }
+        
+        // Check for first heavy elements
+        if previous_state.metallicity < 0.001 && self.universe_state.metallicity >= 0.001 {
+            let transition = cosmic_era::PhysicalTransition::new(
+                self.current_tick,
+                self.universe_state.age_gyr,
+                TransitionType::FirstMetals,
+                "First heavy elements produced by stellar nucleosynthesis".to_string(),
+                vec![
+                    ("metallicity".to_string(), self.universe_state.metallicity),
+                    ("stellar_fraction".to_string(), self.universe_state.stellar_fraction),
+                ],
+            );
+            self.physical_transitions.push(transition);
+            info!("⚛️ PHYSICAL TRANSITION: First heavy elements created at age {:.3} Gyr", self.universe_state.age_gyr);
+        }
+        
+        // Check for first life
+        if previous_state.habitable_count == 0 && self.universe_state.habitable_count > 0 {
+            let transition = cosmic_era::PhysicalTransition::new(
+                self.current_tick,
+                self.universe_state.age_gyr,
+                TransitionType::FirstLife,
+                "First habitable environments have emerged".to_string(),
+                vec![
+                    ("habitable_count".to_string(), self.universe_state.habitable_count as f64),
+                    ("metallicity".to_string(), self.universe_state.metallicity),
+                ],
+            );
+            self.physical_transitions.push(transition);
+            info!("🧬 PHYSICAL TRANSITION: First habitable zones at age {:.3} Gyr", self.universe_state.age_gyr);
+        }
+        
+        // Check for intelligence emergence
+        if previous_state.max_complexity < 10.0 && self.universe_state.max_complexity >= 10.0 {
+            let transition = cosmic_era::PhysicalTransition::new(
+                self.current_tick,
+                self.universe_state.age_gyr,
+                TransitionType::FirstIntelligence,
+                "First intelligent life has emerged".to_string(),
+                vec![
+                    ("max_complexity".to_string(), self.universe_state.max_complexity),
+                    ("habitable_count".to_string(), self.universe_state.habitable_count as f64),
+                ],
+            );
+            self.physical_transitions.push(transition);
+            info!("🧠 PHYSICAL TRANSITION: First intelligence at age {:.3} Gyr", self.universe_state.age_gyr);
+        }
+        
+        Ok(())
     }
 
     /// Update physics simulation
@@ -410,22 +507,22 @@ impl UniverseSimulation {
         Ok(())
     }
 
-    /// Update cosmic-scale processes (star formation, supernovae, etc.)
+    /// Update cosmic-scale processes based on current physical conditions
     fn update_cosmic_processes(&mut self) -> Result<()> {
         // Process stellar evolution and nuclear burning (always active for existing stars)
         self.process_stellar_evolution()?;
         
-        match self.cosmic_era {
-            cosmic_era::CosmicEra::Starbirth => {
-                self.process_star_formation()?;
-            },
-            cosmic_era::CosmicEra::PlanetaryAge => {
-                self.process_planet_formation()?;
-            },
-            cosmic_era::CosmicEra::Biogenesis => {
-                self.process_life_emergence()?;
-            },
-            _ => {}
+        // Check physical conditions to determine what processes are possible
+        if self.universe_state.allows_star_formation() {
+            self.process_star_formation()?;
+        }
+        
+        if self.universe_state.allows_planet_formation() {
+            self.process_planet_formation()?;
+        }
+        
+        if self.universe_state.allows_life_emergence() {
+            self.process_life_emergence()?;
         }
         
         // Process supernova nucleosynthesis and enrichment (always check)
@@ -692,24 +789,8 @@ impl UniverseSimulation {
         use rand::Rng;
         let mut rng = rand::thread_rng();
         
-        // Only form stars in appropriate cosmic eras
-        let can_form_stars = matches!(self.cosmic_era, 
-            cosmic_era::CosmicEra::Starbirth | 
-            cosmic_era::CosmicEra::PlanetaryAge |
-            cosmic_era::CosmicEra::Biogenesis
-        );
-        
-        if !can_form_stars {
-            return Ok(());
-        }
-        
-        // Star formation rate depends on cosmic era and available gas
-        let star_formation_rate = match self.cosmic_era {
-            cosmic_era::CosmicEra::Starbirth => 0.01,        // Peak star formation
-            cosmic_era::CosmicEra::PlanetaryAge => 0.005,    // Star formation continues
-            cosmic_era::CosmicEra::Biogenesis => 0.001,      // Late star formation
-            _ => 0.0,
-        };
+        // Get star formation rate based on current physical conditions
+        let star_formation_rate = self.universe_state.star_formation_rate();
         
         // Count available gas particles (simplified)
         let gas_particle_count = self.world.query::<&PhysicsState>()
@@ -1100,7 +1181,7 @@ impl UniverseSimulation {
             // Basic simulation metrics
             current_tick: self.current_tick,
             universe_age_gyr: self.universe_age_gyr(),
-            cosmic_era: self.cosmic_era.clone(),
+            universe_description: self.universe_state.description(),
             target_ups: self.target_ups,
             
             // Population counts
@@ -1947,8 +2028,8 @@ impl UniverseSimulation {
         // In a more sophisticated implementation, this would restore previous state
         self.current_tick -= actual_rewind;
         
-        // Update cosmic era based on new tick
-        self.update_cosmic_era();
+        // Update universe state based on new tick
+        self.update_universe_state()?;
         
         info!("Rewound {} ticks to tick {}", actual_rewind, self.current_tick);
         Ok(actual_rewind)
@@ -1961,7 +2042,7 @@ pub struct SimulationStats {
     // Basic simulation metrics
     pub current_tick: u64,
     pub universe_age_gyr: f64,
-    pub cosmic_era: cosmic_era::CosmicEra,
+    pub universe_description: String,
     pub target_ups: f64,
     
     // Population counts
@@ -2258,14 +2339,15 @@ mod tests {
         let config = config::SimulationConfig::default();
         let mut sim = UniverseSimulation::new(config).unwrap();
         
-        // Test era transitions
+        // Test physics-driven state evolution
         sim.current_tick = 0;
-        sim.update_cosmic_era();
-        assert!(matches!(sim.cosmic_era, cosmic_era::CosmicEra::ParticleSoup));
+        sim.update_universe_state().unwrap();
+        assert!(sim.universe_state.age_gyr < 0.001);
+        assert!(sim.universe_state.stellar_fraction < 0.001);
         
         sim.current_tick = 1000; // 1 Gyr
-        sim.update_cosmic_era();
-        assert!(matches!(sim.cosmic_era, cosmic_era::CosmicEra::Starbirth));
+        sim.update_universe_state().unwrap();
+        assert!(sim.universe_state.age_gyr > 0.5);
     }
 }
 

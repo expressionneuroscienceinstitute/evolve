@@ -233,6 +233,10 @@
             border: 1px solid #333;
         }
         
+        .canvas-container.debug-mode {
+            right: 0px;
+        }
+        
         #simulation-canvas {
             width: 100%;
             height: 100%;
@@ -359,6 +363,12 @@
         .pulsing {
             animation: pulse 2s infinite;
         }
+        
+        .info-panel.debug-mode {
+            display: block;
+            width: 100%;
+            right: 0;
+        }
     </style>
 </head>
 <body>
@@ -396,6 +406,7 @@
                 <button class="view-btn" data-view="13">Quantum Fields</button>
                 <button class="view-btn" data-view="14">Energy Flows</button>
                 <button class="view-btn" data-view="15">Emergent Complexity</button>
+                <button class="view-btn" data-view="16">🐛 Debug Messages</button>
             </div>
         </div>
 
@@ -579,6 +590,42 @@
                 <span class="metric-value" id="cpu-usage">0%</span>
             </div>
         </div>
+
+        <div class="info-section" id="debug-section">
+            <h3>🐛 WebSocket Debug</h3>
+            <div class="metric">
+                <span class="metric-label">WS Messages:</span>
+                <span class="metric-value" id="messages-received">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">RPC Messages:</span>
+                <span class="metric-value" id="rpc-messages-received">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Last Message Type:</span>
+                <span class="metric-value" id="last-message-type">none</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Last Message Size:</span>
+                <span class="metric-value" id="last-message-size">0 bytes</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Connection State:</span>
+                <span class="metric-value" id="connection-state">disconnected</span>
+            </div>
+            <div style="margin-top: 10px;">
+                <h4 style="color: #00ffff; font-size: 12px; margin-bottom: 5px;">Recent WS Messages:</h4>
+                <div id="debug-messages" style="max-height: 200px; overflow-y: auto; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 4px; font-family: monospace; font-size: 10px; line-height: 1.2;">
+                    <div style="color: #888;">No messages yet...</div>
+                </div>
+            </div>
+            <div style="margin-top: 10px;">
+                <h4 style="color: #00ffff; font-size: 12px; margin-bottom: 5px;">Recent RPC Messages:</h4>
+                <div id="rpc-debug-messages" style="max-height: 150px; overflow-y: auto; background: rgba(255,255,255,0.05); padding: 8px; border-radius: 4px; font-family: monospace; font-size: 10px; line-height: 1.2;">
+                    <div style="color: #888;">No RPC messages yet...</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="canvas-container">
@@ -622,6 +669,101 @@
             </div>
         </div>
     </div>
+
+    <!-- RPC helper script: wraps JSON-RPC HTTP calls and feeds messages to the WASM debug panel.
+         We cannot rely on a fixed file name like "./viz_web.js" because Trunk appends a
+         content-hash for cache-busting (e.g. "viz_web-a1b2c3d4.js"). Instead, locate the
+         Trunk-injected module script at runtime and import it dynamically. -->
+    <script type="module">
+      // Find the <script type="module"> tag that Trunk injected for our WASM bindings.
+      const injectedSrc = Array.from(document.querySelectorAll('script[type="module"]'))
+        .map(s => s.src)
+        .find(src => src.includes('viz_web') && src.endsWith('.js'));
+
+      if (!injectedSrc) {
+        console.error('Unable to locate Trunk-injected viz_web module script; RPC functions disabled.');
+      } else {
+        // Dynamically import the real module (works with or without hash suffix).
+        import(injectedSrc).then(wasm => {
+          // Ensure the WASM runtime is initialised.
+          const ensureInit = wasm.default ? wasm.default() : Promise.resolve();
+
+          ensureInit.then(() => {
+            // Expose a global helper for making JSON-RPC calls back to the Rust backend
+            // and piping the responses into the WASM debug panel.
+            window.callRpc = async (method, params = {}) => {
+              const body = { jsonrpc: '2.0', method, params, id: Date.now() };
+              const res  = await fetch('http://127.0.0.1:9001/rpc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+              });
+
+              let json;
+              try {
+                json = await res.json();
+              } catch (err) {
+                json = { error: 'Failed to parse JSON', status: res.status };
+              }
+
+              if (wasm && wasm.log_rpc_message) {
+                try {
+                  wasm.log_rpc_message(method, JSON.stringify(json));
+                } catch (e) {
+                  console.warn('log_rpc_message failed', e);
+                }
+              }
+
+              return json;
+            };
+          });
+        }).catch(err => {
+          console.error('Failed to load viz_web WASM module:', err);
+        });
+      }
+    </script>
+
+    <!-- Debug mode view switching handler -->
+    <script>
+        function handleViewModeChange(mode) {
+            const canvasContainer = document.querySelector('.canvas-container');
+            const infoPanel = document.querySelector('.info-panel');
+            const debugSection = document.getElementById('debug-section');
+            
+            if (mode === 16) { // Debug Messages mode
+                canvasContainer.classList.add('debug-mode');
+                infoPanel.style.display = 'block';
+                // Show only debug section
+                const allSections = document.querySelectorAll('.info-section');
+                allSections.forEach(section => {
+                    if (section.id === 'debug-section') {
+                        section.style.display = 'block';
+                    } else {
+                        section.style.display = 'none';
+                    }
+                });
+            } else {
+                canvasContainer.classList.remove('debug-mode');
+                infoPanel.style.display = 'block';
+                // Show all sections
+                const allSections = document.querySelectorAll('.info-section');
+                allSections.forEach(section => {
+                    section.style.display = 'block';
+                });
+            }
+        }
+        
+        // Hook into the view button click events
+        document.addEventListener('DOMContentLoaded', function() {
+            const viewButtons = document.querySelectorAll('.view-btn');
+            viewButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const mode = parseInt(this.getAttribute('data-view'));
+                    handleViewModeChange(mode);
+                });
+            });
+        });
+    </script>
 
     <!-- The `run` function in `src/main.rs` is the entry point -->
 </body>

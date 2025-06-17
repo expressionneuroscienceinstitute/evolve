@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>EVOLVE Dashboard Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #000;
+            color: white;
+        }
+        .test-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .view-btn {
+            padding: 8px 16px;
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .view-btn:hover {
+            background: #444;
+        }
+        .view-btn.active {
+            background: #00ffff;
+            color: #000;
+            font-weight: bold;
+        }
+        #status {
+            margin: 20px 0;
+            padding: 10px;
+            background: #333;
+            border-radius: 4px;
+        }
+        #simulation-canvas {
+            border: 1px solid #555;
+            background: radial-gradient(circle at center, #001122 0%, #000000 100%);
+        }
+    </style>
+</head>
+<body>
+    <h1>🧬 EVOLVE Dashboard Test</h1>
+    
+    <div class="test-buttons">
+        <button class="view-btn" data-view="0">Particle Physics</button>
+        <button class="view-btn" data-view="1">Atomic Structure</button>
+        <button class="view-btn" data-view="2">Molecular Dynamics</button>
+        <button class="view-btn" data-view="3">Celestial Bodies</button>
+        <button class="view-btn" data-view="4">Nuclear Physics</button>
+        <button class="view-btn active" data-view="5">AI Agents</button>
+        <button class="view-btn" data-view="6">Lineage Trees</button>
+        <button class="view-btn" data-view="7">Decision Tracking</button>
+        <button class="view-btn" data-view="8">Consciousness</button>
+        <button class="view-btn" data-view="9">Innovation Timeline</button>
+        <button class="view-btn" data-view="10">Selection Pressures</button>
+        <button class="view-btn" data-view="11">Environmental Map</button>
+        <button class="view-btn" data-view="12">Population Dynamics</button>
+        <button class="view-btn" data-view="13">Quantum Fields</button>
+        <button class="view-btn" data-view="14">Energy Flows</button>
+        <button class="view-btn" data-view="15">Emergent Complexity</button>
+    </div>
+    
+    <div id="status">
+        <p>Dashboard Status: <span id="dashboard-status">Loading...</span></p>
+        <p>Current View: <span id="current-view">Agent Overview</span></p>
+        <p>Console logs will show button clicks and view mode changes.</p>
+    </div>
+    
+    <canvas id="simulation-canvas" width="800" height="600"></canvas>
+
+    <script type="module">
+        import { default as init, run } from './dist/viz_web.js';
+        
+        async function main() {
+            try {
+                await init();
+                await run();
+                document.getElementById('dashboard-status').textContent = 'Loaded successfully!';
+                
+                // Add test event listeners to verify button behavior
+                document.querySelectorAll('.view-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const viewMode = btn.getAttribute('data-view');
+                        const viewName = btn.textContent;
+                        document.getElementById('current-view').textContent = viewName;
+                        console.log('Button clicked:', viewName, 'Mode:', viewMode);
+                    });
+                });
+            } catch (error) {
+                console.error('Failed to load WASM:', error);
+                document.getElementById('dashboard-status').textContent = 'Failed to load: ' + error.message;
+            }
+        }
+
+        main();
+    </script>
+</body>
+</html> 

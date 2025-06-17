@@ -45,7 +45,7 @@ pub struct StatusResponse {
     pub tick: u64,
     pub ups: f64,
     pub universe_age_gyr: f64,
-    pub cosmic_era: String,
+    pub universe_description: String,
     pub lineage_count: u64,
     pub save_file_age_sec: Option<u64>,
 }

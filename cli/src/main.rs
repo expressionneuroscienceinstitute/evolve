@@ -353,7 +353,7 @@ async fn cmd_status() -> Result<()> {
         println!("Tick: {}", status.tick);
         println!("UPS: {:.2}", status.ups);
         println!("Age: {:.3} Gyr", status.universe_age_gyr);
-        println!("Era: {}", status.cosmic_era);
+        println!("State: {}", status.universe_description);
         println!("Lineages: {}", status.lineage_count);
         if let Some(age) = status.save_file_age_sec {
             println!("Last save: {} seconds ago", age);
@@ -407,8 +407,8 @@ async fn cmd_start(
     let shared_state = Arc::new(Mutex::new(SharedState { sim: sim.clone(), last_save_time: None }));
     tokio::spawn(start_rpc_server(rpc_port, shared_state.clone()));
 
-    // Start WebSocket server if requested (binary payloads)
-    let (tx, _) = broadcast::channel::<Vec<u8>>(100);
+    // Start WebSocket server for plain JSON payloads
+    let (tx, _) = broadcast::channel::<String>(100);
     if let Some(port) = serve_dash {
         tokio::spawn(start_websocket_server(port, tx.clone()));
     }
@@ -612,7 +612,7 @@ async fn cmd_start(
                     "kind": "full",
                     "current_tick": stats.current_tick,
                     "universe_age_gyr": stats.universe_age_gyr,
-                    "cosmic_era": format!("{:?}", stats.cosmic_era),
+                    "universe_description": stats.universe_description,
                     "temperature": temperature,
                     "energy_density": energy_density,
                     "particles": particle_data,
@@ -672,11 +672,9 @@ async fn cmd_start(
 
             drop(sim_guard); // Release the lock quickly
 
-            // ── Serialize + compress ────────────────────────────────────
+            // ── Serialize and broadcast plain JSON ─────────────────────
             let json_str = payload_json.to_string();
-            let json_bytes = json_str.as_bytes();
-            let compressed = miniz_oxide::deflate::compress_to_vec_zlib(json_bytes, 6);
-            let _ = tx.send(compressed);
+            let _ = tx.send(json_str);
         }
 
         let tick_duration = Duration::from_secs_f64(1.0 / config.target_ups);
@@ -1172,8 +1170,8 @@ fn render_universe_stats(stats_data: &serde_json::Value) -> Result<()> {
         println!("Universe age: {:.2} billion years", age);
     }
     
-    if let Some(era) = stats_data.get("cosmic_era").and_then(|v| v.as_str()) {
-        println!("Cosmic era: {}", era);
+    if let Some(description) = stats_data.get("universe_description").and_then(|v| v.as_str()) {
+        println!("Universe state: {}", description);
     }
     
     if let Some(particles) = stats_data.get("total_particles").and_then(|v| v.as_u64()) {
@@ -1206,7 +1204,7 @@ fn render_universe_stats(stats_data: &serde_json::Value) -> Result<()> {
 fn render_sample_universe_stats() {
     println!("=== UNIVERSE STATISTICS (SAMPLE DATA) ===");
     println!("Universe age: 13.8 billion years");
-    println!("Cosmic era: Biogenesis");
+    println!("Universe state: Universe age 13.8 Gyr: Life complexity 8.5. Biological evolution developing.");
     println!("Total particles: 10,847,293,521");
     println!("Star count: 2,847");
     println!("Planet count: 8,291");
@@ -2071,8 +2069,10 @@ async fn cmd_interactive() -> Result<()> {
                     if let Some(age_gyr) = response.get("universe_age_gyr").and_then(|v| v.as_f64()) {
                         print!("Age: {:.2} GYr", age_gyr);
                     }
-                    if let Some(era) = response.get("cosmic_era").and_then(|v| v.as_str()) {
-                        print!(", Era: {}", era);
+                    if let Some(description) = response.get("universe_description").and_then(|v| v.as_str()) {
+                        // Show just the first part for brevity in interactive mode
+                        let brief = description.split(':').next().unwrap_or(description);
+                        print!(", State: {}", brief);
                     }
                     println!();
                 },
@@ -2446,7 +2446,7 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
     Ok(false)
 }
 
-async fn start_websocket_server(port: u16, tx: broadcast::Sender<Vec<u8>>) {
+async fn start_websocket_server(port: u16, tx: broadcast::Sender<String>) {
     let websocket_route = warp::path("ws")
         .and(warp::ws())
         .and(warp::any().map(move || tx.clone()))
@@ -2458,14 +2458,14 @@ async fn start_websocket_server(port: u16, tx: broadcast::Sender<Vec<u8>>) {
     warp::serve(websocket_route).run(([127, 0, 0, 1], port)).await;
 }
 
-async fn handle_websocket(websocket: WebSocket, tx: broadcast::Sender<Vec<u8>>) {
+async fn handle_websocket(websocket: WebSocket, tx: broadcast::Sender<String>) {
     let mut rx = tx.subscribe();
     let (mut ws_tx, _ws_rx) = websocket.split();
 
     loop {
         match rx.recv().await {
             Ok(msg) => {
-                if ws_tx.send(Message::binary(msg)).await.is_err() {
+                if ws_tx.send(Message::text(msg)).await.is_err() {
                     break;
                 }
             }
@@ -2496,7 +2496,7 @@ async fn handle_rpc_request(
                 tick: stats.current_tick,
                 ups: stats.target_ups,
                 universe_age_gyr: stats.universe_age_gyr,
-                cosmic_era: format!("{:?}", stats.cosmic_era),
+                universe_description: stats.universe_description.clone(),
                 lineage_count: stats.lineage_count as u64,
                 save_file_age_sec,
             };
@@ -2545,7 +2545,7 @@ async fn handle_rpc_request(
                                 tick: stats.current_tick,
                                 ups: stats.target_ups,
                                 universe_age_gyr: stats.universe_age_gyr,
-                                cosmic_era: format!("{:?}", stats.cosmic_era),
+                                universe_description: stats.universe_description.clone(),
                                 lineage_count: stats.lineage_count as u64,
                                 save_file_age_sec: Some(0),
                             };
@@ -2822,7 +2822,7 @@ async fn handle_rpc_request(
             let total_energy = physics.energy_density * physics.volume;
             let universe_stats = json!({
                 "age_gyr": stats.universe_age_gyr,
-                "cosmic_era": format!("{:?}", stats.cosmic_era),
+                "universe_description": stats.universe_description.clone(),
                 "total_particles": stats.particle_count,
                 "star_count": stats.celestial_body_count,
                 "planet_count": stats.planet_count,

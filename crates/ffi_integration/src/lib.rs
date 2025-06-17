@@ -8,10 +8,13 @@
 //! - ENDF: Nuclear data library
 
 pub mod geant4;
-pub mod lammps; 
+pub mod lammps;
 pub mod gadget;
 pub mod endf;
 pub mod mod_file;
+
+#[cfg(feature = "demo")]
+pub mod demo;
 
 pub use mod_file::*;
 

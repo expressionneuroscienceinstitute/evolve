@@ -10,18 +10,183 @@ use std::os::raw::{c_char, c_double, c_int, c_void};
 use std::ptr;
 use nalgebra::Vector3;
 
-// Include generated bindings when feature is enabled
+// If the `geant4` feature is enabled we rely on the automatically generated
+// bindings created by build.rs (OUT_DIR/geant4_bindings.rs). This avoids
+// defining the symbols twice and removes the compilation clashes with the
+// hand-written stubs.
+
 #[cfg(feature = "geant4")]
-include!(concat!(env!("OUT_DIR"), "/geant4_bindings.rs"));
+#[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
+mod ffi {
+    use super::*; // re-export common imports so type names resolve
+    include!(concat!(env!("OUT_DIR"), "/geant4_bindings.rs"));
+}
+
+#[cfg(feature = "geant4")]
+use ffi::*;
+
+// -----------------------------------------------------------------------------
+// Fallback stubs for builds _without_ the `geant4` Cargo feature.
+// These give the compiler everything it needs so the rest of the file compiles,
+// while doing *nothing* at runtime.  All functions return neutral defaults and
+// the availability helper reports "not available" so higher-level callers know
+// the real Geant-4 engine is missing.
+// -----------------------------------------------------------------------------
+#[cfg(not(feature = "geant4"))]
+mod ffi {
+    use super::*;
+
+    // Dummy opaque types – in the real bindings these are structs with hidden
+    // fields.  We just need distinct types so pointers are well-typed.
+    pub type G4RunManager = c_void;
+    pub type G4VUserDetectorConstruction = c_void;
+    pub type G4VUserPhysicsList = c_void;
+    pub type G4SteppingManager = c_void;
+    pub type G4ParticleGun = c_void;
+
+    // ---------------------------------------------------------------------
+    // Minimal data structures that higher-level safe wrappers rely on.
+    // ---------------------------------------------------------------------
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug)]
+    pub struct G4InteractionData {
+        pub process_type: c_int,
+        pub energy_deposited: f64,
+        pub n_secondaries: c_int,
+        pub secondary_particles: *mut c_int,
+        pub secondary_energies: *mut f64,
+        pub step_length: f64,
+        pub position: [f64; 3],
+    }
+
+    impl Default for G4InteractionData {
+        fn default() -> Self {
+            Self {
+                process_type: 0,
+                energy_deposited: 0.0,
+                n_secondaries: 0,
+                secondary_particles: std::ptr::null_mut(),
+                secondary_energies: std::ptr::null_mut(),
+                step_length: 0.0,
+                position: [0.0; 3],
+            }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug)]
+    pub struct G4ParticleData {
+        pub pdg_code: c_int,
+        pub energy: f64,
+        pub momentum: [f64; 3],
+        pub position: [f64; 3],
+    }
+
+    impl Default for G4ParticleData {
+        fn default() -> Self {
+            Self {
+                pdg_code: 0,
+                energy: 0.0,
+                momentum: [0.0; 3],
+                position: [0.0; 3],
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // No-op (or constant) shims for every C function the real bindings expose.
+    // They keep the symbol names identical so the wrapper code compiles.
+    // ---------------------------------------------------------------------
+    #[inline]
+    pub unsafe fn g4_is_available() -> c_int { 0 }
+
+    #[inline]
+    pub unsafe fn g4_global_initialize() -> c_int { 0 }
+    #[inline]
+    pub unsafe fn g4_global_cleanup() {}
+
+    #[inline]
+    pub unsafe fn g4_create_run_manager() -> *mut G4RunManager { ptr::null_mut() }
+    #[inline]
+    pub unsafe fn g4_delete_run_manager(_m: *mut G4RunManager) {}
+
+    #[inline]
+    pub unsafe fn g4_create_simple_detector() -> *mut G4VUserDetectorConstruction { ptr::null_mut() }
+    #[inline]
+    pub unsafe fn g4_delete_detector(_d: *mut G4VUserDetectorConstruction) {}
+
+    #[inline]
+    pub unsafe fn g4_create_physics_list(_name: *const c_char) -> *mut G4VUserPhysicsList { ptr::null_mut() }
+    #[inline]
+    pub unsafe fn g4_delete_physics_list(_p: *mut G4VUserPhysicsList) {}
+
+    #[inline]
+    pub unsafe fn g4_create_stepping_manager() -> *mut G4SteppingManager { ptr::null_mut() }
+    #[inline]
+    pub unsafe fn g4_delete_stepping_manager(_s: *mut G4SteppingManager) {}
+
+    #[inline]
+    pub unsafe fn g4_create_particle_gun() -> *mut G4ParticleGun { ptr::null_mut() }
+    #[inline]
+    pub unsafe fn g4_delete_particle_gun(_p: *mut G4ParticleGun) {}
+
+    #[inline]
+    pub unsafe fn g4_set_detector_construction(_rm: *mut G4RunManager, _dc: *mut G4VUserDetectorConstruction) {}
+    #[inline]
+    pub unsafe fn g4_set_physics_list(_rm: *mut G4RunManager, _pl: *mut G4VUserPhysicsList) {}
+    #[inline]
+    pub unsafe fn g4_initialize_geant4(_rm: *mut G4RunManager) {}
+
+    #[inline]
+    pub unsafe fn g4_set_particle_gun_particle(_pg: *mut G4ParticleGun, _pdg: c_int) {}
+    #[inline]
+    pub unsafe fn g4_set_particle_gun_energy(_pg: *mut G4ParticleGun, _e: f64) {}
+    #[inline]
+    pub unsafe fn g4_set_particle_gun_position(_pg: *mut G4ParticleGun, _x: f64, _y: f64, _z: f64) {}
+    #[inline]
+    pub unsafe fn g4_set_particle_gun_direction(_pg: *mut G4ParticleGun, _x: f64, _y: f64, _z: f64) {}
+
+    #[inline]
+    pub unsafe fn g4_set_material(_mat: *const c_char) {}
+    #[inline]
+    pub unsafe fn g4_set_step_limit(_len: f64) {}
+
+    #[inline]
+    pub unsafe fn g4_run_beam_on(_rm: *mut G4RunManager, _n: c_int) {}
+
+    #[inline]
+    pub unsafe fn g4_get_n_interactions() -> c_int { 0 }
+    #[inline]
+    pub unsafe fn g4_get_interaction_data(_i: c_int, _data: *mut G4InteractionData) {}
+
+    #[inline]
+    pub unsafe fn g4_get_cross_section(_particle: *const c_char, _material: *const c_char, _process: *const c_char, _energy: f64) -> f64 { 0.0 }
+    #[inline]
+    pub unsafe fn g4_get_stopping_power(_particle: *const c_char, _material: *const c_char, _energy: f64) -> f64 { 0.0 }
+
+    #[inline]
+    pub unsafe fn g4_simulate_decay(_pdg: c_int, _energy: f64) -> c_int { 0 }
+    #[inline]
+    pub unsafe fn g4_get_decay_product(_i: c_int, _data: *mut G4ParticleData) {}
+}
+
+// Make the stub symbols available at the top level of this module just like
+// the real bindings.
+#[cfg(not(feature = "geant4"))]
+use ffi::*;
+
+// -----------------------------------------------------------------------------
+// End of stub module additions
+// -----------------------------------------------------------------------------
 
 /// Safe Rust wrapper around Geant4 functionality
 #[derive(Debug)]
 pub struct Geant4Engine {
-    detector_construction: *mut c_void,
-    physics_list: *mut c_void,
-    run_manager: *mut c_void,
-    step_manager: *mut c_void,
-    particle_gun: *mut c_void,
+    detector_construction: *mut ffi::G4VUserDetectorConstruction,
+    physics_list: *mut ffi::G4VUserPhysicsList,
+    run_manager: *mut ffi::G4RunManager,
+    step_manager: *mut ffi::G4SteppingManager,
+    particle_gun: *mut ffi::G4ParticleGun,
     is_initialized: bool,
 }
 
@@ -38,26 +203,26 @@ impl Geant4Engine {
         let physics_list_c = CString::new(physics_list_name)?;
         
         unsafe {
-            let run_manager = g4_create_run_manager();
+            let run_manager: *mut ffi::G4RunManager = g4_create_run_manager();
             if run_manager.is_null() {
                 return Err(anyhow!("Failed to create Geant4 run manager"));
             }
             
-            let detector_construction = g4_create_simple_detector();
+            let detector_construction: *mut ffi::G4VUserDetectorConstruction = g4_create_simple_detector();
             if detector_construction.is_null() {
                 g4_delete_run_manager(run_manager);
                 return Err(anyhow!("Failed to create detector construction"));
             }
             
-            let physics_list = g4_create_physics_list(physics_list_c.as_ptr());
+            let physics_list: *mut ffi::G4VUserPhysicsList = g4_create_physics_list(physics_list_c.as_ptr());
             if physics_list.is_null() {
                 g4_delete_detector(detector_construction);
                 g4_delete_run_manager(run_manager);
                 return Err(anyhow!("Failed to create physics list"));
             }
             
-            let step_manager = g4_create_stepping_manager();
-            let particle_gun = g4_create_particle_gun();
+            let step_manager: *mut ffi::G4SteppingManager = g4_create_stepping_manager();
+            let particle_gun: *mut ffi::G4ParticleGun = g4_create_particle_gun();
             
             g4_set_detector_construction(run_manager, detector_construction);
             g4_set_physics_list(run_manager, physics_list);
@@ -403,122 +568,6 @@ fn get_pdg_charge(pdg_code: c_int) -> f64 {
     }
 }
 
-// Conditional compilation for FFI functions and stubs
-#[cfg(feature = "geant4")]
-extern "C" {
-    fn g4_is_available() -> c_int;
-    fn g4_global_initialize() -> c_int;
-    fn g4_global_cleanup();
-    fn g4_create_run_manager() -> *mut c_void;
-    fn g4_delete_run_manager(manager: *mut c_void);
-    fn g4_create_simple_detector() -> *mut c_void;
-    fn g4_delete_detector(detector: *mut c_void);
-    fn g4_create_physics_list(name: *const c_char) -> *mut c_void;
-    fn g4_delete_physics_list(physics_list: *mut c_void);
-    fn g4_create_stepping_manager() -> *mut c_void;
-    fn g4_delete_stepping_manager(manager: *mut c_void);
-    fn g4_create_particle_gun() -> *mut c_void;
-    fn g4_delete_particle_gun(gun: *mut c_void);
-    fn g4_set_detector_construction(manager: *mut c_void, detector: *mut c_void);
-    fn g4_set_physics_list(manager: *mut c_void, physics_list: *mut c_void);
-    fn g4_initialize_geant4(manager: *mut c_void);
-    fn g4_set_particle_gun_particle(gun: *mut c_void, pdg_code: c_int);
-    fn g4_set_particle_gun_energy(gun: *mut c_void, energy_mev: c_double);
-    fn g4_set_particle_gun_position(gun: *mut c_void, x: c_double, y: c_double, z: c_double);
-    fn g4_set_particle_gun_direction(gun: *mut c_void, dx: c_double, dy: c_double, dz: c_double);
-    fn g4_set_material(material: *const c_char);
-    fn g4_set_step_limit(step_cm: c_double);
-    fn g4_run_beam_on(manager: *mut c_void, n_events: c_int);
-    fn g4_get_n_interactions() -> c_int;
-    fn g4_get_interaction_data(index: c_int, data: *mut G4InteractionData);
-    fn g4_get_cross_section(particle: *const c_char, material: *const c_char, 
-                           process: *const c_char, energy_mev: c_double) -> c_double;
-    fn g4_get_stopping_power(particle: *const c_char, material: *const c_char, 
-                            energy_mev: c_double) -> c_double;
-    fn g4_simulate_decay(pdg_code: c_int, energy_mev: c_double) -> c_int;
-    fn g4_get_decay_product(index: c_int, data: *mut G4ParticleData);
-}
-
-// Stub implementations when Geant4 is not available
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_is_available() -> c_int { 0 }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_global_initialize() -> c_int { -1 }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_global_cleanup() {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_create_run_manager() -> *mut c_void { ptr::null_mut() }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_delete_run_manager(_: *mut c_void) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_create_simple_detector() -> *mut c_void { ptr::null_mut() }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_delete_detector(_: *mut c_void) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_create_physics_list(_: *const c_char) -> *mut c_void { ptr::null_mut() }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_delete_physics_list(_: *mut c_void) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_create_stepping_manager() -> *mut c_void { ptr::null_mut() }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_delete_stepping_manager(_: *mut c_void) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_create_particle_gun() -> *mut c_void { ptr::null_mut() }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_delete_particle_gun(_: *mut c_void) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_set_detector_construction(_: *mut c_void, _: *mut c_void) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_set_physics_list(_: *mut c_void, _: *mut c_void) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_initialize_geant4(_: *mut c_void) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_set_particle_gun_particle(_: *mut c_void, _: c_int) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_set_particle_gun_energy(_: *mut c_void, _: c_double) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_set_particle_gun_position(_: *mut c_void, _: c_double, _: c_double, _: c_double) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_set_particle_gun_direction(_: *mut c_void, _: c_double, _: c_double, _: c_double) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_set_material(_: *const c_char) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_set_step_limit(_: c_double) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_run_beam_on(_: *mut c_void, _: c_int) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_get_n_interactions() -> c_int { 0 }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_get_interaction_data(_: c_int, _: *mut G4InteractionData) {}
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_get_cross_section(_: *const c_char, _: *const c_char, _: *const c_char, _: c_double) -> c_double { 0.0 }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_get_stopping_power(_: *const c_char, _: *const c_char, _: c_double) -> c_double { 0.0 }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_simulate_decay(_: c_int, _: c_double) -> c_int { 0 }
-#[cfg(not(feature = "geant4"))]
-unsafe fn g4_get_decay_product(_: c_int, _: *mut G4ParticleData) {}
-
-// Data structures for FFI
-#[repr(C)]
-struct G4InteractionData {
-    process_type: c_int,
-    energy_deposited: c_double,
-    n_secondaries: c_int,
-    secondary_particles: *mut c_int,
-    secondary_energies: *mut c_double,
-    step_length: c_double,
-    position: [c_double; 3],
-}
-
-#[repr(C)]
-struct G4ParticleData {
-    pdg_code: c_int,
-    energy: c_double,
-    momentum: [c_double; 3],
-    position: [c_double; 3],
-}
-
 fn process_type_to_interaction(process_type: c_int) -> InteractionType {
     match process_type {
         1 => InteractionType::ElectromagneticScattering,
@@ -531,4 +580,10 @@ fn process_type_to_interaction(process_type: c_int) -> InteractionType {
 fn extract_secondary_particles(_data: &G4InteractionData) -> Vec<FundamentalParticle> {
     // Simplified extraction - would need proper implementation
     Vec::new()
-} 
+}
+
+// Remove now-duplicate hand-written data structures to avoid redefinition when
+// the real Geant-4 bindings are present.  Their stub counterparts live inside
+// the `ffi` module above.
+// (The deleted hand-written structs were unconditional; with this cfg-gated
+// approach we avoid symbol collisions.) 

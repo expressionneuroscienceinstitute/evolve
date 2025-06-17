@@ -70,6 +70,12 @@ pub struct EvolutionMonitor {
     last_render_duration: f64,
     // Agent history tracking
     agent_history: HashMap<Uuid, AgentHistory>,
+    // Double buffering
+    offscreen_canvas: Option<HtmlCanvasElement>,
+    offscreen_context: Option<CanvasRenderingContext2d>,
+    needs_redraw: bool,
+    target_fps: f64,
+    frame_interval: f64,
 }
 
 /// Agent history tracking structure
@@ -91,6 +97,7 @@ pub struct SimulationState {
     
     // Fundamental physics
     pub particles: Vec<ParticleVisualization>,
+    pub celestial_bodies: Vec<CelestialBodyVisualization>,
     pub quantum_fields: HashMap<String, FieldVisualization>,
     pub nuclei: Vec<NucleusVisualization>,
     pub atoms: Vec<AtomVisualization>,
@@ -113,31 +120,6 @@ pub struct SimulationState {
     pub physics_metrics: PhysicsMetrics,
 }
 
-#[wasm_bindgen]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ViewMode {
-    ParticlePhysics,
-    AtomicStructure,
-    MolecularDynamics,
-    AgentOverview,
-    LineageTree,
-    DecisionTracking,
-    ConsciousnessMap,
-    InnovationTimeline,
-    SelectionPressures,
-    EnvironmentalMap,
-    PopulationDynamics,
-    QuantumFields,
-    EnergyFlows,
-    EmergentComplexity,
-}
-
-impl Default for ViewMode {
-    fn default() -> Self {
-        ViewMode::AgentOverview
-    }
-}
-
 /// Particle visualization data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParticleVisualization {
@@ -153,6 +135,20 @@ pub struct ParticleVisualization {
     pub interaction_count: u32,
     pub age: f64,
     pub decay_probability: f64,
+}
+
+/// Celestial body visualization data (stars, planets, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CelestialBodyVisualization {
+    pub id: String,
+    pub body_type: String,
+    pub position: [f64; 3],
+    pub velocity: [f64; 3],
+    pub mass: f64,          // kg
+    pub radius: f64,        // m
+    pub temperature: f64,   // K
+    pub luminosity: f64,    // W
+    pub age: f64,          // years
 }
 
 /// AI agent visualization with comprehensive tracking
@@ -319,6 +315,31 @@ pub struct PopulationStatistics {
 }
 
 #[wasm_bindgen]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ViewMode {
+    ParticlePhysics,
+    AtomicStructure,
+    MolecularDynamics,
+    AgentOverview,
+    LineageTree,
+    DecisionTracking,
+    ConsciousnessMap,
+    InnovationTimeline,
+    SelectionPressures,
+    EnvironmentalMap,
+    PopulationDynamics,
+    QuantumFields,
+    EnergyFlows,
+    EmergentComplexity,
+}
+
+impl Default for ViewMode {
+    fn default() -> Self {
+        ViewMode::AgentOverview
+    }
+}
+
+#[wasm_bindgen]
 impl EvolutionMonitor {
     #[wasm_bindgen(constructor)]
     pub fn new(canvas_id: &str) -> Result<EvolutionMonitor, JsValue> {
@@ -335,12 +356,30 @@ impl EvolutionMonitor {
             .unwrap()
             .dyn_into::<CanvasRenderingContext2d>()?;
         
-        // Set up high-DPI canvas
+        // Set up high-DPI canvas dimensions **without** applying an additional context scale.
+        // Previously we also scaled the rendering context here which resulted in the scene
+        // being drawn twice as large, then copied onto another already-scaled context –
+        // effectively a double-scale that produced flickering and a single white dot.
+        // By leaving the context transform at the identity matrix we render directly to
+        // the full-resolution canvas and copy 1-to-1 onto the display canvas, which fixes
+        // the flashing.
         let dpr = window().unwrap().device_pixel_ratio();
         canvas.set_width((canvas.offset_width() as f64 * dpr) as u32);
         canvas.set_height((canvas.offset_height() as f64 * dpr) as u32);
-        context.scale(dpr, dpr)?;
+
+        // Create offscreen canvas for double buffering
+        let offscreen_canvas = document
+            .create_element("canvas")?
+            .dyn_into::<HtmlCanvasElement>()?;
+        offscreen_canvas.set_width(canvas.width());
+        offscreen_canvas.set_height(canvas.height());
         
+        let offscreen_context = offscreen_canvas
+            .get_context("2d")?
+            .unwrap()
+            .dyn_into::<CanvasRenderingContext2d>()?;
+        // Do **not** scale the offscreen context; it already matches the device pixel ratio.
+
         let decision_analyzer = DecisionAnalyzer::new();
         let lineage_tracker = LineageTracker::new();
         let consciousness_monitor = ConsciousnessMonitor::new();
@@ -369,174 +408,275 @@ impl EvolutionMonitor {
             fps: 0.0,
             last_render_duration: 0.0,
             agent_history: HashMap::new(),
+            offscreen_canvas: Some(offscreen_canvas),
+            offscreen_context: Some(offscreen_context),
+            needs_redraw: true,
+            target_fps: 60.0,
+            frame_interval: 1000.0 / 60.0,
         })
     }
     
     /// Main rendering loop
     #[wasm_bindgen]
     pub fn render(&mut self) -> Result<(), JsValue> {
-        let start_time = js_sys::Date::now();
-        
-        // Update HTML UI elements
-        self.update_html_ui()?;
-        
-        // Clear canvas
-        self.context.clear_rect(0.0, 0.0, self.canvas.width() as f64, self.canvas.height() as f64);
-        
-        // Avoid E0502: collect agent positions first
-        let agent_positions: Vec<(Uuid, [f64; 3])> = self.simulation_state.agents.iter().map(|a| (a.id, a.position)).collect();
-        for (id, pos) in agent_positions {
-            self.update_agent_history(id, pos);
+        let current_time = web_window()
+            .performance()
+            .map(|p| p.now())
+            .unwrap_or(js_sys::Date::now());
+        let elapsed = current_time - self.last_frame_time;
+
+        // Only render if enough time has passed or we need to redraw
+        if elapsed >= self.frame_interval || self.needs_redraw {
+            let start_time = current_time;
+            
+            // Use offscreen canvas for rendering
+            if let Some(offscreen_context) = &self.offscreen_context {
+                // Clear offscreen canvas
+                offscreen_context.clear_rect(0.0, 0.0, self.canvas.width() as f64, self.canvas.height() as f64);
+                
+                // Update HTML UI elements
+                self.update_html_ui()?;
+                
+                // Avoid E0502: collect agent positions first
+                let agent_positions: Vec<(Uuid, [f64; 3])> = self.simulation_state.agents.iter().map(|a| (a.id, a.position)).collect();
+                for (id, pos) in agent_positions {
+                    self.update_agent_history(id, pos);
+                }
+                
+                // Render based on current view mode
+                match self.view_mode {
+                    ViewMode::ParticlePhysics => self.render_particle_physics()?,
+                    ViewMode::AgentOverview => self.render_agent_overview()?,
+                    ViewMode::LineageTree => self.render_lineage_tree()?,
+                    ViewMode::DecisionTracking => self.render_decision_tracking()?,
+                    ViewMode::ConsciousnessMap => self.render_consciousness_map()?,
+                    ViewMode::InnovationTimeline => self.render_innovation_timeline()?,
+                    ViewMode::SelectionPressures => self.render_selection_pressures(&Vec::new())?,
+                    ViewMode::QuantumFields => self.render_quantum_fields()?,
+                    _ => self.render_agent_overview()?,
+                }
+                
+                // Render UI overlay
+                self.render_ui_overlay()?;
+                
+                // Copy offscreen canvas to main canvas
+                self.context.clear_rect(0.0, 0.0, self.canvas.width() as f64, self.canvas.height() as f64);
+                self.context.draw_image_with_html_canvas_element(
+                    self.offscreen_canvas.as_ref().unwrap(),
+                    0.0,
+                    0.0,
+                )?;
+            }
+            
+            // Calculate and display FPS
+            let end_time = web_window()
+                .performance()
+                .map(|p| p.now())
+                .unwrap_or(js_sys::Date::now());
+
+            // Calculate frame time, clamping to a very small value to avoid division-by-zero
+            let mut frame_time = end_time - start_time;
+            if frame_time <= 0.0 {
+                frame_time = 0.000_001; // 1 µs minimum
+            }
+
+            // Update FPS with a sensible upper bound to reduce flicker
+            self.fps = (1000.0 / frame_time).min(240.0);
+            self.last_render_duration = frame_time;
+            self.last_frame_time = current_time;
+            self.needs_redraw = false;
         }
-        
-        // Render based on current view mode
-        match self.view_mode {
-            ViewMode::ParticlePhysics => self.render_particle_physics()?,
-            ViewMode::AgentOverview => self.render_agent_overview()?,
-            ViewMode::LineageTree => self.render_lineage_tree()?,
-            ViewMode::DecisionTracking => self.render_decision_tracking()?,
-            ViewMode::ConsciousnessMap => self.render_consciousness_map()?,
-            ViewMode::InnovationTimeline => self.render_innovation_timeline()?,
-            ViewMode::SelectionPressures => self.render_selection_pressures(&Vec::new())?,
-            ViewMode::QuantumFields => self.render_quantum_fields()?,
-            _ => self.render_agent_overview()?,
-        }
-        
-        // Render UI overlay
-        self.render_ui_overlay()?;
-        
-        // Calculate and display FPS
-        let end_time = js_sys::Date::now();
-        let frame_time = end_time - start_time;
-        self.fps = 1000.0 / frame_time;
-        self.last_render_duration = frame_time;
         
         Ok(())
     }
     
     fn update_html_ui(&self) -> Result<(), JsValue> {
-        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-            // Update particle count
-            if let Some(elem) = doc.get_element_by_id("particle-count") {
-                elem.set_inner_html(&self.simulation_state.particles.len().to_string());
-            }
-            
-            // Update universe age
-            if let Some(elem) = doc.get_element_by_id("universe-age") {
-                elem.set_inner_html(&format!("{:.3} Gyr", self.simulation_state.universe_age_gyr));
-            }
-            
-            // Update temperature
-            if let Some(elem) = doc.get_element_by_id("temperature") {
-                elem.set_inner_html(&format!("{:.2e} K", self.simulation_state.temperature));
-            }
-            
-            // Update current tick
-            if let Some(elem) = doc.get_element_by_id("current-tick") {
-                elem.set_inner_html(&self.simulation_state.current_tick.to_string());
-            }
-            
-            // Update cosmic era
-            if let Some(elem) = doc.get_element_by_id("cosmic-era") {
-                elem.set_inner_html(&format!("{:?}", self.simulation_state.cosmic_era));
-            }
-            
-            // Update energy density
-            if let Some(elem) = doc.get_element_by_id("energy-density") {
-                elem.set_inner_html(&format!("{:.2e} J/m³", self.simulation_state.energy_density));
-            }
-            
-            // Update agent count
-            if let Some(elem) = doc.get_element_by_id("agent-count") {
-                elem.set_inner_html(&self.simulation_state.agents.len().to_string());
-            }
-            
-            // Update active lineages
-            if let Some(elem) = doc.get_element_by_id("active-lineages") {
-                elem.set_inner_html(&self.simulation_state.population_stats.active_lineages.to_string());
-            }
-            
-            // Update connection status
-            if let Some(elem) = doc.get_element_by_id("connection-status") {
-                if self.connected {
-                    elem.set_inner_html("🟢 Connected");
-                    elem.set_class_name("connection-status connected");
-                } else {
-                    elem.set_inner_html("🔴 Disconnected");
-                    elem.set_class_name("connection-status disconnected");
-                }
-            }
-            
-            // Update FPS and render time
-            if let Some(elem) = doc.get_element_by_id("fps") {
-                elem.set_inner_html(&format!("{:.1}", self.fps));
-            }
-            if let Some(elem) = doc.get_element_by_id("render-time") {
-                elem.set_inner_html(&format!("{:.1}ms", self.last_render_duration));
-            }
-            
-            // Update memory usage if available
-            if let Some(perf) = web_window().performance() {
-                use wasm_bindgen::JsCast;
-                use wasm_bindgen::JsValue;
-                use js_sys::Reflect;
-                if let Ok(mem_val) = Reflect::get(perf.as_ref(), &JsValue::from_str("memory")) {
-                    if !mem_val.is_undefined() {
-                        if let Ok(used_val) = Reflect::get(&mem_val, &JsValue::from_str("usedJSHeapSize")) {
-                            if let Some(bytes) = used_val.as_f64() {
-                                let mb = bytes / 1024.0 / 1024.0;
-                                if let Some(elem) = doc.get_element_by_id("memory-usage") {
-                                    elem.set_inner_html(&format!("{:.1} MB", mb));
-                                }
-                            }
-                        }
-                    }
-                }
+        let document = web_window().document().unwrap();
+        
+        // Update connection status
+        if let Some(elem) = document.get_element_by_id("connection-status") {
+            if self.connected {
+                elem.set_inner_html("🟢 Connected");
+                elem.set_class_name("connection-status connected");
+            } else {
+                elem.set_inner_html("🔴 Disconnected");
+                elem.set_class_name("connection-status disconnected");
             }
         }
+        
+        // Update universe stats
+        if let Some(elem) = document.get_element_by_id("universe-age") {
+            elem.set_inner_html(&format!("{:.2} Gyr", self.simulation_state.universe_age_gyr));
+        }
+        if let Some(elem) = document.get_element_by_id("temperature") {
+            elem.set_inner_html(&format!("{:.2e} K", self.simulation_state.temperature));
+        }
+        if let Some(elem) = document.get_element_by_id("particle-count") {
+            elem.set_inner_html(&format!("{}", self.simulation_state.particles.len()));
+        }
+        if let Some(elem) = document.get_element_by_id("agent-count") {
+            elem.set_inner_html(&format!("{}", self.simulation_state.agents.len()));
+        }
+        
+        // Update consciousness level
+        let avg_consciousness: f64 = self.simulation_state.agents.iter()
+            .map(|a| a.consciousness_level)
+            .sum::<f64>() / self.simulation_state.agents.len() as f64;
+        if let Some(elem) = document.get_element_by_id("consciousness-level") {
+            elem.set_inner_html(&format!("{:.1}%", avg_consciousness * 100.0));
+        }
+        
+        // Update performance metrics
+        if let Some(elem) = document.get_element_by_id("fps") {
+            elem.set_inner_html(&format!("{:.1}", self.fps));
+        }
+        if let Some(elem) = document.get_element_by_id("render-time") {
+            elem.set_inner_html(&format!("{:.1}ms", self.last_render_duration));
+        }
+        if let Some(elem) = document.get_element_by_id("ups") {
+            let ups_val = if self.last_render_duration > 0.0 {
+                (1000.0 / self.last_render_duration).min(1000.0)
+            } else { 0.0 };
+            elem.set_inner_html(&format!("{:.1}", ups_val));
+        }
+        
+        // Update current tick and cosmic era
+        if let Some(elem) = document.get_element_by_id("current-tick") {
+            elem.set_inner_html(&format!("{}", self.simulation_state.current_tick));
+        }
+        if let Some(elem) = document.get_element_by_id("cosmic-era") {
+            elem.set_inner_html(&format!("{:?}", self.simulation_state.cosmic_era));
+        }
+        
+        // Update energy density
+        if let Some(elem) = document.get_element_by_id("energy-density") {
+            elem.set_inner_html(&format!("{:.2e} J/m³", self.simulation_state.energy_density));
+        }
+        
+        // Update evolution statistics
+        if let Some(elem) = document.get_element_by_id("active-lineages") {
+            elem.set_inner_html(&format!("{}", self.simulation_state.population_stats.active_lineages));
+        }
+        if let Some(elem) = document.get_element_by_id("extinct-lineages") {
+            elem.set_inner_html(&format!("{}", self.simulation_state.population_stats.extinct_lineages));
+        }
+        if let Some(elem) = document.get_element_by_id("average-fitness") {
+            elem.set_inner_html(&format!("{:.2}", self.simulation_state.population_stats.average_fitness));
+        }
+        if let Some(elem) = document.get_element_by_id("genetic-diversity") {
+            elem.set_inner_html(&format!("{:.2}", self.simulation_state.population_stats.genetic_diversity));
+        }
+        
+        // Update innovation rate
+        let innovation_rate = self.simulation_state.innovations.len() as f64 / 
+            (self.simulation_state.current_tick as f64).max(1.0);
+        if let Some(elem) = document.get_element_by_id("innovation-rate") {
+            elem.set_inner_html(&format!("{:.2}/tick", innovation_rate));
+        }
+        
+        // Update system performance
+        if let Some(elem) = document.get_element_by_id("updates-per-second") {
+            let ups_val = if self.last_render_duration > 0.0 {
+                (1000.0 / self.last_render_duration).min(1000.0)
+            } else { 0.0 };
+            elem.set_inner_html(&format!("{:.1}", ups_val));
+        }
+        if let Some(elem) = document.get_element_by_id("memory-usage") {
+            // TODO: Implement actual memory usage tracking
+            elem.set_inner_html("0 MB");
+        }
+        if let Some(elem) = document.get_element_by_id("cpu-usage") {
+            // TODO: Implement actual CPU usage tracking
+            elem.set_inner_html("0%");
+        }
+        
         Ok(())
     }
     
     /// Render fundamental particle physics visualization
     fn render_particle_physics(&mut self) -> Result<(), JsValue> {
-        console_log!("Rendering particle physics - {} particles", 
-                    self.simulation_state.particles.len());
+        // console_log!("Rendering particle physics - {} particles", 
+        //             self.simulation_state.particles.len());
         
-        // Render particles with different colors based on type
-        for particle in self.simulation_state.particles.clone() {
-            if particle.energy < self.energy_filter_min { continue; }
-            let (r, g, b, a) = self.get_particle_color(&particle.particle_type);
-            let color_str = format!("rgba({}, {}, {}, {})", r, g, b, a);
-            self.context.set_fill_style_str(&color_str);
-            
-            // Map 3D position to 2D screen coordinates
-            let (x, y) = self.map_3d_to_2d(particle.position);
-            let size = self.get_particle_size(particle.mass) * self.particle_size_scale;
-            
+        // Pre-calculate all values that need immutable borrows
+        let particle_size_scale = self.particle_size_scale;
+        let energy_filter_min = self.energy_filter_min;
+        let particles = self.simulation_state.particles.clone();
+        
+        // Pre-calculate all particle rendering data including trails and interactions
+        let particle_data: Vec<_> = particles.iter()
+            .filter(|p| p.energy >= energy_filter_min)
+            .map(|particle| {
+                let (r, g, b, a) = self.get_particle_color(&particle.particle_type);
+                let color_str = format!("rgba({}, {}, {}, {})", r, g, b, a);
+                let (x, y) = self.map_3d_to_2d(particle.position);
+                let size = self.get_particle_size(particle.mass) * particle_size_scale;
+                
+                // Pre-calculate trail points if needed
+                let trail_points = if particle.energy > 1e-13 {
+                    self.calculate_trail_points(particle)
+                } else {
+                    Vec::new()
+                };
+                
+                // Pre-calculate interaction points if needed
+                let interaction_points = if particle.interaction_count > 0 {
+                    self.calculate_interaction_points(particle)
+                } else {
+                    Vec::new()
+                };
+                
+                (particle.clone(), color_str, x, y, size, trail_points, interaction_points, (r, g, b))
+            })
+            .collect();
+        
+        // Now use the context to render everything
+        let context = self.get_context_mut();
+        
+        // Render particles and their effects
+        for (particle, color_str, x, y, size, trail_points, interaction_points, (r, g, b)) in &particle_data {
             // Draw particle
-            self.context.begin_path();
-            self.context.arc(x, y, size, 0.0, 2.0 * std::f64::consts::PI)?;
-            self.context.fill();
+            context.set_fill_style_str(color_str);
+            context.begin_path();
+            context.arc(*x, *y, *size, 0.0, 2.0 * std::f64::consts::PI)?;
+            context.fill();
             
-            // Draw particle trails for high-energy particles
-            if particle.energy > 1e-13 {
-                self.draw_particle_trail(&particle)?;
+            // Draw trail if any
+            if !trail_points.is_empty() {
+                context.set_stroke_style_str(&format!("rgba({}, {}, {}, {})", r, g, b, 0.3));
+                context.begin_path();
+                context.move_to(trail_points[0].0, trail_points[0].1);
+                for point in trail_points.iter().skip(1) {
+                    context.line_to(point.0, point.1);
+                }
+                context.stroke();
             }
             
-            // Draw interaction lines
-            if particle.interaction_count > 0 {
-                self.draw_interaction_indicators(&particle)?;
+            // Draw interaction lines if any
+            if !interaction_points.is_empty() {
+                context.set_stroke_style_str(&format!("rgba({}, {}, {}, {})", r, g, b, 0.5));
+                for point in interaction_points {
+                    context.begin_path();
+                    context.move_to(*x, *y);
+                    context.line_to(point.0, point.1);
+                    context.stroke();
+                }
             }
         }
         
         // Render quantum field fluctuations
         self.render_quantum_field_overlay()?;
         
+        // Render celestial bodies (stars, planets, etc.)
+        self.render_celestial_bodies()?;
+        
         Ok(())
     }
     
     /// Render AI agent overview with comprehensive tracking
     fn render_agent_overview(&mut self) -> Result<(), JsValue> {
+        let context = self.get_context_mut();
+        
         // Collect agent data first
         let agent_data: Vec<_> = self.simulation_state.agents.iter().map(|agent| {
             let (x, y) = self.map_3d_to_2d(agent.position);
@@ -715,7 +855,10 @@ impl EvolutionMonitor {
     
     /// Map 3D position to 2D screen coordinates
     fn map_3d_to_2d(&self, pos: [f64; 3]) -> (f64, f64) {
-        let scale = 1000.0;
+        // Convert simulation metres into on-screen pixels.
+        // Empirically, initial Big-Bang positions are ~1e14 m.
+        // A factor of 1e-12 maps 1e14 m → 100 px which keeps everything on-screen.
+        let scale = 1e-12;
         let center_x = self.canvas.width() as f64 / 2.0;
         let center_y = self.canvas.height() as f64 / 2.0;
         
@@ -729,16 +872,25 @@ impl EvolutionMonitor {
     #[wasm_bindgen]
     pub fn set_view_mode(&mut self, mode: u8) {
         self.view_mode = match mode {
-            0 => ViewMode::ParticlePhysics,
-            1 => ViewMode::AgentOverview,
-            2 => ViewMode::LineageTree,
-            3 => ViewMode::DecisionTracking,
-            4 => ViewMode::ConsciousnessMap,
-            5 => ViewMode::InnovationTimeline,
-            6 => ViewMode::SelectionPressures,
-            7 => ViewMode::QuantumFields,
-            _ => ViewMode::AgentOverview,
+            0  => ViewMode::ParticlePhysics,
+            1  => ViewMode::AtomicStructure,
+            2  => ViewMode::MolecularDynamics,
+            3  => ViewMode::AgentOverview,
+            4  => ViewMode::LineageTree,
+            5  => ViewMode::DecisionTracking,
+            6  => ViewMode::ConsciousnessMap,
+            7  => ViewMode::InnovationTimeline,
+            8  => ViewMode::SelectionPressures,
+            9  => ViewMode::EnvironmentalMap,
+            10 => ViewMode::PopulationDynamics,
+            11 => ViewMode::QuantumFields,
+            12 => ViewMode::EnergyFlows,
+            13 => ViewMode::EmergentComplexity,
+            _  => ViewMode::AgentOverview,
         };
+
+        // Request a new frame so that the freshly-selected view is rendered immediately.
+        self.needs_redraw = true;
         console_log!("View mode changed to: {:?}", self.view_mode);
     }
     
@@ -771,12 +923,7 @@ impl EvolutionMonitor {
     fn draw_particle_trail(&mut self, particle: &ParticleVisualization) -> Result<(), JsValue> {
         let (x, y) = self.map_3d_to_2d(particle.position);
         let (r, g, b, a) = self.get_particle_color(&particle.particle_type);
-        // Use create_linear_gradient (returns CanvasGradient)
-        let gradient = self.context.create_linear_gradient(x - 20.0, y, x, y);
-        gradient.add_color_stop(0.0, &format!("rgba({}, {}, {}, 0.0)", r, g, b))?;
-        gradient.add_color_stop(1.0, &format!("rgba({}, {}, {}, {})", r, g, b, a * 0.5))?;
-        self.context.set_stroke_style(&gradient);
-        self.context.set_line_width(2.0);
+        self.context.set_stroke_style(&format!("rgba({}, {}, {}, {})", r, g, b, a * 0.5).into());
         self.context.begin_path();
         self.context.move_to(x - 20.0, y);
         self.context.line_to(x, y);
@@ -880,56 +1027,6 @@ impl EvolutionMonitor {
     fn render_evolution_timeline(&mut self, _timeline: &Vec<EvolutionTimelineEvent>, _y: f64) -> Result<(), JsValue> { Ok(()) }
     fn render_innovation_milestones(&mut self, _innovations: &Vec<InnovationRecord>, _y: f64) -> Result<(), JsValue> { Ok(()) }
     fn render_ui_overlay(&mut self) -> Result<(), JsValue> {
-        // Draw performance indicator
-        self.context.set_fill_style_str("rgba(0, 0, 0, 0.7)");
-        self.context.fill_rect(10.0, 10.0, 150.0, 60.0);
-        
-        self.context.set_fill_style_str("white");
-        self.context.set_font("12px Arial");
-        self.context.fill_text(&format!("FPS: {:.1}", self.fps), 20.0, 30.0)?;
-        self.context.fill_text(&format!("Render: {:.1}ms", self.last_render_duration), 20.0, 50.0)?;
-        
-        // Draw legend
-        self.context.set_fill_style_str("rgba(0, 0, 0, 0.7)");
-        self.context.fill_rect(
-            self.canvas.width() as f64 - 160.0,
-            self.canvas.height() as f64 - 160.0,
-            150.0,
-            150.0
-        );
-        
-        self.context.set_fill_style_str("white");
-        self.context.set_font("12px Arial");
-        self.context.fill_text("Legend", self.canvas.width() as f64 - 150.0, self.canvas.height() as f64 - 140.0)?;
-        
-        let legend_items = [
-            ("Electrons", "#ffff00"),
-            ("Protons", "#ff0000"),
-            ("AI Agents", "#00ff00"),
-            ("Innovations", "#00ffff"),
-            ("Consciousness", "#ff00ff"),
-        ];
-        
-        for (i, (label, color)) in legend_items.iter().enumerate() {
-            self.context.set_fill_style_str(color);
-            self.context.begin_path();
-            self.context.arc(
-                self.canvas.width() as f64 - 150.0,
-                self.canvas.height() as f64 - 120.0 + (i as f64 * 20.0),
-                5.0,
-                0.0,
-                std::f64::consts::PI * 2.0
-            )?;
-            self.context.fill();
-            
-            self.context.set_fill_style_str("white");
-            self.context.fill_text(
-                label,
-                self.canvas.width() as f64 - 140.0,
-                self.canvas.height() as f64 - 120.0 + (i as f64 * 20.0) + 5.0
-            )?;
-        }
-        
         Ok(())
     }
     
@@ -953,7 +1050,7 @@ impl EvolutionMonitor {
     }
 
     fn set_stroke_style(&self, color: &str) -> Result<(), JsValue> {
-        self.context.set_stroke_style_str(color);
+        self.context.set_stroke_style(&color.into());
         Ok(())
     }
 
@@ -1130,6 +1227,7 @@ impl EvolutionMonitor {
         // Update or add particles
         if let Some(new_parts) = delta.new_particles {
             self.simulation_state.particles.extend(new_parts);
+            self.needs_redraw = true;
         }
         if let Some(upd_parts) = delta.updated_particles {
             for upd in upd_parts {
@@ -1139,10 +1237,12 @@ impl EvolutionMonitor {
                     self.simulation_state.particles.push(upd);
                 }
             }
+            self.needs_redraw = true;
         }
         // Remove particles by id
         if let Some(rem) = delta.removed_particle_ids {
             self.simulation_state.particles.retain(|p| !rem.contains(&p.id));
+            self.needs_redraw = true;
         }
 
         self.simulation_state.current_tick = delta.current_tick;
@@ -1160,76 +1260,242 @@ impl EvolutionMonitor {
             history.positions.remove(0);
         }
     }
+
+    pub fn set_time_scale(&mut self, scale: f64) {
+        self.time_scale = scale;
+    }
+    
+    pub fn set_zoom_level(&mut self, scale: f64) {
+        self.particle_size_scale = scale;
+    }
+
+    fn get_context(&self) -> &CanvasRenderingContext2d {
+        self.offscreen_context.as_ref().unwrap()
+    }
+
+    fn get_context_mut(&mut self) -> &mut CanvasRenderingContext2d {
+        self.offscreen_context.as_mut().unwrap()
+    }
+
+    // Helper methods to pre-calculate points
+    fn calculate_trail_points(&self, particle: &ParticleVisualization) -> Vec<(f64, f64)> {
+        let mut points = Vec::new();
+        let mut pos = particle.position;
+        let vel = particle.momentum;
+        let dt = 0.1;
+        
+        for _ in 0..10 {
+            // Element-wise addition and multiplication
+            pos[0] += vel[0] * dt;
+            pos[1] += vel[1] * dt;
+            pos[2] += vel[2] * dt;
+            let (x, y) = self.map_3d_to_2d(pos);
+            points.push((x, y));
+        }
+        points
+    }
+    
+    fn calculate_interaction_points(&self, particle: &ParticleVisualization) -> Vec<(f64, f64)> {
+        let mut points = Vec::new();
+        let base_pos = self.map_3d_to_2d(particle.position);
+        
+        // Calculate interaction points in a circle around the particle
+        for i in 0..particle.interaction_count {
+            let angle = (i as f64) * 2.0 * std::f64::consts::PI / (particle.interaction_count as f64);
+            let radius = 20.0;
+            let x = base_pos.0 + radius * angle.cos();
+            let y = base_pos.1 + radius * angle.sin();
+            points.push((x, y));
+        }
+        
+        points
+    }
+
+    fn render_celestial_bodies(&mut self) -> Result<(), JsValue> {
+        // Pre-calculate all rendering data before getting the context
+        let celestial_bodies = self.simulation_state.celestial_bodies.clone();
+                 let render_data: Vec<_> = celestial_bodies.iter().map(|body| {
+            let (x, y) = self.map_3d_to_2d(body.position);
+            
+            // Determine size based on body type and radius
+            let size = match body.body_type.as_str() {
+                "Star" => {
+                    // Stars: size based on luminosity and temperature
+                    let base_size = (body.radius / 6.96e8).log10().max(0.5); // Relative to sun
+                    (base_size * 8.0).max(3.0).min(20.0) // 3-20 pixel range
+                },
+                "Planet" => {
+                    // Planets: smaller, based on radius
+                    let base_size = (body.radius / 6.371e6).log10().max(0.1); // Relative to Earth
+                    (base_size * 4.0).max(1.5).min(8.0) // 1.5-8 pixel range
+                },
+                _ => 2.0, // Default size for other bodies
+            };
+            
+            // Determine color based on body type and properties
+            let color = match body.body_type.as_str() {
+                "Star" => {
+                    // Color based on temperature (stellar classification)
+                    if body.temperature > 30000.0 {
+                        "rgba(155, 176, 255, 0.9)" // O-type: Blue
+                    } else if body.temperature > 10000.0 {
+                        "rgba(176, 196, 255, 0.9)" // B-type: Blue-white
+                    } else if body.temperature > 7500.0 {
+                        "rgba(248, 247, 255, 0.9)" // A-type: White
+                    } else if body.temperature > 6000.0 {
+                        "rgba(255, 244, 234, 0.9)" // F-type: Yellow-white
+                    } else if body.temperature > 5200.0 {
+                        "rgba(255, 255, 0, 0.9)"   // G-type: Yellow (Sun-like)
+                    } else if body.temperature > 3700.0 {
+                        "rgba(255, 210, 161, 0.9)" // K-type: Orange
+                    } else {
+                        "rgba(255, 76, 76, 0.9)"   // M-type: Red dwarf
+                    }
+                },
+                "Planet" => "rgba(100, 149, 237, 0.8)", // Blue for planets
+                "BlackHole" => "rgba(0, 0, 0, 1.0)",     // Black
+                "NeutronStar" => "rgba(200, 200, 255, 0.9)", // White-blue
+                "WhiteDwarf" => "rgba(255, 255, 255, 0.8)",  // White
+                _ => "rgba(128, 128, 128, 0.7)", // Gray default
+            };
+            
+            // Calculate glow info for stars
+            let glow_info = if body.body_type == "Star" && body.luminosity > 0.0 {
+                let glow_size = size * 2.0;
+                let alpha = (body.luminosity / 3.828e26).log10().max(0.1).min(0.3); // Relative to sun
+                Some((glow_size, alpha))
+            } else {
+                None
+            };
+            
+            // Calculate velocity vector if significant
+            let velocity_vector = if body.velocity[0].abs() > 1000.0 || body.velocity[1].abs() > 1000.0 {
+                let vel_scale = 1e-6; // Scale down velocity for visualization
+                let vx = body.velocity[0] * vel_scale;
+                let vy = body.velocity[1] * vel_scale;
+                Some((vx, vy))
+            } else {
+                None
+            };
+            
+            (body.clone(), x, y, size, color.to_string(), glow_info, velocity_vector)
+        }).collect();
+        
+        // Now use the context to render everything
+        let context = self.get_context_mut();
+        
+        for (body, x, y, size, color, glow_info, velocity_vector) in render_data {
+            // Draw the celestial body
+            context.set_fill_style_str(&color);
+            context.begin_path();
+            context.arc(x, y, size, 0.0, 2.0 * std::f64::consts::PI)?;
+            context.fill();
+            
+            // Add glow effect for stars
+            if let Some((glow_size, alpha)) = glow_info {
+                context.set_fill_style_str(&format!("rgba(255, 255, 100, {})", alpha * 0.3));
+                context.begin_path();
+                context.arc(x, y, glow_size, 0.0, 2.0 * std::f64::consts::PI)?;
+                context.fill();
+            }
+            
+            // Add velocity vector for moving bodies
+            if let Some((vx, vy)) = velocity_vector {
+                context.set_stroke_style_str("rgba(0, 255, 255, 0.6)");
+                context.set_line_width(1.0);
+                context.begin_path();
+                context.move_to(x, y);
+                context.line_to(x + vx, y + vy);
+                context.stroke();
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 /// Establish websocket and start reading JSON messages representing SimulationState
 fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) {
-    let mut monitor = monitor_rc.borrow_mut();
-    console_log!("Connecting to WebSocket at {}", websocket_url);
-    let ws = match web_sys::WebSocket::new(&websocket_url) {
-        Ok(ws) => ws,
-        Err(err) => {
-            console_log!("Failed to create WebSocket: {:?}", err);
-            return;
-        }
-    };
+    let ws = web_sys::WebSocket::new(&websocket_url).unwrap();
+    ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
     
-    // Set up connection success handler
+    // Set up message handler
+    let message_monitor_rc = monitor_rc.clone();
+    let onmessage_callback = Closure::wrap(Box::new(move |e: web_sys::MessageEvent| {
+        if let Ok(buf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
+            let array = js_sys::Uint8Array::new(&buf);
+            let mut bytes = vec![0; array.length() as usize];
+            array.copy_to(&mut bytes);
+            
+            // Decompress the zlib data
+            if let Ok(decompressed) = miniz_oxide::inflate::decompress_to_vec_zlib(&bytes) {
+                // Parse the JSON data
+                if let Ok(json_str) = std::str::from_utf8(&decompressed) {
+                    match serde_json::from_str::<serde_json::Value>(json_str) {
+                        Ok(value) => {
+                            let kind = value.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                            if kind == "delta" {
+                                if let Ok(delta) = serde_json::from_value::<DeltaMessage>(value) {
+                                    let mut monitor = message_monitor_rc.borrow_mut();
+                                    monitor.apply_delta(delta);
+                                    if let Err(e) = monitor.update_html_ui() {
+                                        console_log!("Error updating UI: {:?}", e);
+                                    }
+                                }
+                            } else if kind == "full" {
+                                if let Ok(full) = serde_json::from_value::<FullMessage>(value) {
+                                    let mut monitor = message_monitor_rc.borrow_mut();
+                                    // Replace entire simulation snapshot
+                                    monitor.simulation_state.current_tick = full.current_tick;
+                                    monitor.simulation_state.universe_age_gyr = full.universe_age_gyr;
+                                    monitor.simulation_state.cosmic_era = full.cosmic_era;
+                                    monitor.simulation_state.temperature = full.temperature;
+                                    monitor.simulation_state.energy_density = full.energy_density;
+                                    monitor.simulation_state.particles = full.particles;
+                                    monitor.simulation_state.celestial_bodies = full.celestial_bodies;
+                                    monitor.simulation_state.quantum_fields = full.quantum_fields;
+                                    monitor.simulation_state.nuclei = full.nuclei;
+                                    monitor.simulation_state.atoms = full.atoms;
+                                    monitor.needs_redraw = true;
+                                    if let Err(e) = monitor.update_html_ui() {
+                                        console_log!("Error updating UI: {:?}", e);
+                                    }
+                                }
+                            } else {
+                                console_log!("Unknown message kind: {}", kind);
+                            }
+                        },
+                        Err(e) => {
+                            console_log!("Failed to parse websocket JSON: {:?}", e);
+                        }
+                    }
+                } else {
+                    console_log!("Failed to decode decompressed data as UTF-8");
+                }
+            } else {
+                console_log!("Failed to decompress delta message");
+            }
+        }
+    }) as Box<dyn FnMut(web_sys::MessageEvent)>);
+    
+    ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
+    onmessage_callback.forget();
+
+    // Set up open handler
+    let open_monitor_rc = monitor_rc.clone();
     let onopen_callback = Closure::wrap(Box::new(move |_: web_sys::Event| {
-        console_log!("WebSocket connected successfully");
+        console_log!("WebSocket connection established");
         if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
             if let Some(elem) = doc.get_element_by_id("connection-status") {
                 elem.set_inner_html("🟢 Connected");
                 elem.set_class_name("connection-status connected");
             }
         }
+        open_monitor_rc.borrow_mut().connected = true;
     }) as Box<dyn FnMut(web_sys::Event)>);
     
     ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
     onopen_callback.forget();
-
-    // Set up message handler
-    let message_monitor_rc = monitor_rc.clone();
-    let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-        let monitor = &mut message_monitor_rc.borrow_mut();
-        
-        // Text path (legacy / debug)
-        if let Ok(text) = e.data().dyn_into::<JsString>() {
-            let data_str = text.as_string().unwrap_or_default();
-            if let Ok(new_state) = serde_json::from_str::<SimulationState>(&data_str) {
-                monitor.simulation_state = new_state;
-            } else if let Ok(delta) = serde_json::from_str::<DeltaMessage>(&data_str) {
-                monitor.apply_delta(delta);
-            }
-            return;
-        }
-
-        // Binary path (zlib-compressed JSON)
-        if let Ok(buffer) = e.data().dyn_into::<ArrayBuffer>() {
-            let uint8_array = Uint8Array::new(&buffer);
-            let mut compressed = vec![0u8; uint8_array.length() as usize];
-            uint8_array.copy_to(&mut compressed);
-
-            // Decompress (zlib)
-            match miniz_oxide::inflate::decompress_to_vec_zlib(&compressed) {
-                Ok(decompressed) => {
-                    if let Ok(json_str) = String::from_utf8(decompressed) {
-                        if let Ok(new_state) = serde_json::from_str::<SimulationState>(&json_str) {
-                            monitor.simulation_state = new_state;
-                        } else if let Ok(delta) = serde_json::from_str::<DeltaMessage>(&json_str) {
-                            monitor.apply_delta(delta);
-                        }
-                    }
-                }
-                Err(_) => {
-                    console_log!("Failed to decompress WebSocket message");
-                }
-            }
-        }
-    }) as Box<dyn FnMut(MessageEvent)>);
-    
-    ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
-    onmessage_callback.forget();
 
     // Set up error handler
     let error_monitor_rc = monitor_rc.clone();
@@ -1263,19 +1529,22 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
     ws.set_onclose(Some(onclose_callback.as_ref().unchecked_ref()));
     onclose_callback.forget();
 
-    monitor.websocket = Some(ws);
-    monitor.connected = true;
+    monitor_rc.borrow_mut().websocket = Some(ws);
+    monitor_rc.borrow_mut().connected = true;
 }
 
 /// Start RAF loop for continuous rendering
 fn start_render_loop(monitor_rc: Rc<RefCell<EvolutionMonitor>>) -> Result<(), JsValue> {
-    let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+    let f: Rc<RefCell<Option<Closure<dyn FnMut(f64)>>>> = Rc::new(RefCell::new(None));
     let g = f.clone();
 
-    *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
-        monitor_rc.borrow_mut().render().unwrap();
+    *g.borrow_mut() = Some(Closure::wrap(Box::new(move |timestamp: f64| {
+        let mut monitor = monitor_rc.borrow_mut();
+        if let Err(e) = monitor.render() {
+            console_log!("Error in render loop: {:?}", e);
+        }
         web_window().request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref()).unwrap();
-    }) as Box<dyn FnMut()>));
+    }) as Box<dyn FnMut(f64)>));
 
     web_window().request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref())?;
     Ok(())
@@ -1345,6 +1614,7 @@ impl Default for SimulationState {
             temperature: 0.0,
             energy_density: 0.0,
             particles: Vec::new(),
+            celestial_bodies: Vec::new(),
             quantum_fields: HashMap::new(),
             nuclei: Vec::new(),
             atoms: Vec::new(),
@@ -1391,17 +1661,6 @@ fn web_window() -> web_sys::Window {
     web_sys::window().expect("no global window")
 }
 
-/// Convenience exported function to start the dashboard from JS - NO LONGER NEEDED
-/*
-#[wasm_bindgen]
-pub fn start_dashboard(canvas_id: &str, websocket_url: &str) -> Result<EvolutionMonitor, JsValue> {
-    let mut monitor = EvolutionMonitor::new(canvas_id)?;
-    monitor.connect_ws(websocket_url.to_string());
-    monitor.start_render_loop()?;
-    Ok(monitor)
-}
-*/
-
 #[wasm_bindgen(start)]
 pub fn run() -> Result<(), JsValue> {
     // This function is called when the WASM is loaded.
@@ -1431,76 +1690,81 @@ pub fn run() -> Result<(), JsValue> {
 }
 
 fn setup_ui_event_handlers(monitor_rc: Rc<RefCell<EvolutionMonitor>>) -> Result<(), JsValue> {
-    let window = web_window();
-    let document = window.document().expect("should have a document on window");
-
-    // View mode buttons
-    let view_buttons = document.query_selector_all(".view-btn")?;
-    for i in 0..view_buttons.length() {
-        if let Some(node) = view_buttons.item(i) {
-            let button = node.dyn_into::<HtmlElement>()?;
-            let monitor_clone = monitor_rc.clone();
-            let button_for_cb = button.clone();
-            let callback = Closure::wrap(Box::new(move || {
-                // Update Rust state
-                monitor_clone.borrow_mut().set_view_mode(i as u8);
-
-                // Update button active classes
-                if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                    if let Ok(all) = doc.query_selector_all(".view-btn") {
-                        for j in 0..all.length() {
-                            if let Some(btn_node) = all.item(j) {
-                                let _ = btn_node
-                                    .dyn_ref::<web_sys::HtmlElement>()
-                                    .map(|el| el.class_list().remove_1("active"));
-                            }
-                        }
+    let document = web_window().document().unwrap();
+    
+    // Set up view mode buttons
+    let buttons = document.query_selector_all(".view-btn")?;
+    for i in 0..buttons.length() {
+        if let Some(button_elem) = buttons.get(i) {
+            let button = button_elem.dyn_into::<HtmlElement>()?;
+            let monitor_rc = monitor_rc.clone();
+            let button_for_closure = button.clone();
+            let click_handler = Closure::wrap(Box::new(move |_: web_sys::Event| {
+                let doc = web_window().document().unwrap();
+                let buttons = doc.query_selector_all(".view-btn").unwrap();
+                for j in 0..buttons.length() {
+                    if let Some(btn) = buttons.get(j) {
+                        let btn = btn.dyn_into::<HtmlElement>().unwrap();
+                        btn.class_list().remove_1("active").unwrap();
                     }
                 }
-                let _ = button_for_cb.class_list().add_1("active");
-            }) as Box<dyn FnMut()>);
-            button.set_onclick(Some(callback.as_ref().unchecked_ref()));
-            callback.forget();
+                button_for_closure.class_list().add_1("active").unwrap();
+                let mode = match button_for_closure.text_content().unwrap().as_str() {
+                    "Particle Physics" => ViewMode::ParticlePhysics,
+                    "AI Agents" => ViewMode::AgentOverview,
+                    "Lineage Trees" => ViewMode::LineageTree,
+                    "Decision Tracking" => ViewMode::DecisionTracking,
+                    "Consciousness" => ViewMode::ConsciousnessMap,
+                    "Innovation Timeline" => ViewMode::InnovationTimeline,
+                    "Selection Pressures" => ViewMode::SelectionPressures,
+                    "Quantum Fields" => ViewMode::QuantumFields,
+                    _ => ViewMode::default(),
+                };
+                monitor_rc.borrow_mut().set_view_mode(mode as u8);
+            }) as Box<dyn FnMut(web_sys::Event)>);
+            
+            button.add_event_listener_with_callback(
+                "click",
+                click_handler.as_ref().unchecked_ref(),
+            )?;
+            click_handler.forget();
         }
     }
 
     // Time scale slider
-    if let Some(slider) = document.get_element_by_id("time-scale") {
-        let slider = slider.dyn_into::<HtmlInputElement>()?;
-        let monitor_clone = monitor_rc.clone();
-        let callback = Closure::wrap(Box::new(move || {
-            if let Ok(value) = slider.value().parse::<f64>() {
-                monitor_clone.borrow_mut().time_scale = value;
+    let slider = document.get_element_by_id("time-scale").unwrap();
+    let slider = slider.dyn_into::<HtmlInputElement>()?;
+    let slider_clone = slider.clone();
+    let monitor_clone = monitor_rc.clone();
+    let callback = Closure::wrap(Box::new(move || {
+        if let Ok(value) = slider_clone.value().parse::<f64>() {
+            monitor_clone.borrow_mut().set_time_scale(value);
+            // Update the display value
+            if let Some(span) = web_window().document().unwrap().get_element_by_id("time-scale-value") {
+                span.set_inner_html(&format!("{:.1}x", value));
             }
-        }) as Box<dyn FnMut()>);
-        slider.set_oninput(Some(callback.as_ref().unchecked_ref()));
-        callback.forget();
-    }
+        }
+    }) as Box<dyn FnMut()>);
+    slider.set_oninput(Some(callback.as_ref().unchecked_ref()));
+    callback.forget();
 
     // Zoom level slider
-    if let Some(slider) = document.get_element_by_id("zoom-level") {
-        let slider = slider.dyn_into::<HtmlInputElement>()?;
-        let monitor_clone = monitor_rc.clone();
-        let callback = Closure::wrap(Box::new(move || {
-            if let Ok(value) = slider.value().parse::<f64>() {
-                monitor_clone.borrow_mut().particle_size_scale = value;
+    let slider = document.get_element_by_id("zoom-level").unwrap();
+    let slider = slider.dyn_into::<HtmlInputElement>()?;
+    let slider_clone = slider.clone();
+    let monitor_clone = monitor_rc.clone();
+    let callback = Closure::wrap(Box::new(move || {
+        if let Ok(value) = slider_clone.value().parse::<f64>() {
+            monitor_clone.borrow_mut().set_zoom_level(value);
+            // Update the display value
+            if let Some(span) = web_window().document().unwrap().get_element_by_id("zoom-value") {
+                span.set_inner_html(&format!("{:.1}x", value));
             }
-        }) as Box<dyn FnMut()>);
-        slider.set_oninput(Some(callback.as_ref().unchecked_ref()));
-        callback.forget();
-    }
-
-    // Reset view button
-    if let Some(button) = document.get_element_by_id("reset-view") {
-        let button = button.dyn_into::<HtmlElement>()?;
-        let monitor_clone = monitor_rc.clone();
-        let callback = Closure::wrap(Box::new(move || {
-            monitor_clone.borrow_mut().reset();
-        }) as Box<dyn FnMut()>);
-        button.set_onclick(Some(callback.as_ref().unchecked_ref()));
-        callback.forget();
-    }
-
+        }
+    }) as Box<dyn FnMut()>);
+    slider.set_oninput(Some(callback.as_ref().unchecked_ref()));
+    callback.forget();
+    
     Ok(())
 }
 
@@ -1511,4 +1775,28 @@ pub struct DeltaMessage {
     pub new_particles: Option<Vec<ParticleVisualization>>,
     pub updated_particles: Option<Vec<ParticleVisualization>>,
     pub removed_particle_ids: Option<Vec<usize>>,
+    #[serde(default)]
+    pub celestial_bodies: Vec<CelestialBodyVisualization>,
+    #[serde(default)]
+    pub quantum_fields: HashMap<String, FieldVisualization>,
+}
+
+/// Complete state snapshot sent when a client first connects
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FullMessage {
+    pub kind: String,
+    pub current_tick: u64,
+    pub universe_age_gyr: f64,
+    pub cosmic_era: CosmicEra,
+    pub temperature: f64,
+    pub energy_density: f64,
+    pub particles: Vec<ParticleVisualization>,
+    #[serde(default)]
+    pub celestial_bodies: Vec<CelestialBodyVisualization>,
+    #[serde(default)]
+    pub quantum_fields: HashMap<String, FieldVisualization>,
+    #[serde(default)]
+    pub nuclei: Vec<NucleusVisualization>,
+    #[serde(default)]
+    pub atoms: Vec<AtomVisualization>,
 }

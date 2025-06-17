@@ -2,13 +2,13 @@
 # ========================================
 
 # Time simulation parameters
-tick_span_years = 1_000_000.0          # 1 million years per tick
-target_ups = 1000.0                    # Updates per second target
-# max_ticks = 0                         # No limit (infinite simulation) - 0 means infinite
+tick_span_years = 100_000.0          # finer temporal resolution
+target_ups = 5_000.0                    # if your CPU can cope
+# max_ticks = 1_000_000                        # No limit (infinite simulation) - 0 means infinite
 
 # Initial conditions
-initial_particle_count = 1000          # Starting particles after Big Bang
-universe_radius_ly = 1000.0            # Initial universe radius (light-years)
+initial_particle_count = 1_000_000      # at least
+universe_radius_ly = 1.0            # Initial universe radius (light-years)
 big_bang_temperature = 3000.0          # Initial temperature (K)
 
 # Physics parameters
@@ -24,7 +24,7 @@ agent_lifespan_ticks = 1000            # Maximum individual lifespan (1 Gyr)
 enable_self_modification = true        # Allow agents to modify their code
 
 # Performance and resource limits
-memory_limit_gb = 4.0                  # Memory usage limit (GB)
+memory_limit_gb = 8.0                  # Memory usage limit (GB)
 cpu_limit_percent = 70.0               # CPU usage limit (0-100%)
 auto_save_interval = 10000             # Ticks between autosaves
 auto_save_path = "./checkpoints/"      # Path for autosaved checkpoints

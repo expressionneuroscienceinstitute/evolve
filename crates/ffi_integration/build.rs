@@ -2,52 +2,104 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    println!("cargo:rerun-if-changed=wrapper.h");
+    // Re-run when any header wrapper changes
+    for header in [
+        "src/geant4_wrapper.h",
+        "src/lammps_wrapper.h",
+        "src/gadget_wrapper.h",
+        "src/endf_wrapper.h",
+    ] {
+        println!("cargo:rerun-if-changed={}", header);
+    }
     
-    // Build configuration for different scientific libraries
-    build_geant4_bindings();
-    build_lammps_bindings();
-    build_gadget_bindings();
-    build_endf_parser();
+    // Build configuration for different scientific libraries only if the
+    // corresponding Cargo feature is enabled. This prevents unconditional
+    // linking against libraries that may be absent on the system.
+
+    if env::var("CARGO_FEATURE_GEANT4").is_ok() {
+        build_geant4_bindings();
+    }
+
+    if env::var("CARGO_FEATURE_LAMMPS").is_ok() {
+        build_lammps_bindings();
+    }
+
+    if env::var("CARGO_FEATURE_GADGET").is_ok() {
+        build_gadget_bindings();
+    }
+
+    if env::var("CARGO_FEATURE_ENDF").is_ok() {
+        build_endf_parser();
+    }
     
     // Set library search paths
     configure_library_paths();
 }
 
 fn build_geant4_bindings() {
-    // Check if Geant4 is installed
-    if let Ok(geant4_dir) = env::var("GEANT4_DIR") {
-        println!("cargo:rustc-link-search=native={}/lib64", geant4_dir);
-        println!("cargo:rustc-link-search=native={}/lib", geant4_dir);
-        
-        // Link Geant4 libraries
-        println!("cargo:rustc-link-lib=G4run");
-        println!("cargo:rustc-link-lib=G4event");
-        println!("cargo:rustc-link-lib=G4tracking");
-        println!("cargo:rustc-link-lib=G4parmodels");
-        println!("cargo:rustc-link-lib=G4processes");
-        println!("cargo:rustc-link-lib=G4digits");
-        println!("cargo:rustc-link-lib=G4track");
-        println!("cargo:rustc-link-lib=G4particles");
-        println!("cargo:rustc-link-lib=G4geometry");
-        println!("cargo:rustc-link-lib=G4materials");
-        println!("cargo:rustc-link-lib=G4graphics_reps");
-        println!("cargo:rustc-link-lib=G4intercoms");
-        println!("cargo:rustc-link-lib=G4global");
-        
-        // Generate bindings
-        let bindings = bindgen::Builder::default()
-            .header("src/ffi/geant4_wrapper.h")
-            .clang_arg(format!("-I{}/include/Geant4", geant4_dir))
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-            .generate()
-            .expect("Unable to generate Geant4 bindings");
+    // Check if the real Geant4 wrapper library is available
+    // Try both Linux (.so) and macOS (.dylib) extensions
+    let wrapper_lib_so = "build/lib/libgeant4_wrapper.so";
+    let wrapper_lib_dylib = "build/lib/libgeant4_wrapper.dylib";
+    let wrapper_lib_versioned_dylib = "build/lib/libgeant4_wrapper.1.0.0.dylib";
+    
+    let use_real_library = std::path::Path::new(wrapper_lib_so).exists() || 
+                          std::path::Path::new(wrapper_lib_dylib).exists() ||
+                          std::path::Path::new(wrapper_lib_versioned_dylib).exists();
+    
+            if use_real_library {
+            // Use the real Geant4 wrapper library
+            let current_dir = std::env::current_dir().unwrap();
+            let lib_path = current_dir.join("build/lib");
+            println!("cargo:rustc-link-search=native={}", lib_path.display());
+            println!("cargo:rustc-link-lib=geant4_wrapper");
             
-        let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-        bindings
-            .write_to_file(out_path.join("geant4_bindings.rs"))
-            .expect("Couldn't write Geant4 bindings!");
+            // Link appropriate C++ standard library for the platform
+            if cfg!(target_os = "macos") {
+                println!("cargo:rustc-link-lib=c++");  // macOS uses libc++
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_path.display());
+            } else {
+                println!("cargo:rustc-link-lib=stdc++");  // Linux uses libstdc++
+            }
+        
+        // If we have geant4-config available, use it to get library paths
+        if let Ok(output) = std::process::Command::new("geant4-config")
+            .arg("--libs")
+            .output() {
+            if output.status.success() {
+                let lib_line = String::from_utf8_lossy(&output.stdout);
+                for token in lib_line.split_whitespace() {
+                    if let Some(stripped) = token.strip_prefix("-l") {
+                        println!("cargo:rustc-link-lib={}", stripped);
+                    } else if let Some(stripped) = token.strip_prefix("-L") {
+                        println!("cargo:rustc-link-search=native={}", stripped);
+                    }
+                }
+            }
+        }
+        
+        println!("cargo:warning=Using real Geant4 wrapper library");
+    } else {
+        // Fall back to C stubs if the real library isn't available
+        cc::Build::new()
+            .file("src/geant4_stubs.c")
+            .flag("-std=c11")
+            .compile("geant4_stub");
+        println!("cargo:warning=Using Geant4 stubs - build the real library with 'make' in the ffi_integration directory");
     }
+    
+    // Always generate basic bindings from the header
+    // This works whether using real library or stubs since the header defines the same interface
+    let bindings = bindgen::Builder::default()
+        .header("src/geant4_wrapper.h")
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .generate()
+        .expect("Unable to generate Geant4 bindings");
+        
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    bindings
+        .write_to_file(out_path.join("geant4_bindings.rs"))
+        .expect("Couldn't write Geant4 bindings!");
 }
 
 fn build_lammps_bindings() {
@@ -58,7 +110,7 @@ fn build_lammps_bindings() {
         
         // Generate bindings for LAMMPS C library interface
         let bindings = bindgen::Builder::default()
-            .header("src/ffi/lammps_wrapper.h")
+            .header("src/lammps_wrapper.h")
             .clang_arg(format!("-I{}/src", lammps_dir))
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
@@ -95,7 +147,7 @@ fn build_gadget_bindings() {
             
         // Generate bindings
         let bindings = bindgen::Builder::default()
-            .header("src/ffi/gadget_wrapper.h")
+            .header("src/gadget_wrapper.h")
             .clang_arg(format!("-I{}", gadget_src))
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
@@ -115,7 +167,7 @@ fn build_endf_parser() {
         println!("cargo:rustc-link-lib=endf");
         
         let bindings = bindgen::Builder::default()
-            .header("src/ffi/endf_wrapper.h")
+            .header("src/endf_wrapper.h")
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .generate()
             .expect("Unable to generate ENDF bindings");

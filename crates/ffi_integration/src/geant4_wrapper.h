@@ -5,12 +5,13 @@
 extern "C" {
 #endif
 
-// Forward declarations
-typedef struct G4RunManager G4RunManager;
-typedef struct G4VUserDetectorConstruction G4VUserDetectorConstruction;
-typedef struct G4VUserPhysicsList G4VUserPhysicsList;
-typedef struct G4SteppingManager G4SteppingManager;
-typedef struct G4ParticleGun G4ParticleGun;
+// Forward declarations as opaque types for C compatibility
+// These will be replaced by the actual C++ types when using the real library
+typedef void G4RunManager;
+typedef void G4VUserDetectorConstruction;
+typedef void G4VUserPhysicsList;
+typedef void G4SteppingManager;
+typedef void G4ParticleGun;
 
 // Data structures for FFI communication
 typedef struct {

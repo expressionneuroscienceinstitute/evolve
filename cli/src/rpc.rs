@@ -194,6 +194,6 @@ impl RpcClient {
 
 /// Make a generic RPC call to the server
 pub async fn call_rpc(method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
-    let client = RpcClient::new(8080); // Default port
+    let client = RpcClient::new(9001); // Default port matches CLI
     client.send_request(method, params).await
 } 

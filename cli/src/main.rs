@@ -17,6 +17,7 @@ use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
 use std::collections::HashMap;
+use universe_sim::{CelestialBody, CelestialBodyType};
 
 mod rpc;
 
@@ -457,85 +458,137 @@ async fn cmd_start(
         // Send WebSocket updates every 10 ticks or so for better responsiveness
         if stats.current_tick % 10 == 0 {
             // Get a fresh lock on the simulation to get more detailed data
-            let sim_guard = sim.lock().unwrap();
+            let mut sim_guard = sim.lock().unwrap();
             
-            // Get physics engine reference
-            let physics = &sim_guard.physics_engine;
-            
-            // Extract particle data from simulation (no hard limit – rely on compression)
-            let particle_data: Vec<serde_json::Value> = physics.particles
-                .iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    // Calculate safe numeric values outside the json! macro
-                    let safe_pos = [
-                        if p.position.x.is_finite() { p.position.x } else { 0.0 },
-                        if p.position.y.is_finite() { p.position.y } else { 0.0 },
-                        if p.position.z.is_finite() { p.position.z } else { 0.0 }
-                    ];
-                    let safe_momentum = [
-                        if p.momentum.x.is_finite() { p.momentum.x } else { 0.0 },
-                        if p.momentum.y.is_finite() { p.momentum.y } else { 0.0 },
-                        if p.momentum.z.is_finite() { p.momentum.z } else { 0.0 }
-                    ];
-                    let safe_energy = if p.energy.is_finite() { p.energy } else { 0.0 };
-                    let safe_mass = if p.mass.is_finite() { p.mass } else { 0.0 };
-                    let safe_charge = if p.electric_charge.is_finite() { p.electric_charge } else { 0.0 };
-                    let safe_spin = [
-                        if p.spin.x.re.is_finite() { p.spin.x.re } else { 0.0 },
-                        if p.spin.y.re.is_finite() { p.spin.y.re } else { 0.0 },
-                        if p.spin.z.re.is_finite() { p.spin.z.re } else { 0.0 }
-                    ];
-                    let safe_age = {
-                        let age = physics.current_time - p.creation_time;
-                        if age.is_finite() && age >= 0.0 { age } else { 0.0 }
-                    };
-                    let safe_decay_prob = if let Some(decay_time) = p.decay_time { 
-                        let time_diff = physics.current_time - p.creation_time;
-                        if decay_time > 0.0 && time_diff.is_finite() && time_diff >= 0.0 {
-                            let prob = 1.0 - ((-time_diff / decay_time).exp());
-                            if prob.is_finite() { prob.clamp(0.0, 1.0) } else { 0.0 }
-                        } else { 0.0 }
-                    } else { 0.0 };
+            // Get physics engine reference (extract data we need before borrowing mutably)
+            let physics_data = {
+                let physics = &sim_guard.physics_engine;
+                
+                // Extract particle data from simulation (no hard limit – rely on compression)
+                let particle_data: Vec<serde_json::Value> = physics.particles
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        // Calculate safe numeric values outside the json! macro
+                        let safe_pos = [
+                            if p.position.x.is_finite() { p.position.x } else { 0.0 },
+                            if p.position.y.is_finite() { p.position.y } else { 0.0 },
+                            if p.position.z.is_finite() { p.position.z } else { 0.0 }
+                        ];
+                        let safe_momentum = [
+                            if p.momentum.x.is_finite() { p.momentum.x } else { 0.0 },
+                            if p.momentum.y.is_finite() { p.momentum.y } else { 0.0 },
+                            if p.momentum.z.is_finite() { p.momentum.z } else { 0.0 }
+                        ];
+                        let safe_energy = if p.energy.is_finite() { p.energy } else { 0.0 };
+                        let safe_mass = if p.mass.is_finite() { p.mass } else { 0.0 };
+                        let safe_charge = if p.electric_charge.is_finite() { p.electric_charge } else { 0.0 };
+                        let safe_spin = [
+                            if p.spin.x.re.is_finite() { p.spin.x.re } else { 0.0 },
+                            if p.spin.y.re.is_finite() { p.spin.y.re } else { 0.0 },
+                            if p.spin.z.re.is_finite() { p.spin.z.re } else { 0.0 }
+                        ];
+                        let safe_age = {
+                            let age = physics.current_time - p.creation_time;
+                            if age.is_finite() && age >= 0.0 { age } else { 0.0 }
+                        };
+                        let safe_decay_prob = if let Some(decay_time) = p.decay_time { 
+                            let time_diff = physics.current_time - p.creation_time;
+                            if decay_time > 0.0 && time_diff.is_finite() && time_diff >= 0.0 {
+                                let prob = 1.0 - ((-time_diff / decay_time).exp());
+                                if prob.is_finite() { prob.clamp(0.0, 1.0) } else { 0.0 }
+                            } else { 0.0 }
+                        } else { 0.0 };
 
-                    json!({
-                        "id": i,
-                        "particle_type": format!("{:?}", p.particle_type),
-                        "position": safe_pos,
-                        "momentum": safe_momentum,
-                        "energy": safe_energy,
-                        "mass": safe_mass,
-                        "charge": safe_charge,
-                        "spin": safe_spin,
-                        "color_charge": p.color_charge.as_ref().map(|c| format!("{:?}", c)),
-                        "interaction_count": p.interaction_history.len() as u32,
-                        "age": safe_age,
-                        "decay_probability": safe_decay_prob
+                        json!({
+                            "id": i,
+                            "particle_type": format!("{:?}", p.particle_type),
+                            "position": safe_pos,
+                            "momentum": safe_momentum,
+                            "energy": safe_energy,
+                            "mass": safe_mass,
+                            "charge": safe_charge,
+                            "spin": safe_spin,
+                            "color_charge": p.color_charge.as_ref().map(|c| format!("{:?}", c)),
+                            "interaction_count": p.interaction_history.len() as u32,
+                            "age": safe_age,
+                            "decay_probability": safe_decay_prob
+                        })
                     })
-                })
-                .collect();
+                    .collect();
+                
+                // Extract raw particles for delta processing
+                let raw_particles: Vec<_> = physics.particles.clone();
+                
+                // Extract nuclear data as strings (frontend expects String type)
+                let nuclei_data: Vec<String> = physics.nuclei
+                    .iter()
+                    .take(50)
+                    .map(|n| format!("{}{}(A={}, Z={}, BE={:.2e}J)", 
+                        match n.atomic_number {
+                            1 => "H", 2 => "He", 3 => "Li", 6 => "C", 8 => "O", 26 => "Fe", _ => "X"
+                        },
+                        n.mass_number, n.mass_number, n.atomic_number, n.binding_energy))
+                    .collect();
+                
+                // Extract atomic data as strings (frontend expects String type)
+                let atoms_data: Vec<String> = physics.atoms
+                    .iter()
+                    .take(50)
+                    .map(|a| format!("{}{}(e-={}, E={:.2e}J)", 
+                        match a.nucleus.atomic_number {
+                            1 => "H", 2 => "He", 3 => "Li", 6 => "C", 8 => "O", 26 => "Fe", _ => "X"
+                        },
+                        a.nucleus.mass_number, a.electrons.len(), a.total_energy))
+                    .collect();
+                
+                (particle_data, raw_particles, nuclei_data, atoms_data, physics.temperature, physics.energy_density)
+            };
             
-            // Extract nuclear data as strings (frontend expects String type)
-            let nuclei_data: Vec<String> = physics.nuclei
-                .iter()
-                .take(50)
-                .map(|n| format!("{}{}(A={}, Z={}, BE={:.2e}J)", 
-                    match n.atomic_number {
-                        1 => "H", 2 => "He", 3 => "Li", 6 => "C", 8 => "O", 26 => "Fe", _ => "X"
-                    },
-                    n.mass_number, n.mass_number, n.atomic_number, n.binding_energy))
-                .collect();
+            let (particle_data, raw_particles, nuclei_data, atoms_data, temperature, energy_density) = physics_data;
             
-            // Extract atomic data as strings (frontend expects String type)
-            let atoms_data: Vec<String> = physics.atoms
-                .iter()
-                .take(50)
-                .map(|a| format!("{}{}(e-={}, E={:.2e}J)", 
-                    match a.nucleus.atomic_number {
-                        1 => "H", 2 => "He", 3 => "Li", 6 => "C", 8 => "O", 26 => "Fe", _ => "X"
-                    },
-                    a.nucleus.mass_number, a.electrons.len(), a.total_energy))
-                .collect();
+            // Extract celestial body data (stars, planets, etc.)
+            let celestial_bodies: Vec<serde_json::Value> = {
+                let mut query = sim_guard.world.query::<(&CelestialBody, &universe_sim::physics_engine::PhysicsState)>();
+                query.iter(&sim_guard.world)
+                    .take(100) // Limit to prevent overwhelming the frontend
+                    .map(|(body, state)| {
+                        let body_type_str = match body.body_type {
+                            CelestialBodyType::Star => "Star",
+                            CelestialBodyType::Planet => "Planet",
+                            CelestialBodyType::Moon => "Moon",
+                            CelestialBodyType::Asteroid => "Asteroid",
+                            CelestialBodyType::BlackHole => "BlackHole",
+                            CelestialBodyType::NeutronStar => "NeutronStar",
+                            CelestialBodyType::WhiteDwarf => "WhiteDwarf",
+                            CelestialBodyType::BrownDwarf => "BrownDwarf",
+                        };
+                        
+                        let safe_pos = [
+                            if state.position.x.is_finite() { state.position.x } else { 0.0 },
+                            if state.position.y.is_finite() { state.position.y } else { 0.0 },
+                            if state.position.z.is_finite() { state.position.z } else { 0.0 }
+                        ];
+                        let safe_velocity = [
+                            if state.velocity.x.is_finite() { state.velocity.x } else { 0.0 },
+                            if state.velocity.y.is_finite() { state.velocity.y } else { 0.0 },
+                            if state.velocity.z.is_finite() { state.velocity.z } else { 0.0 }
+                        ];
+                        
+                        json!({
+                            "id": body.id.to_string(),
+                            "body_type": body_type_str,
+                            "position": safe_pos,
+                            "velocity": safe_velocity,
+                            "mass": if body.mass.is_finite() { body.mass } else { 0.0 },
+                            "radius": if body.radius.is_finite() { body.radius } else { 0.0 },
+                            "temperature": if body.temperature.is_finite() { body.temperature } else { 0.0 },
+                            "luminosity": if body.luminosity.is_finite() { body.luminosity } else { 0.0 },
+                            "age": if body.age.is_finite() { body.age } else { 0.0 }
+                        })
+                    })
+                    .collect()
+            };
             
             // Capture quantum field snapshot (downsampled)
             let qfield_snapshot = sim_guard.get_quantum_field_snapshot();
@@ -547,8 +600,7 @@ async fn cmd_start(
 
                 // Build and cache particle snapshots
                 last_particle_state.clear();
-                for p in physics.particles.iter().enumerate() {
-                    let (idx, part) = p;
+                for (idx, part) in raw_particles.iter().enumerate() {
                     last_particle_state.insert(idx, ParticleSnapshot {
                         position: [part.position.x, part.position.y, part.position.z],
                         momentum: [part.momentum.x, part.momentum.y, part.momentum.z],
@@ -561,11 +613,12 @@ async fn cmd_start(
                     "current_tick": stats.current_tick,
                     "universe_age_gyr": stats.universe_age_gyr,
                     "cosmic_era": format!("{:?}", stats.cosmic_era),
-                    "temperature": physics.temperature,
-                    "energy_density": physics.energy_density,
+                    "temperature": temperature,
+                    "energy_density": energy_density,
                     "particles": particle_data,
                     "nuclei": nuclei_data,
                     "atoms": atoms_data,
+                    "celestial_bodies": celestial_bodies,
                     "quantum_fields": qfield_snapshot,
                 })
             } else {
@@ -574,7 +627,7 @@ async fn cmd_start(
                 let mut updated_particles = Vec::new();
                 let mut current_map: HashMap<usize, ParticleSnapshot> = HashMap::new();
 
-                for (idx, p) in physics.particles.iter().enumerate() {
+                for (idx, p) in raw_particles.iter().enumerate() {
                     let snapshot = ParticleSnapshot {
                         position: [p.position.x, p.position.y, p.position.z],
                         momentum: [p.momentum.x, p.momentum.y, p.momentum.z],
@@ -612,6 +665,7 @@ async fn cmd_start(
                     "new_particles": new_particles,
                     "updated_particles": updated_particles,
                     "removed_particle_ids": removed_ids,
+                    "celestial_bodies": celestial_bodies,
                     "quantum_fields": qfield_snapshot,
                 })
             };
@@ -1999,7 +2053,9 @@ async fn cmd_interactive() -> Result<()> {
     
     println!("🎮 Interactive Simulation Control");
     println!("=================================");
-    println!("Commands: status, stats, speed <factor>, map [layer], planets, quit");
+    println!("Commands: status, stats, physics, speed <factor>, map [layer], planets,");
+    println!("          stop, rewind <ticks>, snapshot <file>, inspect <type> <id>,");
+    println!("          godmode <action>, help, quit");
     println!("Press Ctrl+C to exit\n");
     
     // Real-time monitoring setup - much less frequent to avoid interference
@@ -2125,16 +2181,130 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
             cmd_list_planets(None, false).await?;
             println!("✅ Planets command completed.");
         },
+
+        "stop" => {
+            println!("🛑 Stopping simulation...");
+            cmd_stop().await?;
+            println!("✅ Stop command completed.");
+            return Ok(true); // Exit after stop
+        },
+
+        "rewind" => {
+            if parts.len() > 1 {
+                if let Ok(ticks) = parts[1].parse::<u64>() {
+                    println!("⏪ Rewinding {} ticks...", ticks);
+                    cmd_rewind(ticks).await?;
+                    println!("✅ Rewind command completed.");
+                } else {
+                    println!("❌ Invalid tick count. Use: rewind <number>");
+                }
+            } else {
+                println!("❌ Usage: rewind <ticks>");
+            }
+        },
+
+        "snapshot" => {
+            if parts.len() > 1 {
+                let filename = parts[1];
+                println!("📸 Creating snapshot: {}...", filename);
+                cmd_snapshot(PathBuf::from(filename), None).await?;
+                println!("✅ Snapshot command completed.");
+            } else {
+                println!("❌ Usage: snapshot <filename>");
+            }
+        },
+
+        "inspect" => {
+            if parts.len() > 2 {
+                let inspect_type = parts[1];
+                let id = parts[2];
+                
+                match inspect_type {
+                    "planet" => {
+                        println!("🔍 Inspecting planet {}...", id);
+                        cmd_inspect(InspectTarget::Planet { id: id.to_string() }).await?;
+                        println!("✅ Planet inspection completed.");
+                    },
+                    "lineage" => {
+                        println!("🧬 Inspecting lineage {}...", id);
+                        cmd_inspect(InspectTarget::Lineage { id: id.to_string() }).await?;
+                        println!("✅ Lineage inspection completed.");
+                    },
+                    "universe" => {
+                        println!("🌌 Inspecting universe...");
+                        cmd_inspect(InspectTarget::Universe).await?;
+                        println!("✅ Universe inspection completed.");
+                    },
+                    "physics" => {
+                        println!("⚗️ Inspecting physics...");
+                        cmd_inspect(InspectTarget::Physics).await?;
+                        println!("✅ Physics inspection completed.");
+                    },
+                    _ => {
+                        println!("❌ Invalid inspect type. Use: inspect <planet|lineage|universe|physics> [id]");
+                    }
+                }
+            } else if parts.len() == 2 {
+                match parts[1] {
+                    "universe" => {
+                        println!("🌌 Inspecting universe...");
+                        cmd_inspect(InspectTarget::Universe).await?;
+                        println!("✅ Universe inspection completed.");
+                    },
+                    "physics" => {
+                        println!("⚗️ Inspecting physics...");
+                        cmd_inspect(InspectTarget::Physics).await?;
+                        println!("✅ Physics inspection completed.");
+                    },
+                    _ => {
+                        println!("❌ Usage: inspect <planet|lineage> <id> OR inspect <universe|physics>");
+                    }
+                }
+            } else {
+                println!("❌ Usage: inspect <type> [id]");
+            }
+        },
+
+        "godmode" => {
+            if parts.len() > 1 {
+                match parts[1] {
+                    "create-agent" => {
+                        if parts.len() > 2 {
+                            let planet_id = parts[2];
+                            println!("🧙 Creating agent on planet {}...", planet_id);
+                            cmd_godmode(GodModeAction::CreateAgent { planet_id: planet_id.to_string() }).await?;
+                            println!("✅ God-mode create-agent completed.");
+                        } else {
+                            println!("❌ Usage: godmode create-agent <planet_id>");
+                        }
+                    },
+                    _ => {
+                        println!("❌ Available god-mode actions: create-agent");
+                    }
+                }
+            } else {
+                println!("❌ Usage: godmode <action> [args]");
+            }
+        },
         
         "help" => {
             println!("Available commands:");
-            println!("  status       - Show simulation status");
-            println!("  stats        - Show universe statistics");
-            println!("  physics      - Show physics diagnostics");
-            println!("  speed <n>    - Change simulation speed");
-            println!("  map [layer]  - Show ASCII map (layers: stars, gas, dark_matter, radiation)");
-            println!("  planets      - List planets");
-            println!("  quit         - Exit interactive mode");
+            println!("  status                    - Show simulation status");
+            println!("  stats                     - Show universe statistics");
+            println!("  physics                   - Show physics diagnostics");
+            println!("  speed <factor>            - Change simulation speed");
+            println!("  map [layer]               - Show ASCII map (layers: stars, gas, dark_matter, radiation)");
+            println!("  planets                   - List planets");
+            println!("  stop                      - Stop simulation and exit");
+            println!("  rewind <ticks>            - Rewind simulation by specified ticks");
+            println!("  snapshot <filename>       - Create simulation snapshot");
+            println!("  inspect planet <id>       - Inspect specific planet");
+            println!("  inspect lineage <id>      - Inspect specific lineage");
+            println!("  inspect universe          - Inspect universe statistics");
+            println!("  inspect physics           - Inspect physics diagnostics");
+            println!("  godmode create-agent <id> - Create agent on planet (requires god-mode)");
+            println!("  help                      - Show this help message");
+            println!("  quit                      - Exit interactive mode");
         },
         
         _ => {
@@ -2800,6 +2970,115 @@ async fn handle_rpc_request(
                     let error = rpc::RpcError {
                         code: rpc::INVALID_PARAMS,
                         message: format!("Invalid parameters for godmode_create_agent: {}", e),
+                    };
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(error),
+                        id: response_id,
+                    };
+                    Ok(warp::reply::json(&rpc_response))
+                }
+            }
+        }
+
+        "speed" => {
+            #[derive(Deserialize)]
+            struct SpeedParams {
+                factor: f64,
+            }
+
+            match serde_json::from_value::<SpeedParams>(request.params) {
+                Ok(params) => {
+                    let mut sim_guard = shared_state.sim.lock().unwrap();
+                    match sim_guard.set_speed_factor(params.factor) {
+                        Ok(_) => {
+                            let response_data = json!({
+                                "speed_factor": params.factor,
+                                "message": format!("Simulation speed set to {}x", params.factor)
+                            });
+                            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: Some(response_data),
+                                error: None,
+                                id: response_id,
+                            };
+                            Ok(warp::reply::json(&rpc_response))
+                        }
+                        Err(e) => {
+                            let error = rpc::RpcError {
+                                code: rpc::INVALID_PARAMS,
+                                message: format!("Failed to set speed: {}", e),
+                            };
+                            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: None,
+                                error: Some(error),
+                                id: response_id,
+                            };
+                            Ok(warp::reply::json(&rpc_response))
+                        }
+                    }
+                }
+                Err(e) => {
+                    let error = rpc::RpcError {
+                        code: rpc::INVALID_PARAMS,
+                        message: format!("Invalid parameters for speed: {}", e),
+                    };
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(error),
+                        id: response_id,
+                    };
+                    Ok(warp::reply::json(&rpc_response))
+                }
+            }
+        }
+
+        "rewind" => {
+            #[derive(Deserialize)]
+            struct RewindParams {
+                ticks: u64,
+            }
+
+            match serde_json::from_value::<RewindParams>(request.params) {
+                Ok(params) => {
+                    let mut sim_guard = shared_state.sim.lock().unwrap();
+                    match sim_guard.rewind_ticks(params.ticks) {
+                        Ok(actual_ticks) => {
+                            let response_data = json!({
+                                "requested_ticks": params.ticks,
+                                "actual_ticks": actual_ticks,
+                                "message": format!("Rewound {} ticks", actual_ticks)
+                            });
+                            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: Some(response_data),
+                                error: None,
+                                id: response_id,
+                            };
+                            Ok(warp::reply::json(&rpc_response))
+                        }
+                        Err(e) => {
+                            let error = rpc::RpcError {
+                                code: rpc::INVALID_PARAMS,
+                                message: format!("Failed to rewind: {}", e),
+                            };
+                            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: None,
+                                error: Some(error),
+                                id: response_id,
+                            };
+                            Ok(warp::reply::json(&rpc_response))
+                        }
+                    }
+                }
+                Err(e) => {
+                    let error = rpc::RpcError {
+                        code: rpc::INVALID_PARAMS,
+                        message: format!("Invalid parameters for rewind: {}", e),
                     };
                     let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
                         jsonrpc: "2.0".to_string(),

@@ -4509,31 +4509,42 @@ pub mod gadget_gravity {
         
         /// Calculate gravitational forces using proven GADGET algorithms
         pub fn calculate_forces(&mut self) -> Result<()> {
-            // Use direct summation for now (can be upgraded to tree method)
-            for i in 0..self.particles.len() {
-                let mut total_force = Vector3::zeros();
-                
-                for j in 0..self.particles.len() {
-                    if i == j {
-                        continue;
-                    }
-                    
-                    let r_vec = self.particles[j].position - self.particles[i].position;
-                    let r = r_vec.magnitude();
-                    
-                    if r < 1e-15 {
-                        continue;
-                    }
-                    
-                    // GADGET-style softened gravity
-                    let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
-                    let force_magnitude = general_relativity::G * self.particles[i].mass * 
-                                        self.particles[j].mass / (softened_r * softened_r * softened_r);
-                    
-                    total_force += r_vec * force_magnitude;
+            if self.particles.is_empty() {
+                return Ok(());
+            }
+
+            // Calculate bounding box for all particles
+            let mut min_pos = self.particles[0].position;
+            let mut max_pos = self.particles[0].position;
+            
+            for particle in &self.particles {
+                for i in 0..3 {
+                    min_pos[i] = min_pos[i].min(particle.position[i]);
+                    max_pos[i] = max_pos[i].max(particle.position[i]);
                 }
-                
-                self.particles[i].acceleration = total_force / self.particles[i].mass;
+            }
+            
+            // Expand bounding box slightly and make it cubic
+            let size = (max_pos - min_pos).max() * 1.1;
+            let center = (min_pos + max_pos) * 0.5;
+            
+            // Build octree
+            let mut root = OctreeNode::new(center, size);
+            for (i, _) in self.particles.iter().enumerate() {
+                root.insert(i, &self.particles);
+            }
+            
+            // Calculate forces in parallel using rayon
+            let forces: Vec<Vector3<f64>> = (0..self.particles.len())
+                .into_par_iter()
+                .map(|i| root.calculate_force(i, &self.particles, self.force_accuracy))
+                .collect();
+            
+            // Apply forces to update accelerations
+            for (i, force) in forces.into_iter().enumerate() {
+                if self.particles[i].mass > 1e-12 {
+                    self.particles[i].acceleration = force / self.particles[i].mass;
+                }
             }
             
             Ok(())

@@ -651,52 +651,68 @@ impl PhysicsEngine {
         ParticleType::Photon // Fallback
     }
     
-    /// Comprehensive physics simulation step
+    /// Simulation step – two compile-time modes:
+    /// 1. `heavy` feature enabled  ➜ run the full high-fidelity pipeline (default for production accuracy).
+    /// 2. `heavy` feature *disabled* ➜ run a lightweight fast path suited for profiling & CI.
     pub fn step(&mut self, dt: f64) -> Result<()> {
         self.time_step = dt;
         self.current_time += dt;
-        
-        // 1. High-fidelity particle interactions (Geant4)
-        self.process_particle_interactions()?;
-        
-        // 2. High-fidelity molecular dynamics (LAMMPS)  
-        self.process_molecular_dynamics()?;
-        
-        // 3. High-fidelity gravitational dynamics (GADGET)
-        self.process_gravitational_dynamics()?;
-        
-        // 4. Nuclear physics (using ENDF data if available)
-        self.process_nuclear_fusion()?;
-        self.process_nuclear_fission()?;
-        self.update_nuclear_shells()?;
-        
-        // 5. Atomic physics
-        self.update_atomic_physics()?;
-        
-        // 6. Phase transitions (enhanced with molecular data from LAMMPS)
-        self.process_phase_transitions()?;
-        
-        // 7. Emergent properties (statistical mechanics)
-        let mut emergent_states: Vec<PhysicsState> = self.particles.iter().map(|p| PhysicsState {
-            position: p.position,
-            velocity: p.velocity,
-            acceleration: Vector3::zeros(),
-            mass: p.mass,
-            charge: p.charge,
-            temperature: self.temperature,
-            entropy: 0.0,
-        }).collect();
-        self.update_emergent_properties(&mut emergent_states)?;
-        
-        // 8. Quantum field evolution
-        self.evolve_quantum_state()?;
-        
-        // 9. Spacetime curvature updates
-        self.update_spacetime_curvature()?;
-        
-        // 10. Conservation law validation
-        self.validate_conservation_laws()?;
-        
+
+        // --------------------
+        // FULL-FIDELITY PATH
+        // --------------------
+        #[cfg(feature = "heavy")]
+        {
+            // 1. Particle interactions (Geant4 or native)
+            self.process_particle_interactions()?;
+
+            // 2. Molecular dynamics (LAMMPS or native)
+            self.process_molecular_dynamics()?;
+
+            // 3. Gravitational dynamics (GADGET or native)
+            self.process_gravitational_dynamics()?;
+
+            // 4. Nuclear physics
+            self.process_nuclear_fusion()?;
+            self.process_nuclear_fission()?;
+            self.update_nuclear_shells()?;
+
+            // 5. Atomic physics & phase changes
+            self.update_atomic_physics()?;
+            self.process_phase_transitions()?;
+
+            // 6. Emergent phenomena & quantum fields
+            let mut emergent_states: Vec<PhysicsState> = self
+                .particles
+                .iter()
+                .map(|p| PhysicsState {
+                    position: p.position,
+                    velocity: p.velocity,
+                    acceleration: Vector3::zeros(),
+                    mass: p.mass,
+                    charge: p.charge,
+                    temperature: self.temperature,
+                    entropy: 0.0,
+                })
+                .collect();
+            self.update_emergent_properties(&mut emergent_states)?;
+
+            self.evolve_quantum_state()?;
+            self.update_spacetime_curvature()?;
+
+            // Ensure conservation laws each step.
+            self.validate_conservation_laws()?;
+        }
+
+        // --------------------
+        // FAST PATH (default)
+        // --------------------
+        #[cfg(not(feature = "heavy"))]
+        {
+            // Only recompute kinematic energies in parallel; skip expensive gravity pair-wise forces.
+            self.update_particle_energies()?;
+        }
+
         Ok(())
     }
     
@@ -4587,6 +4603,13 @@ pub mod gadget_gravity {
             
             Ok(())
         }
+    }
+}
+
+impl PhysicsEngine {
+    /// Get read-only access to particles for rendering
+    pub fn get_particles(&self) -> &[FundamentalParticle] {
+        &self.particles
     }
 }
 

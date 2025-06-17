@@ -25,6 +25,8 @@ ffi_integration = { path = "../ffi_integration", default-features = false }
 
 [features]
 default = ["gpu-acceleration", "bevy"]
+# Enable full scientific fidelity at the cost of performance.
+heavy = []
 gpu-acceleration = []
 simd = []
 bevy = ["dep:bevy_ecs"]

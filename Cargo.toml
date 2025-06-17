@@ -1,15 +1,15 @@
 [workspace]
 members = [
-    "crates/universe_sim",
     "cli",
+    "crates/universe_sim",
     "crates/physics_engine",
     "crates/agent_evolution",
     "crates/networking",
     "crates/diagnostics",
     "crates/ffi_integration",
     "crates/physics_types",
-    "demos",
-    "viz_web"
+    "crates/native_renderer",
+    "demos"
 ]
 resolver = "2"
 
@@ -38,9 +38,8 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 ordered-float = "4.0"
 once_cell = "1.19"
 
-# Networking
-quinn = "0.10"  # QUIC implementation
-tokio-tungstenite = "0.20"  # WebSocket for dashboard
+# Networking (minimal for RPC only)
+warp = "0.3"
 rustls = "0.21"
 rcgen = "0.11"  # Certificate generation
 
@@ -88,6 +87,11 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # FFI and C interop
 libloading = "0.8"
+
+# High-performance rendering
+wgpu = "0.19"
+winit = "0.29"
+bytemuck = { version = "1.14", features = ["derive"] }
 
 [profile.release]
 opt-level = 3

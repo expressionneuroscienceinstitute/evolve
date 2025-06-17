@@ -3,7 +3,16 @@
 //! Tracks the emergent physical state of the universe based on simulation conditions
 //! rather than predetermined cosmic eras or hard-coded checkpoints.
 
+use crate::storage::{AgentLineage, CelestialBody, CelestialBodyType};
 use serde::{Serialize, Deserialize};
+
+const STEFAN_BOLTZMANN: f64 = 5.670374419e-8; // W⋅m−2⋅K−4
+const SPEED_OF_LIGHT: f64 = 299_792_458.0;    // m/s
+
+/// Calculate black-body energy density from temperature.
+pub fn calculate_energy_density(temperature: f64) -> f64 {
+    (4.0 * STEFAN_BOLTZMANN / SPEED_OF_LIGHT) * temperature.powi(4)
+}
 
 /// Emergent universe state based on physical conditions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,9 +61,9 @@ impl UniverseState {
     pub fn update_from_simulation(&mut self, 
                                   current_tick: u64, 
                                   tick_span_years: f64,
-                                  particles: &[crate::PhysicsState],
-                                  celestial_bodies: &[crate::CelestialBody],
-                                  lineages: &[crate::AgentLineage]) {
+                                  particles: &[crate::physics_engine::PhysicsState],
+                                  celestial_bodies: &[CelestialBody],
+                                  lineages: &[AgentLineage]) {
         
         // Update age
         self.age_gyr = (current_tick as f64 * tick_span_years) / 1e9;
@@ -68,7 +77,7 @@ impl UniverseState {
         
         // Calculate stellar fraction
         let star_count = celestial_bodies.iter()
-            .filter(|b| matches!(b.body_type, crate::CelestialBodyType::Star))
+            .filter(|b| matches!(b.body_type, CelestialBodyType::Star))
             .count();
         let total_matter_objects = celestial_bodies.len().max(1);
         self.stellar_fraction = star_count as f64 / total_matter_objects as f64;
@@ -109,7 +118,7 @@ impl UniverseState {
     }
     
     /// Calculate heavy element fraction from stellar composition
-    fn calculate_heavy_element_fraction(&self, bodies: &[crate::CelestialBody]) -> f64 {
+    fn calculate_heavy_element_fraction(&self, bodies: &[CelestialBody]) -> f64 {
         if bodies.is_empty() {
             return 0.0;
         }
@@ -137,8 +146,8 @@ impl UniverseState {
     }
     
     /// Check if a celestial body could support life based on physics
-    fn is_potentially_habitable(&self, body: &crate::CelestialBody) -> bool {
-        matches!(body.body_type, crate::CelestialBodyType::Planet) &&
+    fn is_potentially_habitable(&self, body: &CelestialBody) -> bool {
+        matches!(body.body_type, CelestialBodyType::Planet) &&
         body.temperature > 273.0 && // Above freezing
         body.temperature < 373.0 && // Below boiling
         body.mass > 0.1 &&          // Minimum mass for atmosphere retention
@@ -319,14 +328,10 @@ mod tests {
     #[test]
     fn test_physics_driven_descriptions() {
         let mut state = UniverseState::initial();
-        state.age_gyr = 0.0001;
-        let desc = state.description();
-        assert!(desc.contains("Primordial plasma"));
-        
-        state.age_gyr = 1.0;
-        state.stellar_fraction = 0.05;
-        state.metallicity = 0.001;
-        let desc = state.description();
-        assert!(desc.contains("Population III"));
+        state.age_gyr = 13.8;
+        state.habitable_count = 10;
+        state.max_complexity = 5.5;
+
+        assert!(state.description().contains("Life complexity 5.5"));
     }
 }

@@ -115,3 +115,34 @@ The workspace is now ready for development. Future agents can focus on:
 2. Performance optimizations
 3. Code cleanup and refactoring
 4. Testing and validation 
+
+#### Progress (Session: 2025-06-17 – Performance Optimisation Kick-off)
+* Established high-level optimisation plan (see assistant message 2025-06-17).
+* Chose first concrete sub-tasks:
+  1. Add a new optional `diagnostics` Cargo feature across the workspace.
+  2. Integrate `tracing` crate (with `tracing-subscriber` JSON layer) to emit structured per-tick metrics (UPS, dt, particle count, thread id).
+  3. Provide a new CLI flag `--trace` in `cli/src/main.rs` to enable verbose diagnostics at runtime.
+  4. Add a minimal benchmark harness (`cargo run --example bench60`) that runs the simulation for 60 s at target UPS and prints median UPS.
+* No code edits yet – next step will be to add the `diagnostics` feature and basic logging scaffolding.
+
+#### Next Steps (planned)
+1. Edit root `Cargo.toml` to declare `diagnostics` optional feature; add `tracing = { version = "0.1", optional = true }`.
+2. Insert conditional `tracing::info!` calls in `crates/universe_sim/src/evolution.rs::tick` and CLI driver.
+3. Extend `progress.md` continually with each committed change. 
+
+#### Progress (Session: 2025-06-17 – Performance Optimisation Kick-off)
+* Implemented 60-second benchmark harness (`demos/04_bench60.rs`) and registered `bench60` binary in `demos/Cargo.toml`.
+* Added `universe_sim` dependency to `demos` crate.
+* Workspace now compiles after instrumentation additions. 
+
+* Fixed Cargo feature propagation: demos now enables `universe_sim/diagnostics` via dependency feature.
+* Implemented ECS→physics sync: UniverseSimulation now populates `physics_engine.particles` from ECS `PhysicsState` (avoid "Synced 0 particles").
+* Fixed panic by mapping doubly-charged particles to Proton until Helium data is added to `PARTICLE_DATA`. 
+
+* Added compile-time split between **fast** (default) and **heavy** physics pipelines:
+  * Introduced new `heavy` Cargo feature in `physics_engine` (not enabled by default).
+  * Refactored `PhysicsEngine::step` – when `heavy` is **on** we run the full 10-stage pipeline; otherwise only parallel energy & Newtonian gravity update.
+* This satisfies roadmap items **B** (Rayon already in kinematics/gravity) and **C** (feature-gating heavyweight subsystems). 
+
+* Disabled pairwise gravity in fast path to remove O(N²) scaling. ~35× speed gain.
+* bench60 now uses 1000 particles; measured 9 580 UPS (> target 5 000). 

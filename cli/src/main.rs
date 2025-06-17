@@ -4,22 +4,22 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
-use warp::ws::{Message, WebSocket};
-use warp::Filter;
 use std::collections::HashMap;
-use universe_sim::{CelestialBody, CelestialBodyType};
+use universe_sim::{CelestialBodyType};
+use native_renderer;
 
 mod rpc;
+
+// Add import after other use lines
+use warp::Filter;
 
 /// A struct to hold the shared state of the simulation for RPC.
 #[derive(Clone)]
@@ -48,6 +48,9 @@ struct Cli {
     
     #[arg(long, global = true)]
     verbose: bool,
+    
+    #[arg(long, global = true)]
+    trace: bool,
 }
 
 #[derive(Subcommand)]
@@ -70,7 +73,12 @@ enum Commands {
         low_mem: bool,
         
         #[arg(long)]
-        serve_dash: Option<u16>,
+        native_render: bool,
+        
+        /// On macOS, enables the experimental Metal renderer on Apple Silicon.
+        /// This overrides the default safety disable.
+        #[arg(long)]
+        silicon: bool,
         
         #[arg(long, default_value = "9001")]
         rpc_port: u16,
@@ -259,14 +267,14 @@ struct ParticleSnapshot {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     
-    init_logging(cli.verbose);
+    init_logging(cli.verbose, cli.trace);
     
     let config = load_config(cli.config.as_ref()).await?;
     
     match cli.command {
         Commands::Status => cmd_status().await,
-        Commands::Start { load, preset, tick_span, low_mem, serve_dash, rpc_port, allow_net } => {
-            cmd_start(config, load, preset, tick_span, low_mem, serve_dash, rpc_port, allow_net).await
+        Commands::Start { load, preset, tick_span, low_mem, native_render, silicon, rpc_port, allow_net } => {
+            cmd_start(config, load, preset, tick_span, low_mem, native_render, silicon, rpc_port, allow_net).await
         },
         Commands::Stop => cmd_stop().await,
         Commands::Map { zoom, layer } => cmd_map(zoom, &layer).await,
@@ -282,19 +290,25 @@ async fn main() -> Result<()> {
     }
 }
 
-fn init_logging(verbose: bool) {
+fn init_logging(verbose: bool, trace_json: bool) {
     let level = if verbose { "debug" } else { "info" };
-    
-    // Build a subscriber without automatically installing a log compatibility layer.
-    let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(format!("universectl={},universe_sim={},physics_engine={}", level, level, level))
-        .finish();
+    let env_filter = tracing_subscriber::EnvFilter::new(
+        format!("universectl={},universe_sim={},physics_engine={}", level, level, level),
+    );
 
-    // Install the subscriber (ignore error if one is already installed).
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    if trace_json {
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .json()
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    } else {
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    }
 
-    // Now bridge the `log` crate to `tracing`. If another logger is already set we ignore the
-    // error, preventing a panic.
     let _ = tracing_log::LogTracer::init();
 }
 
@@ -379,7 +393,8 @@ async fn cmd_start(
     _preset: Option<String>,
     tick_span: Option<f64>,
     low_mem: bool,
-    serve_dash: Option<u16>,
+    native_render: bool,
+    silicon: bool,
     rpc_port: u16,
     _allow_net: bool,
 ) -> Result<()> {
@@ -402,8 +417,8 @@ async fn cmd_start(
         println!("🔬 Initializing physics engine Big Bang conditions...");
         sim.physics_engine.initialize_big_bang()?;
         
-        println!("✅ Simulation initialized with {} particles in ECS and {} particles in physics engine",
-            sim.world.query::<&universe_sim::physics_engine::PhysicsState>().iter(&sim.world).count(),
+        println!("✅ Simulation initialized with {} particles in store and {} particles in physics engine",
+            sim.store.particles.count,
             sim.physics_engine.particles.len());
         
         sim
@@ -415,10 +430,47 @@ async fn cmd_start(
     let shared_state = Arc::new(Mutex::new(SharedState { sim: sim.clone(), last_save_time: None }));
     tokio::spawn(start_rpc_server(rpc_port, shared_state.clone()));
 
-    // Start WebSocket server for plain JSON payloads
-    let (tx, _) = broadcast::channel::<String>(100);
-    if let Some(port) = serve_dash {
-        tokio::spawn(start_websocket_server(port, tx.clone()));
+    // Start native renderer if requested
+    #[cfg(not(target_os = "macos"))]
+    if native_render {
+        info!("Starting high-performance native renderer");
+        let render_sim = sim.clone();
+        tokio::task::spawn_blocking(move || {
+            tokio::runtime::Handle::current().block_on(async {
+                if let Err(e) = native_renderer::run_renderer(render_sim).await {
+                    error!("Native renderer error: {}", e);
+                }
+            });
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    if native_render {
+        if silicon {
+            info!("Starting experimental native renderer on Apple Silicon (main-thread mode)");
+
+            // Spawn simulation loop on a background task so the main thread can own the EventLoop.
+            let sim_for_loop = sim.clone();
+            tokio::spawn(async move {
+                loop {
+                    {
+                        let mut guard = sim_for_loop.lock().unwrap();
+                        if let Err(e) = guard.tick() {
+                            error!("Simulation tick error: {}", e);
+                            break;
+                        }
+                    }
+                    sleep(Duration::from_millis(1)).await;
+                }
+            });
+
+            // Run renderer on the current (main) thread – blocks until window closed.
+            native_renderer::run_renderer(sim.clone()).await?;
+
+            return Ok(());
+        } else {
+            warn!("Native renderer is disabled on macOS. Pass --silicon in addition to --native-render to enable the experimental Metal renderer (requires window on main thread).");
+        }
     }
 
     println!("Simulation started. Press Ctrl+C to stop.");
@@ -556,47 +608,36 @@ async fn cmd_start(
             let (particle_data, raw_particles, nuclei_data, atoms_data, temperature, energy_density) = physics_data;
             
             // Extract celestial body data (stars, planets, etc.)
-            let celestial_bodies: Vec<serde_json::Value> = {
-                let mut query = sim_guard.world.query::<(&CelestialBody, &universe_sim::physics_engine::PhysicsState)>();
-                query.iter(&sim_guard.world)
-                    .take(100) // Limit to prevent overwhelming the frontend
-                    .map(|(body, state)| {
-                        let body_type_str = match body.body_type {
-                            CelestialBodyType::Star => "Star",
-                            CelestialBodyType::Planet => "Planet",
-                            CelestialBodyType::Moon => "Moon",
-                            CelestialBodyType::Asteroid => "Asteroid",
-                            CelestialBodyType::BlackHole => "BlackHole",
-                            CelestialBodyType::NeutronStar => "NeutronStar",
-                            CelestialBodyType::WhiteDwarf => "WhiteDwarf",
-                            CelestialBodyType::BrownDwarf => "BrownDwarf",
-                        };
-                        
-                        let safe_pos = [
-                            if state.position.x.is_finite() { state.position.x } else { 0.0 },
-                            if state.position.y.is_finite() { state.position.y } else { 0.0 },
-                            if state.position.z.is_finite() { state.position.z } else { 0.0 }
-                        ];
-                        let safe_velocity = [
-                            if state.velocity.x.is_finite() { state.velocity.x } else { 0.0 },
-                            if state.velocity.y.is_finite() { state.velocity.y } else { 0.0 },
-                            if state.velocity.z.is_finite() { state.velocity.z } else { 0.0 }
-                        ];
-                        
-                        json!({
-                            "id": body.id.to_string(),
-                            "body_type": body_type_str,
-                            "position": safe_pos,
-                            "velocity": safe_velocity,
-                            "mass": if body.mass.is_finite() { body.mass } else { 0.0 },
-                            "radius": if body.radius.is_finite() { body.radius } else { 0.0 },
-                            "temperature": if body.temperature.is_finite() { body.temperature } else { 0.0 },
-                            "luminosity": if body.luminosity.is_finite() { body.luminosity } else { 0.0 },
-                            "age": if body.age.is_finite() { body.age } else { 0.0 }
-                        })
+            let celestial_bodies: Vec<serde_json::Value> = sim_guard
+                .store
+                .celestials
+                .iter()
+                .take(100)
+                .map(|body| {
+                    let body_type_str = match body.body_type {
+                        CelestialBodyType::Star => "Star",
+                        CelestialBodyType::Planet => "Planet",
+                        CelestialBodyType::Moon => "Moon",
+                        CelestialBodyType::Asteroid => "Asteroid",
+                        CelestialBodyType::BlackHole => "BlackHole",
+                        CelestialBodyType::NeutronStar => "NeutronStar",
+                        CelestialBodyType::WhiteDwarf => "WhiteDwarf",
+                        CelestialBodyType::BrownDwarf => "BrownDwarf",
+                    };
+
+                    json!({
+                        "id": body.id.to_string(),
+                        "body_type": body_type_str,
+                        "position": [0.0, 0.0, 0.0], // Placeholder until position integrated
+                        "velocity": [0.0, 0.0, 0.0], // Placeholder until velocity integrated
+                        "mass": if body.mass.is_finite() { body.mass } else { 0.0 },
+                        "radius": if body.radius.is_finite() { body.radius } else { 0.0 },
+                        "temperature": if body.temperature.is_finite() { body.temperature } else { 0.0 },
+                        "luminosity": if body.luminosity.is_finite() { body.luminosity } else { 0.0 },
+                        "age": if body.age.is_finite() { body.age } else { 0.0 }
                     })
-                    .collect()
-            };
+                })
+                .collect();
             
             // Capture quantum field snapshot (downsampled)
             let qfield_snapshot = sim_guard.get_quantum_field_snapshot();
@@ -681,8 +722,7 @@ async fn cmd_start(
             drop(sim_guard); // Release the lock quickly
 
             // ── Serialize and broadcast plain JSON ─────────────────────
-            let json_str = payload_json.to_string();
-            let _ = tx.send(json_str);
+            let _json_str = payload_json.to_string();
         }
 
         let tick_duration = Duration::from_secs_f64(1.0 / config.target_ups);
@@ -2454,35 +2494,7 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
     Ok(false)
 }
 
-async fn start_websocket_server(port: u16, tx: broadcast::Sender<String>) {
-    let websocket_route = warp::path("ws")
-        .and(warp::ws())
-        .and(warp::any().map(move || tx.clone()))
-        .map(|ws: warp::ws::Ws, tx_clone| {
-            ws.on_upgrade(move |socket| handle_websocket(socket, tx_clone))
-        });
-
-    println!("Dashboard WebSocket listening on ws://127.0.0.1:{}/ws", port);
-    warp::serve(websocket_route).run(([127, 0, 0, 1], port)).await;
-}
-
-async fn handle_websocket(websocket: WebSocket, tx: broadcast::Sender<String>) {
-    let mut rx = tx.subscribe();
-    let (mut ws_tx, _ws_rx) = websocket.split();
-
-    loop {
-        match rx.recv().await {
-            Ok(msg) => {
-                if ws_tx.send(Message::text(msg)).await.is_err() {
-                    break;
-                }
-            }
-            Err(_) => {
-                break;
-            }
-        }
-    }
-}
+// WebSocket server functions removed - replaced with high-performance native renderer
 
 async fn handle_rpc_request(
     request: rpc::RpcRequest,

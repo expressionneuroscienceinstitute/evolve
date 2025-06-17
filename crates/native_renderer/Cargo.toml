@@ -1,0 +1,30 @@
+[package]
+name = "native_renderer"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance native renderer for universe simulation"
+
+[lib]
+name = "native_renderer"
+path = "src/lib.rs"
+
+[dependencies]
+# Core dependencies
+universe_sim = { path = "../universe_sim", default-features = false }
+physics_engine = { path = "../physics_engine", default-features = false }
+
+# High-performance graphics
+wgpu = { workspace = true }
+winit = { workspace = true }
+bytemuck = { workspace = true }
+
+# Math and utilities
+nalgebra = { workspace = true }
+rayon = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+env_logger = { workspace = true }
+
+[features]
+default = []
+validation = [] 

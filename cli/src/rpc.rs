@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde_json::json;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
@@ -77,31 +78,122 @@ pub struct ResourceStatus {
     pub limits: std::collections::HashMap<String, u64>,
 }
 
-/// Helper function to make RPC calls to the simulation server
-pub async fn call_rpc(method: &str, params: &serde_json::Value) -> Result<serde_json::Value> {
-    let client = reqwest::Client::new();
-    let req_body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    });
+pub struct RpcClient {
+    client: reqwest::Client,
+    url: String,
+}
 
-    let res = client
-        .post("http://127.0.0.1:9001/rpc")
-        .json(&req_body)
-        .send()
-        .await?;
-
-    if !res.status().is_success() {
-        return Err(anyhow::anyhow!("HTTP error: {}", res.status()));
+impl RpcClient {
+    pub fn new(rpc_port: u16) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            url: format!("http://127.0.0.1:{}/rpc", rpc_port),
+        }
     }
 
-    let rpc_res: RpcResponse<serde_json::Value> = res.json().await?;
+    async fn send_request(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+        let req_body = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": 1
+        });
+
+        let res = self.client.post(&self.url).json(&req_body).send().await?;
+        
+        if !res.status().is_success() {
+            return Err(anyhow::anyhow!("HTTP error: {}", res.status()));
+        }
+
+        let rpc_res: RpcResponse<serde_json::Value> = res.json().await?;
+        
+        if let Some(error) = rpc_res.error {
+            return Err(anyhow::anyhow!("RPC error: {} (code: {})", error.message, error.code));
+        }
+
+        rpc_res.result.ok_or_else(|| anyhow::anyhow!("No result in RPC response"))
+    }
+
+    pub async fn status(&self) -> Result<serde_json::Value> {
+        self.send_request("status", json!({})).await
+    }
+
+    pub async fn stop(&self) -> Result<serde_json::Value> {
+        self.send_request("stop", json!({})).await
+    }
+
+    pub async fn map(&self, zoom: f64, layer: &str) -> Result<serde_json::Value> {
+        self.send_request("map", json!({ "zoom": zoom, "layer": layer })).await
+    }
+
+    pub async fn list_planets(&self, class: Option<String>, habitable: bool) -> Result<serde_json::Value> {
+        self.send_request("list_planets", json!({ "class_filter": class, "habitable_only": habitable })).await
+    }
+
+    pub async fn inspect_planet(&self, planet_id: String) -> Result<serde_json::Value> {
+        self.send_request("inspect_planet", json!({ "planet_id": planet_id })).await
+    }
     
-    if let Some(error) = rpc_res.error {
-        return Err(anyhow::anyhow!("RPC error: {} (code: {})", error.message, error.code));
+    pub async fn inspect_lineage(&self, lineage_id: String) -> Result<serde_json::Value> {
+        self.send_request("inspect_lineage", json!({ "lineage_id": lineage_id })).await
+    }
+    
+    pub async fn inspect_universe(&self) -> Result<serde_json::Value> {
+        self.send_request("inspect_universe", json!({})).await
+    }
+    
+    pub async fn inspect_physics(&self) -> Result<serde_json::Value> {
+        self.send_request("inspect_physics", json!({})).await
     }
 
-    rpc_res.result.ok_or_else(|| anyhow::anyhow!("No result in RPC response"))
+    pub async fn snapshot(&self, file: String) -> Result<serde_json::Value> {
+        self.send_request("snapshot", json!({ "path": file })).await
+    }
+
+    pub async fn speed(&self, factor: f64) -> Result<serde_json::Value> {
+        self.send_request("speed", json!({ "factor": factor })).await
+    }
+
+    pub async fn rewind(&self, ticks: u64) -> Result<serde_json::Value> {
+        self.send_request("rewind", json!({ "ticks": ticks })).await
+    }
+
+    pub async fn godmode_create_body(&self, mass: f64, body_type: String, pos: [f64; 3]) -> Result<serde_json::Value> {
+        self.send_request("godmode_create_body", json!({
+            "mass": mass,
+            "body_type": body_type,
+            "position": pos
+        })).await
+    }
+    
+    pub async fn godmode_delete_body(&self, id: String) -> Result<serde_json::Value> {
+        self.send_request("godmode_delete_body", json!({ "id": id })).await
+    }
+    
+    pub async fn godmode_set_constant(&self, name: String, value: f64) -> Result<serde_json::Value> {
+        self.send_request("godmode_set_constant", json!({ "name": name, "value": value })).await
+    }
+
+    pub async fn godmode_spawn_lineage(&self, code_hash: String, planet_id: String) -> Result<serde_json::Value> {
+        self.send_request("godmode_spawn_lineage", json!({ "code_hash": code_hash, "planet_id": planet_id })).await
+    }
+
+    pub async fn godmode_create_agent(&self, planet_id: String) -> Result<serde_json::Value> {
+        self.send_request("godmode_create_agent", json!({ "planet_id": planet_id })).await
+    }
+    
+    pub async fn godmode_miracle(&self, planet_id: String, miracle_type: String, duration: Option<u64>, intensity: Option<f64>) -> Result<serde_json::Value> {
+        self.send_request("godmode_miracle", json!({ 
+            "planet_id": planet_id,
+            "miracle_type": miracle_type,
+            "duration": duration,
+            "intensity": intensity
+        })).await
+    }
+}
+
+/// Make a generic RPC call to the server
+pub async fn call_rpc(method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+    let client = RpcClient::new(8080); // Default port
+    client.send_request(method, params).await
 } 

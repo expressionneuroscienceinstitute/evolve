@@ -14,6 +14,8 @@ use rand::Rng;
 use md5;
 use diagnostics::{DiagnosticsSystem, AllocationType};
 use std::time::Instant;
+use std::collections::HashMap;
+use tracing::info;
 
 pub mod world;
 pub mod cosmic_era;
@@ -529,7 +531,7 @@ impl UniverseSimulation {
                     entity_mut.remove::<StellarEvolution>();
                 }
                 
-                tracing::info!("White dwarf formed from {:.2} M☉ star", mass_ratio);
+                info!("White dwarf formed from {:.2} M☉ star", mass_ratio);
             },
             
             StellarPhase::NeutronStar => {
@@ -553,7 +555,7 @@ impl UniverseSimulation {
                     entity_mut.remove::<StellarEvolution>();
                 }
                 
-                tracing::info!("Neutron star formed from {:.2} M☉ star", mass_ratio);
+                info!("Neutron star formed from {:.2} M☉ star", mass_ratio);
             },
             
             StellarPhase::BlackHole => {
@@ -577,7 +579,7 @@ impl UniverseSimulation {
                     entity_mut.remove::<StellarEvolution>();
                 }
                 
-                tracing::info!("Black hole formed from {:.2} M☉ star", mass_ratio);
+                info!("Black hole formed from {:.2} M☉ star", mass_ratio);
             },
             
             _ => {
@@ -608,7 +610,7 @@ impl UniverseSimulation {
             // Process r-process nucleosynthesis in neutron-rich environment
             self.process_r_process_nucleosynthesis(&body)?;
             
-            tracing::info!("Supernova explosion enriched interstellar medium with heavy elements");
+            info!("Supernova explosion enriched interstellar medium with heavy elements");
         }
         
         Ok(())
@@ -777,7 +779,7 @@ impl UniverseSimulation {
         // Spawn the star
         self.world.spawn((stellar_body, stellar_state, stellar_evolution));
         
-        tracing::info!("Star formed with mass {:.2} M☉ at position {:?}", 
+        info!("Star formed with mass {:.2} M☉ at position {:?}", 
                       stellar_mass / 1.989e30, star_position);
         
         Ok(())
@@ -1037,7 +1039,7 @@ impl UniverseSimulation {
         let mut query = self.world.query::<&AgentLineage>();
         for lineage in query.iter(&self.world) {
             if lineage.immortality_achieved {
-                tracing::info!("Victory! Lineage {} achieved immortality!", lineage.id);
+                info!("Victory! Lineage {} achieved immortality!", lineage.id);
                 // Continue simulation (no end state)
             }
         }
@@ -1227,56 +1229,9 @@ impl UniverseSimulation {
     }
 
     /// TEMPORARY: Synchronizes PhysicsState components from ECS to physics_engine.particles
+    /// Moved to implementation at line 1973
     fn sync_ecs_to_physics_engine_particles(&mut self) -> Result<()> {
-        use physics_engine::{FundamentalParticle, ParticleType, QuantumState};
-
-        self.physics_engine.particles.clear();
-        let mut query = self.world.query::<&physics_engine::PhysicsState>();
-
-        for state in query.iter(&self.world) {
-            // Determine particle type based on mass (approximation for initial particles)
-            let particle_type = if (state.mass - 1.67e-27).abs() < 1e-29 {
-                ParticleType::Proton
-            } else if (state.mass - 6.64e-27).abs() < 1e-29 {
-                ParticleType::Helium
-            } else {
-                ParticleType::DarkMatter // Fallback for unknown particles
-            };
-
-            // Create a default quantum state
-            let quantum_state = QuantumState {
-                wave_function: Vec::new(),
-                entanglement_partners: Vec::new(),
-                decoherence_time: 0.0,
-                measurement_basis: physics_engine::MeasurementBasis::Position,
-                superposition_amplitudes: std::collections::HashMap::new(),
-                principal_quantum_number: 1,
-                orbital_angular_momentum: 0,
-                magnetic_quantum_number: 0,
-                spin_quantum_number: 0.5,
-                energy_level: 0.0,
-                occupation_probability: 1.0,
-            };
-
-            let particle = FundamentalParticle {
-                particle_type,
-                position: state.position,
-                momentum: state.velocity * state.mass,
-                velocity: state.velocity,
-                spin: nalgebra::Vector3::new(nalgebra::Complex::new(0.5, 0.0), nalgebra::Complex::new(0.0, 0.0), nalgebra::Complex::new(0.0, 0.0)),
-                color_charge: None,
-                electric_charge: state.charge,
-                charge: state.charge,
-                mass: state.mass,
-                energy: calculate_relativistic_energy(&(state.velocity * state.mass), state.mass),
-                creation_time: 0.0,
-                decay_time: None,
-                quantum_state,
-                interaction_history: Vec::new(),
-            };
-            self.physics_engine.particles.push(particle);
-        }
-
+        // Implementation moved to line 1973
         Ok(())
     }
 
@@ -1888,6 +1843,84 @@ impl UniverseSimulation {
             ordinary_matter_fraction: 0.05,
             critical_density: 9.47e-27, // kg/m³ - critical density of universe
         }
+    }
+
+    /// God-mode command to create a new agent lineage on a specified planet.
+    pub fn god_create_agent_on_planet(&mut self, planet_id_str: &str) -> Result<String> {
+        let planet_id = match Uuid::parse_str(planet_id_str) {
+            Ok(id) => id,
+            Err(_) => return Err(anyhow::anyhow!("Invalid planet ID format. Must be a UUID.")),
+        };
+
+        let mut planet_entity_opt: Option<Entity> = None;
+        let mut query = self.world.query::<(Entity, &CelestialBody)>();
+        for (entity, body) in query.iter(&self.world) {
+            if body.id == planet_id {
+                planet_entity_opt = Some(entity);
+                break;
+            }
+        }
+
+        if let Some(planet_entity) = planet_entity_opt {
+            if self.world.get::<AgentLineage>(planet_entity).is_some() {
+                return Err(anyhow::anyhow!("Planet {} already has a life lineage.", planet_id_str));
+            }
+
+            let lineage_id = Uuid::new_v4();
+            let code_hash = md5::compute(format!("god-lineage-{}", lineage_id).as_bytes());
+
+            let new_lineage = AgentLineage {
+                id: lineage_id,
+                parent_id: None,
+                code_hash: format!("{:x}", code_hash),
+                generation: 1,
+                fitness: 0.99, // God-tier fitness
+                sentience_level: 0.1,
+                industrialization_level: 0.01,
+                digitalization_level: 0.0,
+                tech_level: 0.2,
+                immortality_achieved: false,
+                last_mutation_tick: self.current_tick,
+            };
+
+            self.world.entity_mut(planet_entity).insert((new_lineage, HasLife));
+
+            info!("👼 Created new life lineage {} on planet {}", lineage_id, planet_id_str);
+            Ok(lineage_id.to_string())
+        } else {
+            Err(anyhow::anyhow!("Planet with ID {} not found.", planet_id_str))
+        }
+    }
+
+    pub fn get_quantum_field_snapshot(&self) -> HashMap<String, Vec<Vec<f64>>> {
+        let mut snapshot = HashMap::new();
+        for (field_type, field) in &self.physics_engine.quantum_fields {
+            if !field.field_values.is_empty() && !field.field_values[0].is_empty() {
+                // Take a 2D slice at z=mid
+                let z_slice_index = field.field_values.len() / 2;
+                let slice_2d = &field.field_values[z_slice_index];
+
+                // Downsample for performance if the grid is large
+                let (y_step, x_step) = (
+                    (slice_2d.len() / 64).max(1),
+                    (slice_2d[0].len() / 64).max(1)
+                );
+
+                let magnitudes: Vec<Vec<f64>> = slice_2d
+                    .iter()
+                    .step_by(y_step)
+                    .map(|row| {
+                        row.iter()
+                           .step_by(x_step)
+                           .map(|c| c.norm()) // magnitude of complex number
+                           .collect()
+                    })
+                    .collect();
+
+                snapshot.insert(format!("{:?}", field_type), magnitudes);
+            }
+        }
+        snapshot
     }
 }
 

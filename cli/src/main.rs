@@ -210,6 +210,13 @@ enum GodModeAction {
     InspectEval {
         expression: String,
     },
+    
+    /// Create a new life lineage (agent) on a given planet (God-mode)
+    #[command(name = "create-agent")]
+    CreateAgent {
+        #[arg(long)]
+        planet_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -530,6 +537,9 @@ async fn cmd_start(
                     a.nucleus.mass_number, a.electrons.len(), a.total_energy))
                 .collect();
             
+            // Capture quantum field snapshot (downsampled)
+            let qfield_snapshot = sim_guard.get_quantum_field_snapshot();
+
             // ── Decide full snapshot vs delta ───────────────────────────
             let payload_json = if !sent_initial_state {
                 // Full snapshot
@@ -556,6 +566,7 @@ async fn cmd_start(
                     "particles": particle_data,
                     "nuclei": nuclei_data,
                     "atoms": atoms_data,
+                    "quantum_fields": qfield_snapshot,
                 })
             } else {
                 // Delta snapshot
@@ -601,13 +612,15 @@ async fn cmd_start(
                     "new_particles": new_particles,
                     "updated_particles": updated_particles,
                     "removed_particle_ids": removed_ids,
+                    "quantum_fields": qfield_snapshot,
                 })
             };
 
             drop(sim_guard); // Release the lock quickly
 
             // ── Serialize + compress ────────────────────────────────────
-            let json_bytes = payload_json.to_string().as_bytes();
+            let json_str = payload_json.to_string();
+            let json_bytes = json_str.as_bytes();
             let compressed = miniz_oxide::deflate::compress_to_vec_zlib(json_bytes, 6);
             let _ = tx.send(compressed);
         }
@@ -1745,6 +1758,35 @@ async fn cmd_godmode(action: GodModeAction) -> Result<()> {
                 }
             }
         }
+        GodModeAction::CreateAgent { planet_id } => {
+            println!("Creating new life lineage on planet {}", planet_id);
+
+            let client = reqwest::Client::new();
+            let params = json!({ "planet_id": planet_id });
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "godmode_create_agent",
+                "params": params,
+                "id": 19
+            });
+
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                println!("Error: Failed to reach simulation RPC server.");
+            } else {
+                let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+                if let Some(error) = rpc_res.error {
+                    println!("RPC Error: {} (code: {})", error.message, error.code);
+                } else {
+                    println!("New life lineage created successfully.");
+                }
+            }
+        }
     }
     println!("God-Mode action completed.");
     Ok(())
@@ -1888,7 +1930,7 @@ async fn cmd_oracle(action: OracleAction) -> Result<()> {
     match action {
         OracleAction::Inbox => {
             // Get pending messages from agents
-            let response = rpc::call_rpc("oracle_messages", &json!({})).await?;
+            let response = rpc::call_rpc("oracle_messages", json!({})).await?;
             
             println!("🔮 Oracle-Link Messages");
             println!("======================");
@@ -1917,7 +1959,7 @@ async fn cmd_oracle(action: OracleAction) -> Result<()> {
         
         OracleAction::Reply { petition_id, action, message } => {
             // Send reply to agent
-            let response = rpc::call_rpc("oracle_reply", &json!({
+            let response = rpc::call_rpc("oracle_reply", json!({
                 "petition_id": petition_id,
                 "action": action,
                 "message": message
@@ -1932,7 +1974,7 @@ async fn cmd_oracle(action: OracleAction) -> Result<()> {
         
         OracleAction::Stats => {
             // Get communication statistics
-            let response = rpc::call_rpc("oracle_stats", &json!({})).await?;
+            let response = rpc::call_rpc("oracle_stats", json!({})).await?;
             
             println!("🔮 Oracle-Link Statistics");
             println!("========================");
@@ -1967,7 +2009,7 @@ async fn cmd_interactive() -> Result<()> {
     loop {
         // Check if we should show status update (but only if no recent command)
         if last_stats_update.elapsed() >= stats_update_interval {
-            match rpc::call_rpc("status", &json!({})).await {
+            match rpc::call_rpc("status", json!({})).await {
                 Ok(response) => {
                     print!("📊 Status: ");
                     if let Some(age_gyr) = response.get("universe_age_gyr").and_then(|v| v.as_f64()) {
@@ -2705,6 +2747,59 @@ async fn handle_rpc_request(
                     let error = rpc::RpcError {
                         code: rpc::INVALID_PARAMS,
                         message: "Invalid lineage inspect parameters".to_string(),
+                    };
+                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(error),
+                        id: response_id,
+                    };
+                    Ok(warp::reply::json(&rpc_response))
+                }
+            }
+        }
+
+        "godmode_create_agent" => {
+            #[derive(Deserialize)]
+            struct AgentParams {
+                planet_id: String,
+            }
+
+            match serde_json::from_value::<AgentParams>(request.params) {
+                Ok(params) => {
+                    let mut sim_guard = shared_state.sim.lock().unwrap();
+                    match sim_guard.god_create_agent_on_planet(&params.planet_id) {
+                        Ok(lineage_id) => {
+                            let response_data = json!({
+                                "new_lineage_id": lineage_id,
+                            });
+                            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: Some(response_data),
+                                error: None,
+                                id: response_id,
+                            };
+                            Ok(warp::reply::json(&rpc_response))
+                        }
+                        Err(e) => {
+                            let error = rpc::RpcError {
+                                code: rpc::INVALID_PARAMS,
+                                message: e.to_string(),
+                            };
+                            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: None,
+                                error: Some(error),
+                                id: response_id,
+                            };
+                            Ok(warp::reply::json(&rpc_response))
+                        }
+                    }
+                }
+                Err(e) => {
+                    let error = rpc::RpcError {
+                        code: rpc::INVALID_PARAMS,
+                        message: format!("Invalid parameters for godmode_create_agent: {}", e),
                     };
                     let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
                         jsonrpc: "2.0".to_string(),

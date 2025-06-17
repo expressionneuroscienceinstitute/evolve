@@ -28,6 +28,8 @@ use std::rc::Rc;
 // Import our simulation types
 use universe_sim::cosmic_era::CosmicEra;
 
+use web_sys::{HtmlCanvasElement, HtmlElement, HtmlInputElement};
+
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
@@ -66,6 +68,16 @@ pub struct EvolutionMonitor {
     last_frame_time: f64,
     fps: f64,
     last_render_duration: f64,
+    // Agent history tracking
+    agent_history: HashMap<Uuid, AgentHistory>,
+}
+
+/// Agent history tracking structure
+#[derive(Debug, Clone)]
+struct AgentHistory {
+    positions: Vec<[f64; 3]>,
+    decisions: Vec<DecisionSummary>,
+    innovations: Vec<String>,
 }
 
 /// Complete simulation state received from backend
@@ -151,6 +163,7 @@ pub struct AgentVisualization {
     pub birth_tick: u64,
     pub energy: f64,
     pub fitness: f64,
+    pub age: u64,
     
     // Evolution levels
     pub sentience_level: f64,
@@ -180,6 +193,11 @@ pub struct AgentVisualization {
     pub position: [f64; 3],
     pub size: f64,
     pub color: [f32; 4],
+    
+    // Additional fields
+    pub traits: HashMap<String, f64>,
+    pub consciousness: Option<ConsciousnessEvent>,
+    pub innovation: Option<InnovationVisualization>,
 }
 
 /// Comprehensive decision tracking
@@ -263,22 +281,11 @@ pub struct InnovationVisualization {
 pub struct ConsciousnessEvent {
     pub agent_id: Uuid,
     pub timestamp: u64,
-    pub consciousness_type: ConsciousnessType,
+    pub consciousness_type: String,
     pub level: f64,
     pub triggers: Vec<String>,
     pub neural_complexity: f64,
     pub self_awareness_indicators: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ConsciousnessType {
-    SelfAwareness,
-    TheoryOfMind,
-    AbstractThinking,
-    MetaCognition,
-    CreativeInsight,
-    ExistentialReflection,
-    CollectiveConsciousness,
 }
 
 /// Environmental visualization
@@ -361,27 +368,28 @@ impl EvolutionMonitor {
             last_frame_time: 0.0,
             fps: 0.0,
             last_render_duration: 0.0,
+            agent_history: HashMap::new(),
         })
     }
     
     /// Main rendering loop
     #[wasm_bindgen]
     pub fn render(&mut self) -> Result<(), JsValue> {
-        // No longer need to check for global JS variable, state is updated directly
-        // self.update_simulation_state()?;
+        let start_time = js_sys::Date::now();
         
-        // Measure start time
-        let perf = web_window().performance().expect("performance should be available");
-        let frame_start = perf.now();
-        
-        // Update HTML UI elements with current simulation state
+        // Update HTML UI elements
         self.update_html_ui()?;
         
         // Clear canvas
-        self.context.clear_rect(0.0, 0.0, 
-            self.canvas.width() as f64, 
-            self.canvas.height() as f64);
+        self.context.clear_rect(0.0, 0.0, self.canvas.width() as f64, self.canvas.height() as f64);
         
+        // Avoid E0502: collect agent positions first
+        let agent_positions: Vec<(Uuid, [f64; 3])> = self.simulation_state.agents.iter().map(|a| (a.id, a.position)).collect();
+        for (id, pos) in agent_positions {
+            self.update_agent_history(id, pos);
+        }
+        
+        // Render based on current view mode
         match self.view_mode {
             ViewMode::ParticlePhysics => self.render_particle_physics()?,
             ViewMode::AgentOverview => self.render_agent_overview()?,
@@ -397,16 +405,11 @@ impl EvolutionMonitor {
         // Render UI overlay
         self.render_ui_overlay()?;
         
-        // Measure end time & compute performance metrics
-        let frame_end = perf.now();
-        self.last_render_duration = frame_end - frame_start;
-        if self.last_frame_time > 0.0 {
-            let delta = frame_start - self.last_frame_time;
-            if delta > 0.0 {
-                self.fps = 1000.0 / delta;
-            }
-        }
-        self.last_frame_time = frame_start;
+        // Calculate and display FPS
+        let end_time = js_sys::Date::now();
+        let frame_time = end_time - start_time;
+        self.fps = 1000.0 / frame_time;
+        self.last_render_duration = frame_time;
         
         Ok(())
     }
@@ -453,7 +456,7 @@ impl EvolutionMonitor {
                 elem.set_inner_html(&self.simulation_state.population_stats.active_lineages.to_string());
             }
             
-            // Update connection status to show we're connected and receiving data
+            // Update connection status
             if let Some(elem) = doc.get_element_by_id("connection-status") {
                 if self.connected {
                     elem.set_inner_html("🟢 Connected");
@@ -473,7 +476,7 @@ impl EvolutionMonitor {
             }
             
             // Update memory usage if available
-            if let Ok(perf) = web_window().performance() {
+            if let Some(perf) = web_window().performance() {
                 use wasm_bindgen::JsCast;
                 use wasm_bindgen::JsValue;
                 use js_sys::Reflect;
@@ -534,50 +537,20 @@ impl EvolutionMonitor {
     
     /// Render AI agent overview with comprehensive tracking
     fn render_agent_overview(&mut self) -> Result<(), JsValue> {
-        console_log!("Rendering {} AI agents", self.simulation_state.agents.len());
-        
-        for agent in self.simulation_state.agents.clone() {
-            // Agent position and basic rendering
+        // Collect agent data first
+        let agent_data: Vec<_> = self.simulation_state.agents.iter().map(|agent| {
             let (x, y) = self.map_3d_to_2d(agent.position);
-            let size = 5.0 + agent.consciousness_level * 15.0;
+            (agent.clone(), x, y)
+        }).collect();
+
+        // Render each agent
+        for (agent, x, y) in &agent_data {
+            self.draw_agent(agent, *x, *y)?;
             
-            // Agent color based on evolution level
-            let color = self.get_agent_color(&agent);
-            let color_str = format!(
-                "rgba({}, {}, {}, {})", 
-                (color[0] * 255.0) as u8,
-                (color[1] * 255.0) as u8, 
-                (color[2] * 255.0) as u8,
-                color[3]
-            );
-            self.context.set_fill_style_str(&color_str);
-            
-            // Draw agent
-            self.context.begin_path();
-            self.context.arc(x, y, size, 0.0, 2.0 * std::f64::consts::PI)?;
-            self.context.fill();
-            
-            // Draw consciousness indicator
-            if agent.consciousness_level > 0.1 {
-                self.draw_consciousness_indicator(&agent, x, y)?;
-            }
-            
-            // Draw innovation aura
-            if !agent.innovations_created.is_empty() {
-                self.draw_innovation_aura(&agent, x, y)?;
-            }
-            
-            // Draw social connections
-            self.draw_social_connections(&agent)?;
-            
-            // Show decision trails
-            if !agent.recent_decisions.is_empty() {
-                self.draw_decision_trail(&agent)?;
-            }
-            
-            // Highlight selected agent
-            if Some(agent.id) == self.selected_agent {
-                self.highlight_selected_agent(&agent, x, y)?;
+            if let Some(selected) = self.selected_agent {
+                if agent.id == selected {
+                    self.highlight_selected_agent(agent, *x, *y)?;
+                }
             }
         }
         
@@ -740,15 +713,6 @@ impl EvolutionMonitor {
         }
     }
     
-    /// Get agent color based on evolution level
-    fn get_agent_color(&self, agent: &AgentVisualization) -> [f32; 4] {
-        let r = agent.sentience_level as f32;
-        let g = agent.tech_level as f32;
-        let b = agent.consciousness_level as f32;
-        let a = 0.8 + agent.industrialization_level as f32 * 0.2;
-        [r, g, b, a]
-    }
-    
     /// Map 3D position to 2D screen coordinates
     fn map_3d_to_2d(&self, pos: [f64; 3]) -> (f64, f64) {
         let scale = 1000.0;
@@ -804,20 +768,170 @@ impl EvolutionMonitor {
     
     // Placeholder implementations for complex rendering methods
     fn get_particle_size(&self, mass: f64) -> f64 { 2.0 + (mass / 1e-27).log10().max(0.0) }
-    fn draw_particle_trail(&mut self, _particle: &ParticleVisualization) -> Result<(), JsValue> { Ok(()) }
-    fn draw_interaction_indicators(&mut self, _particle: &ParticleVisualization) -> Result<(), JsValue> { Ok(()) }
-    fn render_quantum_field_overlay(&mut self) -> Result<(), JsValue> { Ok(()) }
-    fn render_quantum_fields(&mut self) -> Result<(), JsValue> { Ok(()) }
+    fn draw_particle_trail(&mut self, particle: &ParticleVisualization) -> Result<(), JsValue> {
+        let (x, y) = self.map_3d_to_2d(particle.position);
+        let (r, g, b, a) = self.get_particle_color(&particle.particle_type);
+        // Use create_linear_gradient (returns CanvasGradient)
+        let gradient = self.context.create_linear_gradient(x - 20.0, y, x, y);
+        gradient.add_color_stop(0.0, &format!("rgba({}, {}, {}, 0.0)", r, g, b))?;
+        gradient.add_color_stop(1.0, &format!("rgba({}, {}, {}, {})", r, g, b, a * 0.5))?;
+        self.context.set_stroke_style(&gradient);
+        self.context.set_line_width(2.0);
+        self.context.begin_path();
+        self.context.move_to(x - 20.0, y);
+        self.context.line_to(x, y);
+        self.context.stroke();
+        Ok(())
+    }
+    fn draw_interaction_indicators(&mut self, particle: &ParticleVisualization) -> Result<(), JsValue> {
+        let (x, y) = self.map_3d_to_2d(particle.position);
+        self.context.set_fill_style_str("rgba(255, 255, 255, 0.8)");
+        self.context.set_font("10px Arial");
+        self.context.fill_text(&format!("{}", particle.interaction_count), x + 5.0, y - 5.0)?;
+        self.context.set_stroke_style_str("rgba(255, 255, 255, 0.3)");
+        self.context.set_line_width(1.0);
+        self.context.begin_path();
+        self.context.arc(x, y, 10.0, 0.0, 2.0 * std::f64::consts::PI)?;
+        self.context.stroke();
+        Ok(())
+    }
+    fn render_quantum_field_overlay(&mut self) -> Result<(), JsValue> {
+        // Draw quantum field fluctuations
+        for (field_name, _field) in &self.simulation_state.quantum_fields {
+            let color = match field_name.as_str() {
+                "Higgs" => "rgba(255, 215, 0, 0.1)",
+                "Electromagnetic" => "rgba(0, 255, 255, 0.1)",
+                "Strong" => "rgba(255, 0, 0, 0.1)",
+                "Weak" => "rgba(255, 0, 255, 0.1)",
+                _ => "rgba(255, 255, 255, 0.1)",
+            };
+            self.context.set_fill_style_str(color);
+            self.context.fill_rect(0.0, 0.0, self.canvas.width() as f64, self.canvas.height() as f64);
+        }
+        Ok(())
+    }
+    fn render_quantum_fields(&mut self) -> Result<(), JsValue> {
+        // Draw quantum field visualization
+        for (field_name, _field) in &self.simulation_state.quantum_fields {
+            let color = match field_name.as_str() {
+                "Higgs" => "rgba(255, 215, 0, 0.5)",
+                "Electromagnetic" => "rgba(0, 255, 255, 0.5)",
+                "Strong" => "rgba(255, 0, 0, 0.5)",
+                "Weak" => "rgba(255, 0, 255, 0.5)",
+                _ => "rgba(255, 255, 255, 0.5)",
+            };
+            self.context.set_fill_style_str(color);
+            self.context.set_font("12px Arial");
+            self.context.fill_text(field_name, 10.0, 20.0)?;
+            // Draw field strength indicator
+            self.context.set_stroke_style_str(color);
+            self.context.set_line_width(2.0);
+            self.context.begin_path();
+            self.context.move_to(10.0, 30.0);
+            self.context.line_to(110.0, 30.0);
+            self.context.stroke();
+        }
+        Ok(())
+    }
     fn render_selection_pressures(&mut self, _: &Vec<SelectionPressureVisualization>) -> Result<(), JsValue> { Ok(()) }
-    fn draw_consciousness_indicator(&mut self, _agent: &AgentVisualization, _x: f64, _y: f64) -> Result<(), JsValue> { Ok(()) }
-    fn draw_innovation_aura(&mut self, _agent: &AgentVisualization, _x: f64, _y: f64) -> Result<(), JsValue> { Ok(()) }
-    fn draw_social_connections(&mut self, _agent: &AgentVisualization) -> Result<(), JsValue> { Ok(()) }
-    fn draw_decision_trail(&mut self, _agent: &AgentVisualization) -> Result<(), JsValue> { Ok(()) }
-    fn highlight_selected_agent(&mut self, _agent: &AgentVisualization, _x: f64, _y: f64) -> Result<(), JsValue> { Ok(()) }
+    fn draw_consciousness_indicator(&mut self, agent: &AgentVisualization, x: f64, y: f64) -> Result<(), JsValue> {
+        if let Some(_consciousness) = &agent.consciousness {
+            self.context.set_fill_style_str("#9C27B0");
+            self.context.begin_path();
+            self.context.arc(x, y, 8.0, 0.0, std::f64::consts::PI * 2.0)?;
+            self.context.fill();
+        }
+        Ok(())
+    }
+    fn draw_innovation_aura(&mut self, agent: &AgentVisualization, x: f64, y: f64) -> Result<(), JsValue> {
+        if let Some(_innovation) = &agent.innovation {
+            self.context.set_fill_style_str("#FF9800");
+            self.context.begin_path();
+            self.context.arc(x, y, 10.0, 0.0, std::f64::consts::PI * 2.0)?;
+            self.context.fill();
+        }
+        Ok(())
+    }
+    fn draw_decision_trail(&mut self, agent: &AgentVisualization) -> Result<(), JsValue> {
+        if let Some(history) = self.agent_history.get(&agent.id) {
+            self.context.begin_path();
+            self.context.set_stroke_style_str("#4CAF50");
+            self.context.set_line_width(1.0);
+            if let Some((first_x, first_y)) = history.positions.first().map(|p| self.map_3d_to_2d(*p)) {
+                self.context.move_to(first_x, first_y);
+                for pos in history.positions.iter().skip(1) {
+                    let (x, y) = self.map_3d_to_2d(*pos);
+                    self.context.line_to(x, y);
+                }
+                self.context.stroke();
+            }
+        }
+        Ok(())
+    }
+    fn highlight_selected_agent(&mut self, _agent: &AgentVisualization, x: f64, y: f64) -> Result<(), JsValue> {
+        self.context.set_stroke_style_str("#FF0000");
+        self.context.set_line_width(2.0);
+        self.context.begin_path();
+        self.context.arc(x, y, 15.0, 0.0, std::f64::consts::PI * 2.0)?;
+        self.context.stroke();
+        Ok(())
+    }
     fn render_family_tree(&mut self, _tree: &FamilyTreeVisualization, _x: f64, _y: f64) -> Result<(), JsValue> { Ok(()) }
     fn render_evolution_timeline(&mut self, _timeline: &Vec<EvolutionTimelineEvent>, _y: f64) -> Result<(), JsValue> { Ok(()) }
     fn render_innovation_milestones(&mut self, _innovations: &Vec<InnovationRecord>, _y: f64) -> Result<(), JsValue> { Ok(()) }
-    fn render_ui_overlay(&mut self) -> Result<(), JsValue> { Ok(()) }
+    fn render_ui_overlay(&mut self) -> Result<(), JsValue> {
+        // Draw performance indicator
+        self.context.set_fill_style_str("rgba(0, 0, 0, 0.7)");
+        self.context.fill_rect(10.0, 10.0, 150.0, 60.0);
+        
+        self.context.set_fill_style_str("white");
+        self.context.set_font("12px Arial");
+        self.context.fill_text(&format!("FPS: {:.1}", self.fps), 20.0, 30.0)?;
+        self.context.fill_text(&format!("Render: {:.1}ms", self.last_render_duration), 20.0, 50.0)?;
+        
+        // Draw legend
+        self.context.set_fill_style_str("rgba(0, 0, 0, 0.7)");
+        self.context.fill_rect(
+            self.canvas.width() as f64 - 160.0,
+            self.canvas.height() as f64 - 160.0,
+            150.0,
+            150.0
+        );
+        
+        self.context.set_fill_style_str("white");
+        self.context.set_font("12px Arial");
+        self.context.fill_text("Legend", self.canvas.width() as f64 - 150.0, self.canvas.height() as f64 - 140.0)?;
+        
+        let legend_items = [
+            ("Electrons", "#ffff00"),
+            ("Protons", "#ff0000"),
+            ("AI Agents", "#00ff00"),
+            ("Innovations", "#00ffff"),
+            ("Consciousness", "#ff00ff"),
+        ];
+        
+        for (i, (label, color)) in legend_items.iter().enumerate() {
+            self.context.set_fill_style_str(color);
+            self.context.begin_path();
+            self.context.arc(
+                self.canvas.width() as f64 - 150.0,
+                self.canvas.height() as f64 - 120.0 + (i as f64 * 20.0),
+                5.0,
+                0.0,
+                std::f64::consts::PI * 2.0
+            )?;
+            self.context.fill();
+            
+            self.context.set_fill_style_str("white");
+            self.context.fill_text(
+                label,
+                self.canvas.width() as f64 - 140.0,
+                self.canvas.height() as f64 - 120.0 + (i as f64 * 20.0) + 5.0
+            )?;
+        }
+        
+        Ok(())
+    }
     
     #[wasm_bindgen]
     pub fn set_particle_size_scale(&mut self, scale: f64) { self.particle_size_scale = scale; }
@@ -856,20 +970,78 @@ impl EvolutionMonitor {
         Ok(())
     }
 
-    fn draw_agent(&mut self, agent: &AgentVisualization) -> Result<(), JsValue> {
-        let (x, y) = self.map_3d_to_2d(agent.position);
-        let size = 10.0 + agent.tech_level as f64 * 2.0;
-        let color = self.get_agent_color(agent);
-        
+    fn draw_agent(&mut self, agent: &AgentVisualization, x: f64, y: f64) -> Result<(), JsValue> {
+        // Draw agent body
+        self.context.set_fill_style_str(&format!("rgba({},{},{},{})", 
+            (agent.color[0] * 255.0) as u8,
+            (agent.color[1] * 255.0) as u8,
+            (agent.color[2] * 255.0) as u8,
+            agent.color[3]));
         self.context.begin_path();
-        self.context.arc(x, y, size, 0.0, std::f64::consts::PI * 2.0)?;
-        self.set_fill_style(&format!("rgba({},{},{},{})", 
-            (color[0] * 255.0) as u8,
-            (color[1] * 255.0) as u8,
-            (color[2] * 255.0) as u8,
-            color[3]))?;
+        self.context.arc(x, y, 5.0, 0.0, std::f64::consts::PI * 2.0)?;
         self.context.fill();
-        
+
+        // Draw agent name
+        self.context.set_fill_style_str("white");
+        self.context.set_font("12px Arial");
+        self.context.fill_text(&format!("Agent {}", agent.id.to_string()[..8].to_string()), x + 10.0, y)?;
+
+        // Draw agent stats
+        self.context.set_font("10px Arial");
+        self.context.fill_text(&format!("Energy: {:.1}", agent.energy), x + 10.0, y + 15.0)?;
+        self.context.fill_text(&format!("Age: {}", agent.age), x + 10.0, y + 30.0)?;
+
+        // Draw agent traits
+        let mut y_offset = 45.0;
+        for (trait_name, trait_value) in &agent.traits {
+            self.context.fill_text(&format!("{}: {:.2}", trait_name, trait_value), x + 10.0, y + y_offset)?;
+            y_offset += 15.0;
+        }
+
+        // Draw agent connections
+        for connection in &agent.social_connections {
+            if let Some(target_agent) = self.simulation_state.agents.iter().find(|a| a.id == *connection) {
+                let (target_x, target_y) = self.map_3d_to_2d(target_agent.position);
+                self.context.begin_path();
+                self.context.move_to(x, y);
+                self.context.line_to(target_x, target_y);
+                self.context.set_stroke_style_str("#666666");
+                self.context.stroke();
+            }
+        }
+
+        // Draw agent history
+        if let Some(history) = self.agent_history.get(&agent.id) {
+            self.context.begin_path();
+            self.context.set_stroke_style_str("#4CAF50");
+            self.context.set_line_width(1.0);
+            
+            if let Some((first_x, first_y)) = history.positions.first().map(|p| self.map_3d_to_2d(*p)) {
+                self.context.move_to(first_x, first_y);
+                for pos in history.positions.iter().skip(1) {
+                    let (x, y) = self.map_3d_to_2d(*pos);
+                    self.context.line_to(x, y);
+                }
+                self.context.stroke();
+            }
+        }
+
+        // Draw agent consciousness
+        if let Some(_consciousness) = &agent.consciousness {
+            self.context.set_fill_style_str("#9C27B0");
+            self.context.begin_path();
+            self.context.arc(x, y, 8.0, 0.0, std::f64::consts::PI * 2.0)?;
+            self.context.fill();
+        }
+
+        // Draw agent innovation
+        if let Some(_innovation) = &agent.innovation {
+            self.context.set_fill_style_str("#FF9800");
+            self.context.begin_path();
+            self.context.arc(x, y, 10.0, 0.0, std::f64::consts::PI * 2.0)?;
+            self.context.fill();
+        }
+
         Ok(())
     }
 
@@ -975,6 +1147,19 @@ impl EvolutionMonitor {
 
         self.simulation_state.current_tick = delta.current_tick;
     }
+
+    fn update_agent_history(&mut self, agent_id: Uuid, position: [f64; 3]) {
+        let history = self.agent_history.entry(agent_id).or_insert(AgentHistory {
+            positions: Vec::new(),
+            decisions: Vec::new(),
+            innovations: Vec::new(),
+        });
+        history.positions.push(position);
+        // Keep only last 100 positions for performance
+        if history.positions.len() > 100 {
+            history.positions.remove(0);
+        }
+    }
 }
 
 /// Establish websocket and start reading JSON messages representing SimulationState
@@ -1006,22 +1191,20 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
     // Set up message handler
     let message_monitor_rc = monitor_rc.clone();
     let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
+        let monitor = &mut message_monitor_rc.borrow_mut();
+        
         // Text path (legacy / debug)
         if let Ok(text) = e.data().dyn_into::<JsString>() {
             let data_str = text.as_string().unwrap_or_default();
-            console_log!("Received WS text message ({} chars)", data_str.len());
-
             if let Ok(new_state) = serde_json::from_str::<SimulationState>(&data_str) {
-                message_monitor_rc.borrow_mut().simulation_state = new_state;
+                monitor.simulation_state = new_state;
             } else if let Ok(delta) = serde_json::from_str::<DeltaMessage>(&data_str) {
-                message_monitor_rc.borrow_mut().apply_delta(delta);
-            } else {
-                console_log!("Unrecognized JSON payload");
+                monitor.apply_delta(delta);
             }
             return;
         }
 
-        // Binary path (compressed JSON)
+        // Binary path (zlib-compressed JSON)
         if let Ok(buffer) = e.data().dyn_into::<ArrayBuffer>() {
             let uint8_array = Uint8Array::new(&buffer);
             let mut compressed = vec![0u8; uint8_array.length() as usize];
@@ -1032,22 +1215,16 @@ fn connect_ws(monitor_rc: Rc<RefCell<EvolutionMonitor>>, websocket_url: String) 
                 Ok(decompressed) => {
                     if let Ok(json_str) = String::from_utf8(decompressed) {
                         if let Ok(new_state) = serde_json::from_str::<SimulationState>(&json_str) {
-                            message_monitor_rc.borrow_mut().simulation_state = new_state;
+                            monitor.simulation_state = new_state;
                         } else if let Ok(delta) = serde_json::from_str::<DeltaMessage>(&json_str) {
-                            message_monitor_rc.borrow_mut().apply_delta(delta);
-                        } else {
-                            console_log!("Unrecognized JSON payload");
+                            monitor.apply_delta(delta);
                         }
-                    } else {
-                        console_log!("Binary message contained non-UTF8 payload");
                     }
                 }
-                Err(err) => {
-                    console_log!("Failed to decompress WS payload: {:?}", err);
+                Err(_) => {
+                    console_log!("Failed to decompress WebSocket message");
                 }
             }
-        } else {
-            console_log!("Received WebSocket message of unknown type");
         }
     }) as Box<dyn FnMut(MessageEvent)>);
     
@@ -1210,7 +1387,9 @@ fn window() -> Option<Window> {
 }
 
 // Add helper to get window
-fn web_window() -> web_sys::Window { web_sys::window().expect("no global window") }
+fn web_window() -> web_sys::Window {
+    web_sys::window().expect("no global window")
+}
 
 /// Convenience exported function to start the dashboard from JS - NO LONGER NEEDED
 /*
@@ -1239,6 +1418,7 @@ pub fn run() -> Result<(), JsValue> {
     let location = window.location();
     let ws_protocol = if location.protocol()? == "https:" { "wss:" } else { "ws:" };
     let hostname = location.hostname()?;
+    let hostname = hostname.trim_end_matches('.');
     let websocket_url = format!("{}//{}:8080/ws", ws_protocol, hostname);
 
     connect_ws(monitor_rc.clone(), websocket_url);
@@ -1282,6 +1462,43 @@ fn setup_ui_event_handlers(monitor_rc: Rc<RefCell<EvolutionMonitor>>) -> Result<
             button.set_onclick(Some(callback.as_ref().unchecked_ref()));
             callback.forget();
         }
+    }
+
+    // Time scale slider
+    if let Some(slider) = document.get_element_by_id("time-scale") {
+        let slider = slider.dyn_into::<HtmlInputElement>()?;
+        let monitor_clone = monitor_rc.clone();
+        let callback = Closure::wrap(Box::new(move || {
+            if let Ok(value) = slider.value().parse::<f64>() {
+                monitor_clone.borrow_mut().time_scale = value;
+            }
+        }) as Box<dyn FnMut()>);
+        slider.set_oninput(Some(callback.as_ref().unchecked_ref()));
+        callback.forget();
+    }
+
+    // Zoom level slider
+    if let Some(slider) = document.get_element_by_id("zoom-level") {
+        let slider = slider.dyn_into::<HtmlInputElement>()?;
+        let monitor_clone = monitor_rc.clone();
+        let callback = Closure::wrap(Box::new(move || {
+            if let Ok(value) = slider.value().parse::<f64>() {
+                monitor_clone.borrow_mut().particle_size_scale = value;
+            }
+        }) as Box<dyn FnMut()>);
+        slider.set_oninput(Some(callback.as_ref().unchecked_ref()));
+        callback.forget();
+    }
+
+    // Reset view button
+    if let Some(button) = document.get_element_by_id("reset-view") {
+        let button = button.dyn_into::<HtmlElement>()?;
+        let monitor_clone = monitor_rc.clone();
+        let callback = Closure::wrap(Box::new(move || {
+            monitor_clone.borrow_mut().reset();
+        }) as Box<dyn FnMut()>);
+        button.set_onclick(Some(callback.as_ref().unchecked_ref()));
+        callback.forget();
     }
 
     Ok(())

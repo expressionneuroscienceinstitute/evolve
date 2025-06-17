@@ -285,9 +285,17 @@ async fn main() -> Result<()> {
 fn init_logging(verbose: bool) {
     let level = if verbose { "debug" } else { "info" };
     
-    tracing_subscriber::fmt()
-        .with_env_filter(format!("universectl={},universe_sim={}", level, level))
-        .init();
+    // Build a subscriber without automatically installing a log compatibility layer.
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(format!("universectl={},universe_sim={},physics_engine={}", level, level, level))
+        .finish();
+
+    // Install the subscriber (ignore error if one is already installed).
+    let _ = tracing::subscriber::set_global_default(subscriber);
+
+    // Now bridge the `log` crate to `tracing`. If another logger is already set we ignore the
+    // error, preventing a panic.
+    let _ = tracing_log::LogTracer::init();
 }
 
 async fn load_config(config_path: Option<&PathBuf>) -> Result<SimulationConfig> {

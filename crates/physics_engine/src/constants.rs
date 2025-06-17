@@ -63,7 +63,7 @@ impl Default for PhysicsConstants {
             
             // Electromagnetic constants
             epsilon_0: 8.854_187_8128e-12,
-            mu_0: 1.256_637_062_12e-6,
+            mu_0: 1.256_637_062_12e-6,  // Defined constant since 2019 SI redefinition
             e: 1.602_176_634e-19,
             alpha: 7.297_352_5693e-3,
             
@@ -71,7 +71,7 @@ impl Default for PhysicsConstants {
             m_e: 9.109_383_7015e-31,
             m_p: 1.672_621_923_69e-27,
             m_n: 1.674_927_498_04e-27,
-            u: 1.660_538_921e-27,
+            u: 1.660_539_066_60e-27,  // CODATA 2022 value
             
             // Astronomical constants
             m_sun: 1.988_47e30,

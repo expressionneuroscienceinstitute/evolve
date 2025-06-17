@@ -2,8 +2,8 @@
 # ========================================
 
 # Time simulation parameters
-tick_span_years = 250_000.0          # finer temporal resolution
-target_ups = 3_000.0                    # if your CPU can cope
+tick_span_years = 100_000.0          # finer temporal resolution
+target_ups = 5_000.0                    # if your CPU can cope
 max_ticks = 0                         # No limit (infinite simulation) - 0 means infinite
 
 # Initial conditions
@@ -12,7 +12,7 @@ universe_radius_ly = 100.0            # Initial universe radius (light-years)
 big_bang_temperature = 3000.0          # Reduced temperature to promote collapse
 
 # Physics parameters
-physics_timestep = 0.0001                 # Increased timestep for astronomical processes
+physics_timestep = 0.000001                 # Increased timestep for astronomical processes
 enable_relativity = true               # Enable relativistic corrections
 enable_quantum = true                  # Enable quantum effects
 enable_chemistry = true                # Enable chemical reactions

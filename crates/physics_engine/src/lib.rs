@@ -29,7 +29,9 @@ use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
+use rayon::prelude::*;
 use bevy_ecs::prelude::Component;
+use std::time::Instant;
 
 use self::nuclear_physics::StellarNucleosynthesis;
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
@@ -968,14 +970,28 @@ impl PhysicsEngine {
         }
         
         // Compton scattering: photon + electron -> photon + electron
-        if (self.particles[i].particle_type == ParticleType::Photon && 
+        if (self.particles[i].particle_type == ParticleType::Photon &&
             self.particles[j].particle_type == ParticleType::Electron) ||
-           (self.particles[j].particle_type == ParticleType::Photon && 
-            self.particles[i].particle_type == ParticleType::Electron) {
-            
-            self.compton_count += 1;
-            // Simplified: exchange momentum according to Compton scattering
-            self.exchange_momentum_compton(i, j)?;
+           (self.particles[j].particle_type == ParticleType::Photon &&
+            self.particles[i].particle_type == ParticleType::Electron)
+        {
+            // Estimate interaction probability from Klein–Nishina cross-section
+            let photon_idx = if self.particles[i].particle_type == ParticleType::Photon { i } else { j };
+            let photon_energy = self.particles[photon_idx].energy; // J
+            let electron_mass_energy = constants::ELECTRON_MASS * constants::SPEED_OF_LIGHT.powi(2);
+
+            // Cross-section σ(E) in m²
+            let sigma = crate::interactions::klein_nishina_cross_section_joules(photon_energy, electron_mass_energy);
+            // Effective geometrical area of sphere with radius = separation
+            let geom_area = 4.0 * std::f64::consts::PI * distance * distance;
+            // Clamp probability to sensible range [0,1]
+            let prob = (sigma / geom_area).min(1.0);
+
+            if rand::random::<f64>() < prob {
+                // Only count and execute scattering when it actually happens
+                self.compton_count += 1;
+                self.exchange_momentum_compton(i, j)?;
+            }
         }
         
         // Coulomb scattering between charged particles
@@ -994,16 +1010,21 @@ impl PhysicsEngine {
     }
     
     /// Process weak interaction 
-    fn process_weak_interaction(&mut self, i: usize, j: usize, _distance: f64) -> Result<()> {
+    fn process_weak_interaction(&mut self, i: usize, j: usize, distance: f64) -> Result<()> {
         // Neutrino-electron scattering
-        if (self.particles[i].particle_type == ParticleType::ElectronNeutrino && 
+        if (self.particles[i].particle_type == ParticleType::ElectronNeutrino &&
             self.particles[j].particle_type == ParticleType::Electron) ||
-           (self.particles[j].particle_type == ParticleType::ElectronNeutrino && 
-            self.particles[i].particle_type == ParticleType::Electron) {
-            
-            self.neutrino_scatter_count += 1;
-            // Very small cross-section - rarely occurs
-            if rand::random::<f64>() < 1e-10 {
+           (self.particles[j].particle_type == ParticleType::ElectronNeutrino &&
+            self.particles[i].particle_type == ParticleType::Electron)
+        {
+            // Extremely small weak cross-section (~10⁻⁴⁇⁴ m² at MeV energies).
+            // Use a fixed tiny probability to avoid computing exact electroweak formula.
+            const NU_E_SIGMA: f64 = 1.0e-44; // m² (order of magnitude)
+            let geom_area = 4.0 * std::f64::consts::PI * distance * distance;
+            let prob = (NU_E_SIGMA / geom_area).min(1.0e-6); // Cap to avoid wasting work
+
+            if rand::random::<f64>() < prob {
+                self.neutrino_scatter_count += 1;
                 self.exchange_momentum_weak(i, j)?;
             }
         }
@@ -1400,10 +1421,25 @@ impl PhysicsEngine {
         }
     }
     
+    /// Recompute energies for all particles (E² = m²c⁴ + p²c²) using multi-core parallelism.
     pub fn update_particle_energies(&mut self) -> Result<()> {
-        for particle in self.particles.iter_mut() {
-            particle.energy = (particle.mass.powi(2) + particle.momentum.norm_squared()).sqrt();
-        }
+        let start = Instant::now();
+        log::debug!(
+            "[energy] Recomputing energies for {} particles using {} Rayon threads",
+            self.particles.len(),
+            rayon::current_num_threads()
+        );
+
+        self.particles
+            .par_iter_mut()
+            .for_each(|particle| {
+                particle.energy = (particle.mass.powi(2) + particle.momentum.norm_squared()).sqrt();
+            });
+
+        log::debug!(
+            "[energy] Finished energy recomputation in {:.3?}",
+            start.elapsed()
+        );
         Ok(())
     }
 
@@ -2443,20 +2479,50 @@ impl PhysicsEngine {
 
     /// Update gravitational forces in absence of GADGET - placeholder
     fn update_gravitational_forces(&mut self) -> Result<()> {
-        // Simplified Newtonian pairwise gravity for now (O(N^2))
+        // Parallel pairwise Newtonian gravity (still O(N²) but multi-core).
         let g_const = 6.67430e-11;
-        for i in 0..self.particles.len() {
-            let mut force = Vector3::zeros();
-            for j in 0..self.particles.len() {
-                if i == j { continue; }
-                let dir = self.particles[j].position - self.particles[i].position;
-                let dist_sq = dir.norm_squared().max(1e-12);
-                let f_mag = g_const * self.particles[i].mass * self.particles[j].mass / dist_sq;
-                force += dir.normalize() * f_mag;
+        let timer = Instant::now();
+        log::debug!(
+            "[gravity] Computing Newtonian forces for {} particles on {} threads",
+            self.particles.len(),
+            rayon::current_num_threads()
+        );
+
+        let particles_snapshot = self.particles.clone(); // snapshot positions/masses for thread-safety
+
+        // Compute net force on each particle in parallel.
+        let forces: Vec<Vector3<f64>> = (0..particles_snapshot.len())
+            .into_par_iter()
+            .map(|i| {
+                let mut force = Vector3::zeros();
+                let p_i = &particles_snapshot[i];
+                for (j, p_j) in particles_snapshot.iter().enumerate() {
+                    if i == j { continue; }
+                    let dir = p_j.position - p_i.position;
+                    let dist_sq = dir.norm_squared().max(1e-12);
+                    let f_mag = g_const * p_i.mass * p_j.mass / dist_sq;
+                    force += dir.normalize() * f_mag;
+                }
+                force
+            })
+            .collect();
+
+        // Apply accelerations sequentially (acc = F / m).
+        for (i, force) in forces.into_iter().enumerate() {
+            if i < self.particles.len() {
+                let mass = self.particles[i].mass;
+                if mass > 0.0 {
+                    let acceleration = force / mass;
+                    // Store as instantaneous velocity increment for now.
+                    self.particles[i].velocity += acceleration * self.time_step;
+                }
             }
-            // Update acceleration (F = m a)
-            // For now we ignore updating particle accelerations directly to keep it simple
         }
+
+        log::debug!(
+            "[gravity] Force computation + application completed in {:.3?}",
+            timer.elapsed()
+        );
         Ok(())
     }
 

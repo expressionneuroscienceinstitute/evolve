@@ -316,10 +316,12 @@ pub struct PopulationStatistics {
 
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ViewMode {
+    pub enum ViewMode {
     ParticlePhysics,
     AtomicStructure,
     MolecularDynamics,
+    CelestialBodies,
+    NuclearPhysics,
     AgentOverview,
     LineageTree,
     DecisionTracking,
@@ -446,14 +448,21 @@ impl EvolutionMonitor {
                 // Render based on current view mode
                 match self.view_mode {
                     ViewMode::ParticlePhysics => self.render_particle_physics()?,
+                    ViewMode::AtomicStructure => self.render_atomic_structure()?,
+                    ViewMode::MolecularDynamics => self.render_particle_physics()?, // Fallback
+                    ViewMode::CelestialBodies => self.render_celestial_bodies()?,
+                    ViewMode::NuclearPhysics => self.render_nuclear_physics()?,
                     ViewMode::AgentOverview => self.render_agent_overview()?,
                     ViewMode::LineageTree => self.render_lineage_tree()?,
                     ViewMode::DecisionTracking => self.render_decision_tracking()?,
                     ViewMode::ConsciousnessMap => self.render_consciousness_map()?,
                     ViewMode::InnovationTimeline => self.render_innovation_timeline()?,
                     ViewMode::SelectionPressures => self.render_selection_pressures(&Vec::new())?,
+                    ViewMode::EnvironmentalMap => self.render_agent_overview()?, // Fallback
+                    ViewMode::PopulationDynamics => self.render_agent_overview()?, // Fallback
                     ViewMode::QuantumFields => self.render_quantum_fields()?,
-                    _ => self.render_agent_overview()?,
+                    ViewMode::EnergyFlows => self.render_particle_physics()?, // Fallback
+                    ViewMode::EmergentComplexity => self.render_agent_overview()?, // Fallback
                 }
                 
                 // Render UI overlay
@@ -574,6 +583,50 @@ impl EvolutionMonitor {
             elem.set_inner_html(&format!("{:.2}/tick", innovation_rate));
         }
         
+        // Update atomic physics data
+        if let Some(elem) = document.get_element_by_id("nuclei-count") {
+            elem.set_inner_html(&format!("{}", self.simulation_state.nuclei.len()));
+        }
+        if let Some(elem) = document.get_element_by_id("atoms-count") {
+            elem.set_inner_html(&format!("{}", self.simulation_state.atoms.len()));
+        }
+        if let Some(elem) = document.get_element_by_id("molecules-count") {
+            elem.set_inner_html(&format!("{}", self.simulation_state.molecules.len()));
+        }
+        
+        // Update celestial bodies data
+        if let Some(elem) = document.get_element_by_id("celestial-count") {
+            elem.set_inner_html(&format!("{}", self.simulation_state.celestial_bodies.len()));
+        }
+        
+        // Count stars and planets
+        let star_count = self.simulation_state.celestial_bodies.iter()
+            .filter(|body| body.body_type == "Star")
+            .count();
+        let planet_count = self.simulation_state.celestial_bodies.iter()
+            .filter(|body| body.body_type == "Planet")
+            .count();
+            
+        if let Some(elem) = document.get_element_by_id("star-count") {
+            elem.set_inner_html(&format!("{}", star_count));
+        }
+        if let Some(elem) = document.get_element_by_id("planet-count") {
+            elem.set_inner_html(&format!("{}", planet_count));
+        }
+        
+        // Update quantum fields list
+        if let Some(elem) = document.get_element_by_id("quantum-fields-list") {
+            if self.simulation_state.quantum_fields.is_empty() {
+                elem.set_inner_html("<p>No fields detected</p>");
+            } else {
+                let mut fields_html = String::new();
+                for field_name in self.simulation_state.quantum_fields.keys() {
+                    fields_html.push_str(&format!("<div class=\"metric\"><span class=\"metric-label\">{}</span><span class=\"metric-value\">Active</span></div>", field_name));
+                }
+                elem.set_inner_html(&fields_html);
+            }
+        }
+
         // Update system performance
         if let Some(elem) = document.get_element_by_id("updates-per-second") {
             let ups_val = if self.last_render_duration > 0.0 {
@@ -838,6 +891,163 @@ impl EvolutionMonitor {
         
         Ok(())
     }
+
+    /// Render atomic structure visualization
+    fn render_atomic_structure(&mut self) -> Result<(), JsValue> {
+        // Pre-calculate values before getting context
+        let canvas_width = self.canvas.width() as f64;
+        let canvas_height = self.canvas.height() as f64;
+        let atoms = self.simulation_state.atoms.clone();
+        let atom_count = atoms.len();
+        
+        let context = self.get_context_mut();
+        
+        // Background
+        context.set_fill_style_str("#0F0F23");
+        context.fill_rect(0.0, 0.0, canvas_width, canvas_height);
+        
+        // Title
+        context.set_fill_style_str("#00FFFF");
+        context.set_font("18px Arial");
+        context.fill_text("Atomic Structure Visualization", 20.0, 30.0)?;
+        
+        // Display atom count
+        context.set_fill_style_str("#FFFFFF");
+        context.set_font("14px Arial");
+        context.fill_text(&format!("Atoms: {}", atom_count), 20.0, 60.0)?;
+        
+        // Render atoms as orbital models
+        for (i, atom_str) in atoms.iter().enumerate().take(20) {
+            let x = 50.0 + ((i % 5) as f64) * 150.0;
+            let y = 100.0 + ((i / 5) as f64) * 120.0;
+            
+            // Parse atom info from string (assuming format like "H1(e-=1, E=1.23e-18J)")
+            let nucleus_color = if atom_str.starts_with('H') {
+                "rgba(255, 100, 100, 0.8)"
+            } else if atom_str.starts_with("He") {
+                "rgba(100, 255, 100, 0.8)"  
+            } else if atom_str.starts_with('C') {
+                "rgba(100, 100, 255, 0.8)"
+            } else {
+                "rgba(200, 200, 200, 0.8)"
+            };
+            
+            // Draw nucleus
+            context.set_fill_style_str(nucleus_color);
+            context.begin_path();
+            context.arc(x, y, 8.0, 0.0, 2.0 * std::f64::consts::PI)?;
+            context.fill();
+            
+            // Draw electron orbitals
+            context.set_stroke_style_str("rgba(0, 255, 255, 0.3)");
+            context.set_line_width(1.0);
+            for orbital in 0..3 {
+                let radius = 15.0 + (orbital as f64 * 10.0);
+                context.begin_path();
+                context.arc(x, y, radius, 0.0, 2.0 * std::f64::consts::PI)?;
+                context.stroke();
+            }
+            
+            // Draw electrons
+            context.set_fill_style_str("rgba(255, 255, 0, 0.8)");
+            let electron_angle = (i as f64) * 0.5;
+            for orbital in 0..2 {
+                let radius = 20.0 + (orbital as f64 * 15.0);
+                let ex = x + radius * (electron_angle + (orbital as f64)).cos();
+                let ey = y + radius * (electron_angle + (orbital as f64)).sin();
+                context.begin_path();
+                context.arc(ex, ey, 3.0, 0.0, 2.0 * std::f64::consts::PI)?;
+                context.fill();
+            }
+            
+            // Label
+            context.set_fill_style_str("#FFFFFF");
+            context.set_font("10px Arial");
+            let short_label = if atom_str.len() > 25 { &atom_str[..25] } else { atom_str };
+            context.fill_text(short_label, x - 30.0, y + 50.0)?;
+        }
+        
+        Ok(())
+    }
+
+    /// Render nuclear physics visualization
+    fn render_nuclear_physics(&mut self) -> Result<(), JsValue> {
+        // Pre-calculate values before getting context
+        let canvas_width = self.canvas.width() as f64;
+        let canvas_height = self.canvas.height() as f64;
+        let nuclei = self.simulation_state.nuclei.clone();
+        let nuclei_count = nuclei.len();
+        
+        let context = self.get_context_mut();
+        
+        // Background
+        context.set_fill_style_str("#1A0A0A");
+        context.fill_rect(0.0, 0.0, canvas_width, canvas_height);
+        
+        // Title
+        context.set_fill_style_str("#FF6B6B");
+        context.set_font("18px Arial");
+        context.fill_text("Nuclear Physics", 20.0, 30.0)?;
+        
+        // Display nucleus count
+        context.set_fill_style_str("#FFFFFF");
+        context.set_font("14px Arial");
+        context.fill_text(&format!("Nuclei: {}", nuclei_count), 20.0, 60.0)?;
+        
+        // Render nuclei
+        for (i, nucleus_str) in nuclei.iter().enumerate().take(15) {
+            let x = 60.0 + ((i % 4) as f64) * 180.0;
+            let y = 100.0 + ((i / 4) as f64) * 120.0;
+            
+            // Parse nucleus info (format like "H1(A=1, Z=1, BE=1.23e-12J)")
+            let element_color = if nucleus_str.starts_with('H') {
+                "rgba(255, 100, 100, 0.9)"
+            } else if nucleus_str.starts_with("He") {
+                "rgba(255, 200, 100, 0.9)"
+            } else if nucleus_str.starts_with("Li") {
+                "rgba(100, 255, 100, 0.9)"
+            } else if nucleus_str.starts_with('C') {
+                "rgba(100, 100, 255, 0.9)"
+            } else if nucleus_str.starts_with('O') {
+                "rgba(255, 100, 255, 0.9)"
+            } else if nucleus_str.starts_with("Fe") {
+                "rgba(255, 150, 50, 0.9)"
+            } else {
+                "rgba(150, 150, 150, 0.9)"
+            };
+            
+            // Draw nucleus with binding energy visualization
+            context.set_fill_style_str(element_color);
+            context.begin_path();
+            context.arc(x, y, 12.0, 0.0, 2.0 * std::f64::consts::PI)?;
+            context.fill();
+            
+            // Add glow effect for high binding energy
+            context.set_fill_style_str("rgba(255, 255, 255, 0.3)");
+            context.begin_path();
+            context.arc(x, y, 18.0, 0.0, 2.0 * std::f64::consts::PI)?;
+            context.fill();
+            
+            // Draw proton/neutron visualization
+            context.set_fill_style_str("rgba(255, 0, 0, 0.7)"); // Protons in red
+            context.begin_path();
+            context.arc(x - 3.0, y - 3.0, 4.0, 0.0, 2.0 * std::f64::consts::PI)?;
+            context.fill();
+            
+            context.set_fill_style_str("rgba(0, 0, 255, 0.7)"); // Neutrons in blue
+            context.begin_path();
+            context.arc(x + 3.0, y + 3.0, 4.0, 0.0, 2.0 * std::f64::consts::PI)?;
+            context.fill();
+            
+            // Label with nucleus info
+            context.set_fill_style_str("#FFFFFF");
+            context.set_font("9px Arial");
+            let short_label = if nucleus_str.len() > 25 { &nucleus_str[..25] } else { nucleus_str };
+            context.fill_text(short_label, x - 40.0, y + 35.0)?;
+        }
+        
+        Ok(())
+    }
     
     /// Get color for particle type
     fn get_particle_color(&self, particle_type: &str) -> (u8, u8, u8, f32) {
@@ -875,17 +1085,19 @@ impl EvolutionMonitor {
             0  => ViewMode::ParticlePhysics,
             1  => ViewMode::AtomicStructure,
             2  => ViewMode::MolecularDynamics,
-            3  => ViewMode::AgentOverview,
-            4  => ViewMode::LineageTree,
-            5  => ViewMode::DecisionTracking,
-            6  => ViewMode::ConsciousnessMap,
-            7  => ViewMode::InnovationTimeline,
-            8  => ViewMode::SelectionPressures,
-            9  => ViewMode::EnvironmentalMap,
-            10 => ViewMode::PopulationDynamics,
-            11 => ViewMode::QuantumFields,
-            12 => ViewMode::EnergyFlows,
-            13 => ViewMode::EmergentComplexity,
+            3  => ViewMode::CelestialBodies,
+            4  => ViewMode::NuclearPhysics,
+            5  => ViewMode::AgentOverview,
+            6  => ViewMode::LineageTree,
+            7  => ViewMode::DecisionTracking,
+            8  => ViewMode::ConsciousnessMap,
+            9  => ViewMode::InnovationTimeline,
+            10 => ViewMode::SelectionPressures,
+            11 => ViewMode::EnvironmentalMap,
+            12 => ViewMode::PopulationDynamics,
+            13 => ViewMode::QuantumFields,
+            14 => ViewMode::EnergyFlows,
+            15 => ViewMode::EmergentComplexity,
             _  => ViewMode::AgentOverview,
         };
 
@@ -1245,7 +1457,14 @@ impl EvolutionMonitor {
             self.needs_redraw = true;
         }
 
+        // Update celestial bodies from delta
+        self.simulation_state.celestial_bodies = delta.celestial_bodies;
+        
+        // Update quantum fields from delta
+        self.simulation_state.quantum_fields = delta.quantum_fields;
+
         self.simulation_state.current_tick = delta.current_tick;
+        self.needs_redraw = true;
     }
 
     fn update_agent_history(&mut self, agent_id: Uuid, position: [f64; 3]) {

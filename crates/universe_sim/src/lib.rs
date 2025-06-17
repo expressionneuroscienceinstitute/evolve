@@ -1893,34 +1893,65 @@ impl UniverseSimulation {
     }
 
     pub fn get_quantum_field_snapshot(&self) -> HashMap<String, Vec<Vec<f64>>> {
-        let mut snapshot = HashMap::new();
-        for (field_type, field) in &self.physics_engine.quantum_fields {
-            if !field.field_values.is_empty() && !field.field_values[0].is_empty() {
-                // Take a 2D slice at z=mid
-                let z_slice_index = field.field_values.len() / 2;
-                let slice_2d = &field.field_values[z_slice_index];
-
-                // Downsample for performance if the grid is large
-                let (y_step, x_step) = (
-                    (slice_2d.len() / 64).max(1),
-                    (slice_2d[0].len() / 64).max(1)
-                );
-
-                let magnitudes: Vec<Vec<f64>> = slice_2d
-                    .iter()
-                    .step_by(y_step)
-                    .map(|row| {
-                        row.iter()
-                           .step_by(x_step)
-                           .map(|c| c.norm()) // magnitude of complex number
-                           .collect()
-                    })
-                    .collect();
-
-                snapshot.insert(format!("{:?}", field_type), magnitudes);
+        let mut field_snapshot = HashMap::new();
+        
+        // Electromagnetic field snapshot (simplified 2D representation)
+        let mut em_field = Vec::new();
+        for i in 0..10 {
+            let mut row = Vec::new();
+            for j in 0..10 {
+                // Calculate field strength based on nearby charged particles
+                let mut field_strength = 0.0;
+                for particle in &self.physics_engine.particles {
+                    let distance = ((i as f64 - particle.position[0] / 1e6).powi(2) + 
+                                   (j as f64 - particle.position[1] / 1e6).powi(2)).sqrt();
+                    if distance > 0.1 {
+                        field_strength += particle.charge / distance.powi(2);
+                    }
+                }
+                row.push(field_strength);
             }
+            em_field.push(row);
         }
-        snapshot
+        field_snapshot.insert("electromagnetic".to_string(), em_field);
+        
+        field_snapshot
+    }
+
+    /// Set simulation speed factor (modifies target_ups)
+    pub fn set_speed_factor(&mut self, factor: f64) -> Result<()> {
+        if factor <= 0.0 {
+            return Err(anyhow::anyhow!("Speed factor must be positive"));
+        }
+        if factor > 100.0 {
+            return Err(anyhow::anyhow!("Speed factor cannot exceed 100x"));
+        }
+        
+        self.target_ups = self.config.target_ups * factor;
+        info!("Speed factor set to {}x (target UPS: {})", factor, self.target_ups);
+        Ok(())
+    }
+
+    /// Rewind simulation by specified number of ticks
+    pub fn rewind_ticks(&mut self, ticks: u64) -> Result<u64> {
+        if ticks == 0 {
+            return Err(anyhow::anyhow!("Cannot rewind by 0 ticks"));
+        }
+        
+        let actual_rewind = std::cmp::min(ticks, self.current_tick);
+        if actual_rewind == 0 {
+            return Err(anyhow::anyhow!("Already at beginning of simulation"));
+        }
+        
+        // For now, implement a simple rewind by reducing current_tick
+        // In a more sophisticated implementation, this would restore previous state
+        self.current_tick -= actual_rewind;
+        
+        // Update cosmic era based on new tick
+        self.update_cosmic_era();
+        
+        info!("Rewound {} ticks to tick {}", actual_rewind, self.current_tick);
+        Ok(actual_rewind)
     }
 }
 

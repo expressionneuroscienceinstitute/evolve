@@ -146,6 +146,14 @@ impl RpcClient {
         self.send_request("inspect_physics", json!({})).await
     }
 
+    pub async fn universe_stats(&self) -> Result<serde_json::Value> {
+        self.send_request("universe_stats", json!({})).await
+    }
+
+    pub async fn physics_diagnostics(&self) -> Result<serde_json::Value> {
+        self.send_request("physics_diagnostics", json!({})).await
+    }
+
     pub async fn snapshot(&self, file: String) -> Result<serde_json::Value> {
         self.send_request("snapshot", json!({ "path": file })).await
     }

@@ -380,14 +380,22 @@
         <div class="control-section">
             <h3>🔭 View Modes</h3>
             <div class="view-buttons">
-                <button class="view-btn">Particle Physics</button>
-                <button class="view-btn active">AI Agents</button>
-                <button class="view-btn">Lineage Trees</button>
-                <button class="view-btn">Decision Tracking</button>
-                <button class="view-btn">Consciousness</button>
-                <button class="view-btn">Innovation Timeline</button>
-                <button class="view-btn">Selection Pressures</button>
-                <button class="view-btn">Quantum Fields</button>
+                <button class="view-btn" data-view="0">Particle Physics</button>
+                <button class="view-btn" data-view="1">Atomic Structure</button>
+                <button class="view-btn" data-view="2">Molecular Dynamics</button>
+                <button class="view-btn" data-view="3">Celestial Bodies</button>
+                <button class="view-btn" data-view="4">Nuclear Physics</button>
+                <button class="view-btn active" data-view="5">AI Agents</button>
+                <button class="view-btn" data-view="6">Lineage Trees</button>
+                <button class="view-btn" data-view="7">Decision Tracking</button>
+                <button class="view-btn" data-view="8">Consciousness</button>
+                <button class="view-btn" data-view="9">Innovation Timeline</button>
+                <button class="view-btn" data-view="10">Selection Pressures</button>
+                <button class="view-btn" data-view="11">Environmental Map</button>
+                <button class="view-btn" data-view="12">Population Dynamics</button>
+                <button class="view-btn" data-view="13">Quantum Fields</button>
+                <button class="view-btn" data-view="14">Energy Flows</button>
+                <button class="view-btn" data-view="15">Emergent Complexity</button>
             </div>
         </div>
 
@@ -500,6 +508,45 @@
             <div class="metric">
                 <span class="metric-label">Innovation Rate:</span>
                 <span class="metric-value innovation-rate" id="innovation-rate">0.0/tick</span>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h3>⚛️ Atomic Physics</h3>
+            <div class="metric">
+                <span class="metric-label">Nuclei Count:</span>
+                <span class="metric-value" id="nuclei-count">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Atoms Count:</span>
+                <span class="metric-value" id="atoms-count">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Molecules Count:</span>
+                <span class="metric-value" id="molecules-count">0</span>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h3>🌟 Celestial Bodies</h3>
+            <div class="metric">
+                <span class="metric-label">Total Bodies:</span>
+                <span class="metric-value" id="celestial-count">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Stars:</span>
+                <span class="metric-value" id="star-count">0</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Planets:</span>
+                <span class="metric-value" id="planet-count">0</span>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h3>🌊 Quantum Fields</h3>
+            <div id="quantum-fields-list">
+                <p>No fields detected</p>
             </div>
         </div>
 

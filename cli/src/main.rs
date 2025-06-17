@@ -323,7 +323,7 @@ async fn cmd_status() -> Result<()> {
     let client = reqwest::Client::new();
     let req_body = json!({
         "jsonrpc": "2.0",
-        "method": "get_status",
+        "method": "status",
         "params": {},
         "id": 1
     });
@@ -735,7 +735,7 @@ async fn cmd_map(zoom: f64, layer: &str) -> Result<()> {
     let params = json!({ "zoom": zoom, "layer": layer });
     let req_body = json!({
         "jsonrpc": "2.0",
-        "method": "get_map_data",
+        "method": "map",
         "params": params,
         "id": 5
     });
@@ -1522,7 +1522,7 @@ async fn cmd_speed(factor: f64) -> Result<()> {
     let params = json!({ "factor": factor });
     let req_body = json!({
         "jsonrpc": "2.0",
-        "method": "set_speed",
+        "method": "speed",
         "params": params,
         "id": 4
     });
@@ -2145,13 +2145,29 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
         
         "stats" => {
             println!("📈 Fetching universe statistics...");  
-            cmd_inspect(InspectTarget::Universe).await?;
+            match rpc::call_rpc("universe_stats", json!({})).await {
+                Ok(response) => {
+                    render_universe_stats(&response)?;
+                },
+                Err(e) => {
+                    println!("⚠️  Could not connect to simulation: {}", e);
+                    render_sample_universe_stats();
+                }
+            }
             println!("✅ Stats command completed.");
         },
         
         "physics" => {
             println!("⚗️ Fetching physics diagnostics...");
-            cmd_inspect(InspectTarget::Physics).await?;
+            match rpc::call_rpc("physics_diagnostics", json!({})).await {
+                Ok(response) => {
+                    render_physics_diagnostics(&response)?;
+                },
+                Err(e) => {
+                    println!("⚠️  Could not connect to simulation: {}", e);
+                    render_sample_physics_diagnostics();
+                }
+            }
             println!("✅ Physics command completed.");
         },
         
@@ -2159,7 +2175,18 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
             if parts.len() > 1 {
                 if let Ok(factor) = parts[1].parse::<f64>() {
                     println!("⏱️ Setting simulation speed to {}x...", factor);
-                    cmd_speed(factor).await?;
+                    match rpc::call_rpc("speed", json!({ "factor": factor })).await {
+                        Ok(response) => {
+                            if let Some(message) = response.get("message").and_then(|v| v.as_str()) {
+                                println!("✅ {}", message);
+                            } else {
+                                println!("✅ Speed set to {}x", factor);
+                            }
+                        },
+                        Err(e) => {
+                            println!("❌ Failed to set speed: {}", e);
+                        }
+                    }
                     println!("✅ Speed command completed.");
                 } else {
                     println!("❌ Invalid speed factor. Use: speed <number>");
@@ -2172,19 +2199,42 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
         "map" => {
             let layer = parts.get(1).unwrap_or(&"stars");
             println!("🗺️ Generating {} map...", layer);
-            cmd_map(1.0, layer).await?;
+            match rpc::call_rpc("map", json!({ "zoom": 1.0, "layer": layer })).await {
+                Ok(response) => {
+                    render_simulation_map(&response, 60, 20, layer)?;
+                },
+                Err(e) => {
+                    println!("⚠️  Could not connect to simulation: {}", e);
+                    render_sample_map(60, 20, layer, 1.0);
+                }
+            }
             println!("✅ Map command completed.");
         },
         
         "planets" => {
             println!("🪐 Fetching planetary data...");
-            cmd_list_planets(None, false).await?;
+            match rpc::call_rpc("list_planets", json!({ "class_filter": null, "habitable_only": false })).await {
+                Ok(response) => {
+                    render_planet_list(&response, &None, false)?;
+                },
+                Err(e) => {
+                    println!("⚠️  Could not connect to simulation: {}", e);
+                    render_sample_planets(&None, false);
+                }
+            }
             println!("✅ Planets command completed.");
         },
 
         "stop" => {
             println!("🛑 Stopping simulation...");
-            cmd_stop().await?;
+            match rpc::call_rpc("stop", json!({})).await {
+                Ok(_) => {
+                    println!("✅ Stop command sent successfully.");
+                },
+                Err(e) => {
+                    println!("❌ Failed to stop simulation: {}", e);
+                }
+            }
             println!("✅ Stop command completed.");
             return Ok(true); // Exit after stop
         },
@@ -2193,7 +2243,18 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
             if parts.len() > 1 {
                 if let Ok(ticks) = parts[1].parse::<u64>() {
                     println!("⏪ Rewinding {} ticks...", ticks);
-                    cmd_rewind(ticks).await?;
+                    match rpc::call_rpc("rewind", json!({ "ticks": ticks })).await {
+                        Ok(response) => {
+                            if let Some(message) = response.get("message").and_then(|v| v.as_str()) {
+                                println!("✅ {}", message);
+                            } else {
+                                println!("✅ Rewound {} ticks", ticks);
+                            }
+                        },
+                        Err(e) => {
+                            println!("❌ Failed to rewind: {}", e);
+                        }
+                    }
                     println!("✅ Rewind command completed.");
                 } else {
                     println!("❌ Invalid tick count. Use: rewind <number>");
@@ -2207,7 +2268,18 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
             if parts.len() > 1 {
                 let filename = parts[1];
                 println!("📸 Creating snapshot: {}...", filename);
-                cmd_snapshot(PathBuf::from(filename), None).await?;
+                match rpc::call_rpc("snapshot", json!({ "path": filename })).await {
+                    Ok(response) => {
+                        if let Some(status) = response.get("status").and_then(|v| v.as_str()) {
+                            println!("✅ {}", status);
+                        } else {
+                            println!("✅ Snapshot saved to {}", filename);
+                        }
+                    },
+                    Err(e) => {
+                        println!("❌ Failed to create snapshot: {}", e);
+                    }
+                }
                 println!("✅ Snapshot command completed.");
             } else {
                 println!("❌ Usage: snapshot <filename>");
@@ -2222,22 +2294,54 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
                 match inspect_type {
                     "planet" => {
                         println!("🔍 Inspecting planet {}...", id);
-                        cmd_inspect(InspectTarget::Planet { id: id.to_string() }).await?;
+                        match rpc::call_rpc("inspect_planet", json!({ "planet_id": id })).await {
+                            Ok(response) => {
+                                render_planet_inspection(&response)?;
+                            },
+                            Err(e) => {
+                                println!("⚠️  Could not connect to simulation: {}", e);
+                                render_sample_planet_inspection(id);
+                            }
+                        }
                         println!("✅ Planet inspection completed.");
                     },
                     "lineage" => {
                         println!("🧬 Inspecting lineage {}...", id);
-                        cmd_inspect(InspectTarget::Lineage { id: id.to_string() }).await?;
+                        match rpc::call_rpc("inspect_lineage", json!({ "lineage_id": id })).await {
+                            Ok(response) => {
+                                render_lineage_inspection(&response)?;
+                            },
+                            Err(e) => {
+                                println!("⚠️  Could not connect to simulation: {}", e);
+                                render_sample_lineage_inspection(id);
+                            }
+                        }
                         println!("✅ Lineage inspection completed.");
                     },
                     "universe" => {
                         println!("🌌 Inspecting universe...");
-                        cmd_inspect(InspectTarget::Universe).await?;
+                        match rpc::call_rpc("universe_stats", json!({})).await {
+                            Ok(response) => {
+                                render_universe_stats(&response)?;
+                            },
+                            Err(e) => {
+                                println!("⚠️  Could not connect to simulation: {}", e);
+                                render_sample_universe_stats();
+                            }
+                        }
                         println!("✅ Universe inspection completed.");
                     },
                     "physics" => {
                         println!("⚗️ Inspecting physics...");
-                        cmd_inspect(InspectTarget::Physics).await?;
+                        match rpc::call_rpc("physics_diagnostics", json!({})).await {
+                            Ok(response) => {
+                                render_physics_diagnostics(&response)?;
+                            },
+                            Err(e) => {
+                                println!("⚠️  Could not connect to simulation: {}", e);
+                                render_sample_physics_diagnostics();
+                            }
+                        }
                         println!("✅ Physics inspection completed.");
                     },
                     _ => {
@@ -2248,12 +2352,28 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
                 match parts[1] {
                     "universe" => {
                         println!("🌌 Inspecting universe...");
-                        cmd_inspect(InspectTarget::Universe).await?;
+                        match rpc::call_rpc("universe_stats", json!({})).await {
+                            Ok(response) => {
+                                render_universe_stats(&response)?;
+                            },
+                            Err(e) => {
+                                println!("⚠️  Could not connect to simulation: {}", e);
+                                render_sample_universe_stats();
+                            }
+                        }
                         println!("✅ Universe inspection completed.");
                     },
                     "physics" => {
                         println!("⚗️ Inspecting physics...");
-                        cmd_inspect(InspectTarget::Physics).await?;
+                        match rpc::call_rpc("physics_diagnostics", json!({})).await {
+                            Ok(response) => {
+                                render_physics_diagnostics(&response)?;
+                            },
+                            Err(e) => {
+                                println!("⚠️  Could not connect to simulation: {}", e);
+                                render_sample_physics_diagnostics();
+                            }
+                        }
                         println!("✅ Physics inspection completed.");
                     },
                     _ => {
@@ -2272,7 +2392,18 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
                         if parts.len() > 2 {
                             let planet_id = parts[2];
                             println!("🧙 Creating agent on planet {}...", planet_id);
-                            cmd_godmode(GodModeAction::CreateAgent { planet_id: planet_id.to_string() }).await?;
+                            match rpc::call_rpc("godmode_create_agent", json!({ "planet_id": planet_id })).await {
+                                Ok(response) => {
+                                    if let Some(lineage_id) = response.get("new_lineage_id").and_then(|v| v.as_str()) {
+                                        println!("✅ Created new agent lineage: {}", lineage_id);
+                                    } else {
+                                        println!("✅ Agent created successfully");
+                                    }
+                                },
+                                Err(e) => {
+                                    println!("❌ Failed to create agent: {}", e);
+                                }
+                            }
                             println!("✅ God-mode create-agent completed.");
                         } else {
                             println!("❌ Usage: godmode create-agent <planet_id>");
@@ -2442,7 +2573,7 @@ async fn handle_rpc_request(
             }
         }
 
-        "get_map_data" => {
+        "map" => {
             #[derive(Deserialize)]
             struct MapParams {
                 zoom: Option<f64>,

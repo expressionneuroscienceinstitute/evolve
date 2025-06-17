@@ -1,10 +1,11 @@
+use approx::assert_relative_eq;
+use physics_engine::{PhysicsEngine, ParticleType, constants::{ELEMENTARY_CHARGE, SPEED_OF_LIGHT}};
+use nalgebra::Vector3;
+use std::collections::HashMap;
 use physics_engine::*;
 use physics_engine::particles::*;
 use physics_engine::nuclear_physics::*;
 use physics_engine::interactions::*;
-use approx::assert_relative_eq;
-use nalgebra::Vector3;
-use std::collections::HashMap;
 
 /// Test comprehensive particle database coverage
 #[test]
@@ -439,7 +440,7 @@ fn test_particle_creation_comprehensive() {
 /// Test molecular dynamics functionality including formation and reactions
 #[test]
 fn test_molecular_dynamics_comprehensive() {
-    let mut physics_engine = PhysicsEngine::new(1e-10).unwrap();
+    let mut physics_engine = PhysicsEngine::new().unwrap();
     
     // Create hydrogen and oxygen atoms using the physics engine's Atom type
     let h_nucleus = AtomicNucleus {

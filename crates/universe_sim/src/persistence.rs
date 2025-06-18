@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
-use bevy_ecs::prelude::World;
 
 /// A serializable representation of the entire simulation state.
 #[derive(Serialize, Deserialize)]
@@ -62,7 +61,6 @@ pub fn load_checkpoint(path: &Path) -> Result<UniverseSimulation> {
 
     let sim = UniverseSimulation {
         store: serializable_universe.store,
-        world: World::default(),
         physics_engine: PhysicsEngine::new()?, // Recreate physics engine
         current_tick: serializable_universe.current_tick,
         tick_span_years: serializable_universe.tick_span_years,

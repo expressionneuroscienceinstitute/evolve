@@ -30,7 +30,6 @@ use anyhow::Result;
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
 use rayon::prelude::*;
-use bevy_ecs::prelude::Component;
 use std::time::Instant;
 
 use self::nuclear_physics::StellarNucleosynthesis;
@@ -2761,7 +2760,7 @@ pub const HBAR: f64 = REDUCED_PLANCK_CONSTANT;
 
 /// Represents the physical state of a celestial body for simulation purposes.
 /// This component will be attached to Bevy entities.
-#[derive(Component, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhysicsState {
     pub position: Vector3<f64>,
     pub velocity: Vector3<f64>,

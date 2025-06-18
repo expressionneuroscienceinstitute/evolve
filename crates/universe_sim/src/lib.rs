@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use tracing::info;
 use uuid::Uuid;
-use bevy_ecs::prelude::*;
+// use bevy_ecs::prelude::*; // Bevy ECS removed from core simulation logic
 
 pub mod config;
 pub mod cosmic_era;
@@ -49,7 +49,7 @@ pub struct UniverseSimulation {
     /// still rely on Bevy-style APIs. Over time, the project is migrating to
     /// the custom SoA `Store`, but we keep this lightweight `World` around to
     /// satisfy legacy code while the transition is in progress.
-    pub world: World,
+    // pub world: World,
     pub physics_engine: PhysicsEngine,         // Physics simulation
     pub current_tick: u64,                     // Simulation time
     pub tick_span_years: f64,                  // Years per tick (default 1M)
@@ -65,11 +65,11 @@ impl UniverseSimulation {
     pub fn new(config: config::SimulationConfig) -> Result<Self> {
         let store = Store::new();
         let physics_engine = PhysicsEngine::new()?;
-        let world = World::default();
+        // let world = World::default();
 
         Ok(Self {
             store,
-            world,
+            // world,
             physics_engine,
             current_tick: 0,
             tick_span_years: config.tick_span_years,
@@ -260,47 +260,53 @@ impl UniverseSimulation {
 
     /// Process stellar evolution based on nuclear burning
     fn process_stellar_evolution(&mut self) -> Result<()> {
-        use bevy_ecs::prelude::*;
-
         let dt_years = self.tick_span_years;
 
-        // Accumulate stellar death events so we can handle them after we drop the mutable
-        // borrow of `self.world` (avoids Rust borrow checker conflicts).
-        let mut death_events: Vec<(usize, CelestialBody, StellarEvolution)> = Vec::new();
+        // Iterate over all stellar evolution records.
+        let mut death_events: Vec<usize> = Vec::new();
 
-        {
-            let mut query = self
-                .world
-                .query::<(&mut CelestialBody, &mut StellarEvolution)>();
+        for evolution in &mut self.store.stellar_evolutions {
+            let entity_id = evolution.entity_id;
+            let body = self
+                .store
+                .celestials
+                .get_mut(entity_id)
+                .expect("Invalid entity_id in StellarEvolution");
 
-            for (mut body, mut evolution) in query.iter_mut(&mut self.world) {
-                // 1. Advance stellar age.
-                body.age += dt_years;
+            // 1. Advance age.
+            body.age += dt_years;
 
-                // 2. Evolve core and generate energy.
-                let _energy_generated = evolution.evolve(body.mass, dt_years)?;
+            // 2. Evolve core.
+            let _energy_generated = evolution.evolve(body.mass, dt_years)?;
 
-                // 3. Update bulk stellar parameters.
-                body.radius = Self::calculate_stellar_radius(body.mass);
-                body.luminosity = Self::calculate_stellar_luminosity(body.mass);
-                body.temperature = Self::calculate_stellar_temperature(body.mass);
+            // 3. Update global properties.
+            body.radius = Self::calculate_stellar_radius(body.mass);
+            body.luminosity = Self::calculate_stellar_luminosity(body.mass);
+            body.temperature = Self::calculate_stellar_temperature(body.mass);
 
-                // 4. Update composition (placeholder – no-op for now).
-                Self::update_stellar_composition(&mut body, &evolution);
+            // 4. Composition update placeholder.
+            Self::update_stellar_composition(body, evolution);
 
-                // 5. If the star has reached a remnant phase, schedule a death event.
-                if matches!(
-                    evolution.evolutionary_phase,
-                    StellarPhase::WhiteDwarf | StellarPhase::NeutronStar | StellarPhase::BlackHole
-                ) {
-                    death_events.push((body.entity_id, body.clone(), evolution.clone()));
-                }
+            // 5. Check for death event.
+            if matches!(
+                evolution.evolutionary_phase,
+                StellarPhase::WhiteDwarf | StellarPhase::NeutronStar | StellarPhase::BlackHole
+            ) {
+                death_events.push(entity_id);
             }
-        } // ← mutable borrow of `self.world` ends here.
+        }
 
-        // Handle stellar death events now that the mutable borrow is released.
-        for (entity_id, body, evolution) in death_events {
-            self.process_stellar_death(entity_id, &body, &evolution)?;
+        // Process deaths after main loop to avoid mutable aliasing.
+        for entity_id in death_events {
+            let body_clone = self.store.celestials[entity_id].clone();
+            let evolution_clone = self
+                .store
+                .stellar_evolutions
+                .iter()
+                .find(|e| e.entity_id == entity_id)
+                .expect("Missing evolution record")
+                .clone();
+            self.process_stellar_death(entity_id, &body_clone, &evolution_clone)?;
         }
 
         Ok(())
@@ -309,7 +315,7 @@ impl UniverseSimulation {
     /// Update stellar composition based on nuclear burning products (placeholder)
     fn update_stellar_composition(
         body: &mut CelestialBody,
-        _evolution: &StellarEvolution,
+        evolution: &StellarEvolution,
     ) {
         // For the current lightweight implementation we do not attempt to
         // propagate the detailed isotopic yields to the outer layers. A full
@@ -352,7 +358,6 @@ impl UniverseSimulation {
 
     /// Form new stars from dense gas clouds
     fn process_star_formation(&mut self) -> Result<()> {
-        use bevy_ecs::prelude::*;
         use rand::Rng;
 
         // Simple probabilistic star-formation model: form at most one star per tick.
@@ -385,13 +390,14 @@ impl UniverseSimulation {
             has_life: false,
         };
 
-        let evolution = StellarEvolution::new(mass);
+        let mut evolution = StellarEvolution::new(mass);
 
-        // Spawn into SoA store – we keep the canonical entity index here.
-        let _entity_index = self.store.spawn_celestial(body.clone());
+        // Spawn into SoA store – canonical entity index.
+        let entity_index = self.store.spawn_celestial(body.clone());
 
-        // Spawn into ECS world for tests.
-        self.world.spawn((body, evolution));
+        // Link evolution to body and store it.
+        evolution.entity_id = entity_index;
+        self.store.stellar_evolutions.push(evolution);
 
         // Diagnostics: increment star formation counter (placeholder)
 
@@ -1062,19 +1068,19 @@ mod stellar_evolution_integration_tests {
         simulation.process_star_formation().expect("Should form stars");
         
         // Verify stars were created
-        let mut query = simulation.world.query::<(&CelestialBody, &StellarEvolution)>();
-        let star_count = query.iter(&simulation.world).count();
-        
+        let star_count = simulation.store.stellar_evolutions.len();
+
         if star_count > 0 {
             // Test stellar evolution for created stars
             simulation.process_stellar_evolution().expect("Should evolve stars");
-            
+
             // Verify stellar evolution updated properties
-            let mut evolved_query = simulation.world.query::<(&CelestialBody, &StellarEvolution)>();
-            for (body, evolution) in evolved_query.iter(&simulation.world) {
-                assert!(evolution.nuclear_energy_generation >= 0.0, 
-                       "Stars should have non-negative energy generation");
-                
+            for evolution in &simulation.store.stellar_evolutions {
+                let body = &simulation.store.celestials[evolution.entity_id];
+
+                assert!(evolution.nuclear_energy_generation >= 0.0,
+                        "Stars should have non-negative energy generation");
+
                 // Verify stellar properties are reasonable
                 assert!(body.mass > 0.0, "Star should have positive mass");
                 assert!(body.luminosity >= 0.0, "Star should have non-negative luminosity");

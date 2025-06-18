@@ -7,7 +7,6 @@ use crate::physics_engine::{
 use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use bevy_ecs::prelude::Component;
 
 //------------------------------------------------------------------------------
 // Main Data Store
@@ -100,7 +99,7 @@ impl ParticleStore {
 //------------------------------------------------------------------------------
 
 /// Celestial body data.
-#[derive(Debug, Clone, Serialize, Deserialize, Component)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CelestialBody {
     pub id: Uuid,
     pub entity_id: usize, // Index in the main celestial Vec
@@ -116,7 +115,7 @@ pub struct CelestialBody {
 }
 
 /// Tracks the nuclear burning stages of a star.
-#[derive(Debug, Clone, Serialize, Deserialize, Component)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StellarEvolution {
     pub entity_id: usize,
     pub nucleosynthesis: StellarNucleosynthesis,
@@ -245,7 +244,7 @@ impl StellarEvolution {
 }
 
 /// Planetary environment data.
-#[derive(Debug, Clone, Serialize, Deserialize, Component)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanetaryEnvironment {
     pub entity_id: usize,
     pub profile: EnvironmentProfile,
@@ -255,7 +254,7 @@ pub struct PlanetaryEnvironment {
 }
 
 /// AI agent lineage data.
-#[derive(Debug, Clone, Serialize, Deserialize, Component)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentLineage {
     pub id: Uuid,
     pub on_celestial_id: usize, // The celestial body this agent lives on

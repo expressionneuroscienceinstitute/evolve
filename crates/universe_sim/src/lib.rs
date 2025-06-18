@@ -670,30 +670,112 @@ impl UniverseSimulation {
         Ok((min, max))
     }
 
-    // Functions below here are also stubbed out for now
-
     fn calculate_stellar_density_at(&mut self, _x: f64, _y: f64) -> Result<f64> {
-        todo!();
+        use crate::storage::CelestialBodyType;
+
+        // Total stellar mass (kg)
+        let total_stellar_mass: f64 = self
+            .store
+            .celestials
+            .iter()
+            .filter(|c| matches!(c.body_type, CelestialBodyType::Star))
+            .map(|c| c.mass)
+            .sum();
+
+        if total_stellar_mass == 0.0 {
+            return Ok(0.0);
+        }
+
+        // Volume of the simulated universe (m³) assuming spherical geometry.
+        let radius_m = self.config.universe_radius_ly * 9.460_730_472e15; // metres per light-year (CODATA 2022)
+        let volume = (4.0 / 3.0) * std::f64::consts::PI * radius_m.powi(3);
+
+        Ok(total_stellar_mass / volume)
     }
 
     fn calculate_gas_density_at(&self, _x: f64, _y: f64) -> Result<f64> {
-        todo!();
+        // Approximate interstellar / intergalactic gas density from the mass of free particles.
+        if self.store.particles.count == 0 {
+            return Ok(0.0);
+        }
+
+        let total_gas_mass: f64 = self.store.particles.mass.iter().sum();
+
+        // Universe volume (same assumption as above)
+        let radius_m = self.config.universe_radius_ly * 9.460_730_472e15;
+        let volume = (4.0 / 3.0) * std::f64::consts::PI * radius_m.powi(3);
+
+        Ok(total_gas_mass / volume)
     }
 
     fn calculate_dark_matter_density_at(&self, _x: f64, _y: f64) -> Result<f64> {
-        todo!();
+        // Use cosmology parameters derived elsewhere in the simulation.
+        let cosmic = self.calculate_cosmic_structure();
+        // ρ_DM = Ω_DM * ρ_crit
+        Ok(cosmic.dark_matter_fraction * cosmic.critical_density)
     }
 
     fn calculate_radiation_density_at(&mut self, _x: f64, _y: f64) -> Result<f64> {
-        todo!();
+        // Present-day photon (CMB) mass-equivalent density ρ_γ ≈ 4.64×10⁻³¹ kg m⁻³ (Planck 2018)
+        const RADIATION_DENSITY_KG_PER_M3: f64 = 4.64e-31;
+        Ok(RADIATION_DENSITY_KG_PER_M3)
     }
 
-    fn calculate_total_density_at(&mut self, _x: f64, _y: f64) -> Result<f64> {
-        todo!();
+    fn calculate_total_density_at(&mut self, x: f64, y: f64) -> Result<f64> {
+        let rho_stars = self.calculate_stellar_density_at(x, y)?;
+        let rho_gas = self.calculate_gas_density_at(x, y)?;
+        let rho_dm = self.calculate_dark_matter_density_at(x, y)?;
+        let rho_rad = self.calculate_radiation_density_at(x, y)?;
+        Ok(rho_stars + rho_gas + rho_dm + rho_rad)
     }
 
-    pub fn get_planet_data(&mut self, _class_filter: Option<String>, _habitable_only: bool) -> Result<serde_json::Value> {
-        todo!();
+    pub fn get_planet_data(&mut self, class_filter: Option<String>, habitable_only: bool) -> Result<serde_json::Value> {
+        use serde_json::json;
+        use std::collections::HashMap;
+
+        // Build a quick lookup from entity-id → environment for O(1) access.
+        let mut env_map: HashMap<usize, &crate::storage::PlanetaryEnvironment> = HashMap::new();
+        for env in &self.store.planetary_environments {
+            env_map.insert(env.entity_id, env);
+        }
+
+        let mut planets_json = Vec::new();
+
+        for body in &self.store.celestials {
+            if !matches!(body.body_type, CelestialBodyType::Planet) {
+                continue;
+            }
+
+            // Environment record is mandatory for planet metadata.
+            let env = if let Some(env) = env_map.get(&body.entity_id) {
+                *env
+            } else {
+                continue; // Skip planets without environments until they are initialised.
+            };
+
+            // Optional class filtering.
+            if let Some(ref cls) = class_filter {
+                if &format!("{:?}", env.planet_class) != cls {
+                    continue;
+                }
+            }
+
+            // Optional habitability filter.
+            if habitable_only && env.habitability_score < 0.5 {
+                continue;
+            }
+
+            planets_json.push(json!({
+                "id": body.id.to_string(),
+                "mass_kg": body.mass,
+                "radius_m": body.radius,
+                "class": format!("{:?}", env.planet_class),
+                "habitability_score": env.habitability_score,
+                "has_life": body.has_life
+            }));
+        }
+
+        Ok(json!({ "planets": planets_json }))
     }
 
     pub fn get_planet_inspection_data(&mut self, _planet_id: &str) -> Result<Option<serde_json::Value>> {
@@ -709,7 +791,6 @@ impl UniverseSimulation {
     }
 
     fn calculate_stellar_statistics(&mut self) -> (usize, StellarStatistics) {
-        use crate::storage::{CelestialBodyType, StellarPhase};
         use std::collections::HashMap;
 
         const M_SUN: f64 = 1.989e30;

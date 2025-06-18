@@ -331,9 +331,21 @@ install_gadget() {
             cp Template-Config.sh Config.sh
         fi
         if [ ! -f "Makefile.systype" ] && [ -f "Template-Makefile.systype" ]; then
-            cp Template-Makefile.systype Makefile.systype
-            # Select generic gcc build by default
-            sed -i 's/^SYSTYPE=.*/SYSTYPE="Generic-gcc"/' Makefile.systype
+            # Use portable sed in-place edit compatible with GNU and BSD
+            if sed --version >/dev/null 2>&1; then
+                sed -i 's/^SYSTYPE=.*/SYSTYPE="Generic-gcc"/' Makefile.systype
+            else
+                sed -i '' 's/^SYSTYPE=.*/SYSTYPE="Generic-gcc"/' Makefile.systype
+            fi
+        fi
+
+        # Ensure 'python' executable exists (GADGET Makefile expects it)
+        if ! command -v python >/dev/null 2>&1; then
+            if command -v python3 >/dev/null 2>&1; then
+                ln -sf "$(which python3)" "$BUILD_DIR/gadget4/python"
+                export PATH="$BUILD_DIR/gadget4:$PATH"
+                log_info "Created python symlink to python3 for Gadget4 build"
+            fi
         fi
 
         # Attempt to build Gadget4 (single threaded if THREADS unset)

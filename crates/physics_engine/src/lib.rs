@@ -4543,16 +4543,28 @@ pub mod gadget_gravity {
             let size = (max_pos - min_pos).max() * 1.1;
             let center = (min_pos + max_pos) * 0.5;
             
-            // Build octree
-            let mut root = OctreeNode::new(center, size);
-            for (i, _) in self.particles.iter().enumerate() {
-                root.insert(i, &self.particles);
-            }
-            
-            // Calculate forces in parallel using rayon
+            // For now, use direct summation with Barnes-Hut placeholder
+            // TODO: Implement full Barnes-Hut tree when spatial module is refactored
             let forces: Vec<Vector3<f64>> = (0..self.particles.len())
                 .into_par_iter()
-                .map(|i| root.calculate_force(i, &self.particles, self.force_accuracy))
+                .map(|i| {
+                    let mut total_force = Vector3::zeros();
+                    let p_i = &self.particles[i];
+                    for (j, p_j) in self.particles.iter().enumerate() {
+                        if i == j { continue; }
+                        let r_vec = p_j.position - p_i.position;
+                        let r = r_vec.magnitude();
+                        
+                        if r < 1e-15 { continue; }
+                        
+                        // GADGET-style softened gravity
+                        let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
+                        let force_magnitude = general_relativity::G * p_i.mass * p_j.mass / (softened_r * softened_r * softened_r);
+                        
+                        total_force += r_vec * force_magnitude;
+                    }
+                    total_force
+                })
                 .collect();
             
             // Apply forces to update accelerations

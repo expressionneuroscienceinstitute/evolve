@@ -35,7 +35,7 @@ use std::time::Instant;
 
 use self::nuclear_physics::StellarNucleosynthesis;
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
-use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT};
+use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT, VACUUM_PERMITTIVITY};
 use physics_types as shared_types;
 
 pub use constants::*;
@@ -1020,9 +1020,7 @@ impl PhysicsEngine {
     
     /// Process strong interaction between quarks/gluons
     fn process_strong_interaction(&mut self, _i: usize, _j: usize, _distance: f64) -> Result<()> {
-        // Simplified strong interaction - would implement QCD here
-        // For now, just a placeholder for confinement forces
-        Ok(())
+        unimplemented!("QCD strong force calculation requires advanced lattice gauge theory implementation")
     }
     
     /// Process weak interaction 
@@ -2516,8 +2514,25 @@ impl PhysicsEngine {
                     if i == j { continue; }
                     let dir = p_j.position - p_i.position;
                     let dist_sq = dir.norm_squared().max(1e-12);
+                    let distance = dist_sq.sqrt();
+                    
+                    // Newtonian force
                     let f_mag = g_const * p_i.mass * p_j.mass / dist_sq;
-                    force += dir.normalize() * f_mag;
+                    let newtonian_force = dir.normalize() * f_mag;
+                    
+                    // Add post-Newtonian correction for massive objects
+                    if general_relativity::requires_relativistic_treatment(p_i.mass, p_i.velocity.norm(), distance) ||
+                       general_relativity::requires_relativistic_treatment(p_j.mass, p_j.velocity.norm(), distance) {
+                        let pn_correction = general_relativity::post_newtonian_force_correction(
+                            p_i.mass, p_j.mass, distance,
+                            [p_i.velocity.x, p_i.velocity.y, p_i.velocity.z],
+                            [p_j.velocity.x, p_j.velocity.y, p_j.velocity.z]
+                        );
+                        let pn_force = Vector3::new(pn_correction[0], pn_correction[1], pn_correction[2]);
+                        force += newtonian_force + pn_force;
+                    } else {
+                        force += newtonian_force;
+                    }
                 }
                 force
             })
@@ -2699,8 +2714,8 @@ pub type ReactionCoordinate = Vector3<f64>;
 pub const MUON_MASS: f64 = 1.883e-28; // kg
 pub const TAU_MASS: f64 = 3.167e-27; // kg
 
-// Additional physics constants for nuclear reactions
-pub const K_E: f64 = 8.99e9; // Coulomb constant (N⋅m²/C²)
+// Exact Coulomb constant: k_e = 1/(4π ε₀)
+pub const K_E: f64 = 1.0 / (4.0 * std::f64::consts::PI * VACUUM_PERMITTIVITY); // N⋅m²/C²
 pub const E_CHARGE: f64 = ELEMENTARY_CHARGE;
 pub const C: f64 = SPEED_OF_LIGHT;
 pub const C_SQUARED: f64 = SPEED_OF_LIGHT * SPEED_OF_LIGHT;
@@ -4694,10 +4709,10 @@ impl crate::quantum_chemistry::QuantumChemistryEngine {
         Vec::new()
     }
 
-    fn lda_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
-    fn gga_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
-    fn hybrid_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
-    fn meta_gga_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
+    fn lda_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { unimplemented!("LDA exchange-correlation functional requires electron density integration") }
+    fn gga_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { unimplemented!("GGA exchange-correlation functional requires density gradient calculations") }
+    fn hybrid_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { unimplemented!("Hybrid DFT functional requires exact exchange mixing") }
+    fn meta_gga_exchange_correlation(&self, _molecule: &crate::Molecule) -> Result<f64> { unimplemented!("Meta-GGA functional requires kinetic energy density") }
 
     fn get_atomic_energy(&self, _atomic_number: &u32) -> f64 { 0.0 }
     fn get_bond_energy(&self, _bond_type: &crate::BondType, _bond_length: f64) -> f64 { 0.0 }
@@ -4706,17 +4721,17 @@ impl crate::quantum_chemistry::QuantumChemistryEngine {
 
     fn get_atom_type(&self, _atom: &crate::Atom) -> crate::ParticleType { crate::ParticleType::HydrogenAtom }
 
-    fn calculate_angle_energy(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
-    fn calculate_dihedral_energy(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
-    fn calculate_nonbonded_energy(&self, _molecule: &crate::Molecule) -> Result<f64> { Ok(0.0) }
+    fn calculate_angle_energy(&self, _molecule: &crate::Molecule) -> Result<f64> { unimplemented!("Angle energy calculation requires force field parameter lookup") }
+    fn calculate_dihedral_energy(&self, _molecule: &crate::Molecule) -> Result<f64> { unimplemented!("Dihedral energy calculation requires torsion parameter database") }
+    fn calculate_nonbonded_energy(&self, _molecule: &crate::Molecule) -> Result<f64> { unimplemented!("Non-bonded energy requires van der Waals and electrostatic calculations") }
 
     fn partition_qm_mm(&self, molecule: &crate::Molecule) -> (Vec<crate::Atom>, Vec<crate::Atom>) {
         (molecule.atoms.clone(), Vec::new())
     }
 
-    fn calculate_qm_region_energy(&self, _atoms: &[crate::Atom]) -> Result<f64> { Ok(0.0) }
-    fn calculate_mm_region_energy(&self, _atoms: &[crate::Atom]) -> Result<f64> { Ok(0.0) }
-    fn calculate_qm_mm_interaction(&self, _qm: &[crate::Atom], _mm: &[crate::Atom]) -> Result<f64> { Ok(0.0) }
+    fn calculate_qm_region_energy(&self, _atoms: &[crate::Atom]) -> Result<f64> { unimplemented!("QM region energy requires ab initio or DFT calculation") }
+    fn calculate_mm_region_energy(&self, _atoms: &[crate::Atom]) -> Result<f64> { unimplemented!("MM region energy requires classical force field evaluation") }
+    fn calculate_qm_mm_interaction(&self, _qm: &[crate::Atom], _mm: &[crate::Atom]) -> Result<f64> { unimplemented!("QM/MM interaction requires electrostatic embedding") }
 
     fn reactants_match(&self, _db_reactants: &[crate::ParticleType], _reactants: &[crate::ParticleType]) -> bool { false }
 }

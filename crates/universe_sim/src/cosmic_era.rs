@@ -295,6 +295,105 @@ impl PhysicalTransition {
 
 pub type CosmicEra = UniverseState;
 
+/// Cosmological calculations based on Friedmann equations
+pub mod cosmology {
+    use std::f64::consts::PI;
+    
+    /// Standard cosmological parameters (Planck 2018)
+    pub struct CosmologicalParameters {
+        pub h0: f64,           // Hubble constant in km/s/Mpc
+        pub omega_m: f64,      // Matter density parameter
+        pub omega_lambda: f64, // Dark energy density parameter
+        pub omega_r: f64,      // Radiation density parameter
+        pub omega_k: f64,      // Curvature parameter
+    }
+    
+    impl Default for CosmologicalParameters {
+        fn default() -> Self {
+            Self {
+                h0: 67.4,           // km/s/Mpc (Planck 2018)
+                omega_m: 0.315,     // Total matter
+                omega_lambda: 0.685, // Dark energy
+                omega_r: 9.24e-5,   // Radiation (photons + neutrinos)
+                omega_k: 0.0,       // Flat universe
+            }
+        }
+    }
+    
+    impl CosmologicalParameters {
+        /// Calculate universe age from redshift using Friedmann equation
+        pub fn universe_age_from_redshift(&self, redshift: f64) -> f64 {
+            // Age = integral from z to infinity of dz' / ((1+z') * H(z'))
+            // Using approximate analytical solution for ΛCDM
+            let h0_si = self.h0 * 1000.0 / 3.086e22; // Convert to SI units (s^-1)
+            
+            // Scale factor at given redshift
+            let a = 1.0 / (1.0 + redshift);
+            
+            // Hubble parameter as function of scale factor
+            let h_a = h0_si * (self.omega_r / a.powi(4) + self.omega_m / a.powi(3) + 
+                              self.omega_k / a.powi(2) + self.omega_lambda).sqrt();
+            
+            // Approximate age calculation (analytical for matter-dominated)
+            if self.omega_lambda.abs() < 1e-6 {
+                // Matter-dominated universe
+                2.0 / (3.0 * h_a * a.powf(1.5))
+            } else {
+                // ΛCDM universe - use approximation
+                let x = self.omega_lambda / self.omega_m;
+                let eta = (2.0 * x.sqrt() * a.powf(1.5)).asinh();
+                (2.0 / (3.0 * h0_si * self.omega_lambda.sqrt())) * eta
+            }
+        }
+        
+        /// Calculate scale factor from cosmic time
+        pub fn scale_factor_from_time(&self, time_seconds: f64) -> f64 {
+            let h0_si = self.h0 * 1000.0 / 3.086e22; // Convert to SI units
+            
+            if self.omega_lambda.abs() < 1e-6 {
+                // Matter-dominated: a(t) ∝ t^(2/3)
+                let t0 = 2.0 / (3.0 * h0_si); // Age at a=1
+                (time_seconds / t0).powf(2.0/3.0)
+            } else {
+                // ΛCDM universe
+                let omega_m_over_lambda = self.omega_m / self.omega_lambda;
+                let h_lambda = h0_si * self.omega_lambda.sqrt();
+                
+                // Solve parametrically: t = (2/(3H_Λ)) * sinh^(-1)(sqrt(Ω_Λ/Ω_m) * a^(3/2))
+                let x = 1.5 * h_lambda * time_seconds;
+                let y = x.sinh();
+                let a_cubed_half = y / omega_m_over_lambda.sqrt();
+                a_cubed_half.powf(2.0/3.0)
+            }
+        }
+        
+        /// Calculate current age of universe (at z=0)
+        pub fn current_universe_age(&self) -> f64 {
+            self.universe_age_from_redshift(0.0)
+        }
+        
+        /// Calculate Hubble parameter at given redshift
+        pub fn hubble_parameter(&self, redshift: f64) -> f64 {
+            let a = 1.0 / (1.0 + redshift);
+            self.h0 * (self.omega_r / a.powi(4) + self.omega_m / a.powi(3) + 
+                      self.omega_k / a.powi(2) + self.omega_lambda).sqrt()
+        }
+        
+        /// Calculate critical density at given redshift
+        pub fn critical_density(&self, redshift: f64) -> f64 {
+            let h_z = self.hubble_parameter(redshift) * 1000.0 / 3.086e22; // SI units
+            3.0 * h_z.powi(2) / (8.0 * PI * 6.67430e-11) // ρ_c = 3H²/(8πG)
+        }
+        
+        /// Calculate lookback time to given redshift
+        pub fn lookback_time(&self, redshift: f64) -> f64 {
+            let current_age = self.current_universe_age();
+            let age_at_z = self.universe_age_from_redshift(redshift);
+            current_age - age_at_z
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -456,10 +456,20 @@ EOF
 install_endf() {
     log_info "Installing ENDF data libraries..."
 
-    # Detect existing ENDF installation
-    if [ -n "$ENDF_LIB_DIR" ] && { [ -f "$ENDF_LIB_DIR/lib/libendf.so" ] || [ -f "$ENDF_LIB_DIR/lib/libendf.dylib" ]; }; then
-        log_success "Found existing ENDF libraries at $ENDF_LIB_DIR"
-        log_info "Skipping ENDF installation"
+    # If the project already contains ENDF data, reuse it to avoid downloads
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+    LOCAL_ENDF_DIR="$PROJECT_ROOT/endf-b-viii.0"
+
+    if [ -d "$LOCAL_ENDF_DIR" ]; then
+        log_info "Found local ENDF dataset at $LOCAL_ENDF_DIR — installing directly."
+        $SUDO mkdir -p "$INSTALL_PREFIX/endf/data"
+        $SUDO rsync -a "$LOCAL_ENDF_DIR/" "$INSTALL_PREFIX/endf/data/"
+
+        # Skip parser build if already installed
+        echo "export ENDF_LIB_DIR=$INSTALL_PREFIX/endf" | $SUDO tee -a /etc/environment
+        export ENDF_LIB_DIR="$INSTALL_PREFIX/endf"
+        log_success "ENDF data installed from local copy"
         return 0
     fi
 

@@ -178,6 +178,13 @@ pub const RYDBERG_ENERGY: f64 = 13.605693122994;
 /// Stefan–Boltzmann constant σ = 2π⁵k⁴/(15h³c²) (matches NIST to <10⁻⁸)
 /// Used for blackbody temperature calculations.
 
+/// The unified atomic mass unit (u), in kilograms.
+/// Also known as the Dalton (Da).
+/// Source: CODATA 2018
+pub const ATOMIC_MASS_UNIT: f64 = 1.66053906660e-27; // kg
+
+pub const LIGHT_YEAR_TO_METERS: f64 = 9.461e15;     // meters
+
 #[cfg(test)]
 mod tests {
     use super::*;

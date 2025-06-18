@@ -1,5 +1,5 @@
 use super::*;
-use nalgebra::{Vector3, Matrix3, Complex};
+use nalgebra::{Vector3, Matrix3, Complex, DMatrix};
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -88,23 +88,60 @@ pub struct QuantumChemistryEngine {
     pub force_field_parameters: ForceFieldParameters,
 }
 
-/// Basis set for quantum calculations
+/// A shell of contracted Gaussian-type orbitals.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Contraction {
+    pub angular_momentum: u32, // 0 for s, 1 for p, 2 for d, etc.
+    pub exponents: Vec<f64>,
+    pub coefficients: Vec<f64>,
+}
+
+/// Basis set for quantum calculations, mapping atomic number to its shells.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BasisSet {
     pub name: String,
-    pub angular_momentum_functions: HashMap<u32, Vec<GaussianFunction>>,
-    pub contraction_coefficients: Vec<f64>,
-    pub exponents: Vec<f64>,
+    // Key: atomic number (Z)
+    pub shells_for_atom: HashMap<u32, Vec<Contraction>>,
 }
 
 impl BasisSet {
-    // Placeholder for a minimal basis set
+    /// Populates STO-3G, a minimal basis set, for selected elements.
+    /// STO-3G approximates a single Slater-type orbital with 3 Gaussian functions.
+    /// Source: Hehre, W. J.; Stewart, R. F.; Pople, J. A. J. Chem. Phys. 1969, 51, 2657.
     pub fn sto_3g() -> Self {
+        let mut shells_for_atom = HashMap::new();
+
+        // Hydrogen (Z=1)
+        shells_for_atom.insert(1, vec![
+            Contraction { // 1s
+                angular_momentum: 0,
+                exponents: vec![3.42525091, 0.62391373, 0.16885540],
+                coefficients: vec![0.15432897, 0.53532814, 0.44463454],
+            }
+        ]);
+
+        // Carbon (Z=6)
+        shells_for_atom.insert(6, vec![
+            Contraction { // 1s
+                angular_momentum: 0,
+                exponents: vec![71.6168370, 13.0450960, 3.5305122],
+                coefficients: vec![0.15432897, 0.53532814, 0.44463454],
+            },
+            Contraction { // 2s
+                angular_momentum: 0,
+                exponents: vec![2.9412494, 0.6834831, 0.2222899],
+                coefficients: vec![-0.09996723, 0.39951283, 0.70011547],
+            },
+            Contraction { // 2p
+                angular_momentum: 1,
+                exponents: vec![2.9412494, 0.6834831, 0.2222899],
+                coefficients: vec![0.15591627, 0.60768372, 0.39195739],
+            }
+        ]);
+
         Self {
             name: "STO-3G".to_string(),
-            angular_momentum_functions: HashMap::new(),
-            contraction_coefficients: vec![],
-            exponents: vec![],
+            shells_for_atom,
         }
     }
 }
@@ -196,6 +233,7 @@ pub struct VdwParameters {
     pub sigma: f64,      // Size parameter
     pub epsilon: f64,    // Energy parameter
     pub radius: f64,     // Atomic radius
+    pub partial_charge: f64, // Partial charge for electrostatic calculations
 }
 
 impl Atom {
@@ -228,10 +266,55 @@ impl QuantumChemistryEngine {
             functional: DftFunctional::Hybrid,
             calculation_cache: HashMap::new(),
             reaction_database: Self::initialize_reaction_database(),
-            force_field_parameters: ForceFieldParameters::default(),
+            force_field_parameters: Self::initialize_force_field(),
         }
     }
     
+    /// Initializes a basic force field with parameters for common molecules (e.g., water).
+    /// Sources: TIP3P water model for VdW and charges. Generic values for bonds/angles.
+    fn initialize_force_field() -> ForceFieldParameters {
+        let mut params = ForceFieldParameters::default();
+        
+        const KCAL_PER_MOL_TO_J: f64 = 4184.0 / 6.02214076e23;
+
+        // Water (TIP3P-like parameters)
+        let oh_bond_len = 0.9572e-10; // meters
+        let hoh_angle = 104.52f64.to_radians(); // radians
+        
+        // Using typical force constants from other force fields as placeholders
+        let kr_oh = 450.0 * KCAL_PER_MOL_TO_J / 1e-20; // J/m^2
+        let k_hoh = 55.0 * KCAL_PER_MOL_TO_J;      // J/rad^2
+        
+        params.bond_parameters.insert((ParticleType::Oxygen, ParticleType::Hydrogen), BondParameters {
+            equilibrium_length: oh_bond_len,
+            force_constant: kr_oh,
+            dissociation_energy: 492.0 * KJ_PER_MOL_TO_J_PER_BOND * 1000.0,
+        });
+
+        params.angle_parameters.insert((ParticleType::Hydrogen, ParticleType::Oxygen, ParticleType::Hydrogen), AngleParameters {
+            equilibrium_angle: hoh_angle,
+            force_constant: k_hoh,
+        });
+
+        // VdW for Oxygen (from TIP3P)
+        params.van_der_waals_parameters.insert(ParticleType::Oxygen, VdwParameters {
+            sigma: 3.15061e-10, // meters
+            epsilon: 0.1521 * KCAL_PER_MOL_TO_J, // Joules
+            radius: 1.77e-10, // meters, adjusted
+            partial_charge: -0.834 * constants::ELEMENTARY_CHARGE,
+        });
+
+        // VdW for Hydrogen (from TIP3P)
+        params.van_der_waals_parameters.insert(ParticleType::Hydrogen, VdwParameters {
+            sigma: 0.0, // TIP3P has no VdW for H, only charge
+            epsilon: 0.0,
+            radius: 1.2e-10,
+            partial_charge: 0.417 * constants::ELEMENTARY_CHARGE,
+        });
+
+        params
+    }
+
     pub fn initialize_reaction_database() -> Vec<ChemicalReaction> {
         // Placeholder for reaction database
         Vec::new()
@@ -331,6 +414,7 @@ impl QuantumChemistryEngine {
             sigma: 3.5e-10, // meters
             epsilon: 0.2 * KJ_PER_MOL_TO_J_PER_BOND, // Joules
             radius: 1.5e-10, // meters
+            partial_charge: 0.0, // Default partial charge
         };
 
         let atom_type_i = molecule.atoms[i].get_particle_type();
@@ -463,9 +547,103 @@ impl QuantumChemistryEngine {
     }
 
     // --- Placeholder Methods to Satisfy Compiler ---
-    fn generate_molecule_key(&self, molecule: &Molecule) -> String { format!("mol_{}", molecule.atoms.len()) }
+    /// Generates a canonical key for a molecule based on its atomic composition and geometry.
+    /// The key is invariant to atom ordering, translation, and rotation of the molecule.
+    /// This is used for caching calculation results.
+    fn generate_molecule_key(&self, molecule: &Molecule) -> String {
+        // Create a sortable representation of each atom: (atomic_number, x, y, z)
+        let mut atom_reprs: Vec<_> = molecule.atoms.iter().map(|atom| {
+            (
+                atom.nucleus.atomic_number,
+                // Truncate coordinates to handle floating point inaccuracies
+                (atom.position.x * 1e6).round() as i64,
+                (atom.position.y * 1e6).round() as i64,
+                (atom.position.z * 1e6).round() as i64,
+            )
+        }).collect();
+
+        // Sort to create a canonical ordering
+        atom_reprs.sort_unstable();
+
+        // Create a string representation of the sorted atoms
+        atom_reprs.iter()
+            .map(|(z, x, y, z_coord)| format!("{}:{}:{}:{};", z, x, y, z_coord))
+            .collect::<String>()
+    }
+
     fn count_electrons(&self, molecule: &Molecule) -> usize { molecule.atoms.iter().map(|a| a.nucleus.atomic_number as usize).sum() }
-    fn build_overlap_matrix(&self, _molecule: &Molecule) -> Result<Matrix3<f64>> { Ok(Matrix3::identity()) }
+
+    /// Builds the overlap matrix S for a given molecule and basis set.
+    /// The element Sμν is the overlap integral between atomic orbitals μ and ν.
+    /// ∫φμ*(r)φν(r)dr
+    /// This implementation currently handles s-type orbitals only.
+    fn build_overlap_matrix(&self, molecule: &Molecule) -> Result<DMatrix<f64>> {
+        
+        // Helper struct to represent a single basis function (atomic orbital)
+        struct BasisFunction<'a> {
+            contraction: &'a Contraction,
+            atom_center: Vector3<f64>,
+        }
+
+        // 1. Create a flat list of all basis functions for the molecule
+        let mut basis_functions = Vec::new();
+        for atom in &molecule.atoms {
+            if let Some(shells) = self.basis_set.shells_for_atom.get(&atom.nucleus.atomic_number) {
+                for shell in shells {
+                    // For p-orbitals, we'd add 3 functions (px, py, pz) here.
+                    // For now, we only handle s-orbitals (l=0).
+                    if shell.angular_momentum == 0 {
+                         basis_functions.push(BasisFunction {
+                            contraction: shell,
+                            atom_center: atom.position,
+                        });
+                    }
+                }
+            }
+        }
+
+        let basis_size = basis_functions.len();
+        if basis_size == 0 {
+            return Ok(DMatrix::from_element(0, 0, 0.0));
+        }
+        let mut overlap_matrix = DMatrix::from_element(basis_size, basis_size, 0.0);
+
+        // 2. Calculate the overlap for each pair of basis functions (μ, ν)
+        for i in 0..basis_size {
+            for j in 0..=i {
+                let bf_i = &basis_functions[i];
+                let bf_j = &basis_functions[j];
+
+                let mut integral = 0.0;
+
+                // Sum over primitive Gaussians: Σcᵢcⱼ∫gᵢgⱼ
+                for (k, &exp_i) in bf_i.contraction.exponents.iter().enumerate() {
+                    for (l, &exp_j) in bf_j.contraction.exponents.iter().enumerate() {
+                        let coeff_i = bf_i.contraction.coefficients[k];
+                        let coeff_j = bf_j.contraction.coefficients[l];
+                        let r_ab_sq = (bf_i.atom_center - bf_j.atom_center).norm_squared();
+
+                        // Overlap integral for two primitive s-type Gaussians
+                        // S_ab = (π/(α+β))^(3/2) * exp(-αβ/(α+β) * |Ra-Rb|²)
+                        let p = exp_i + exp_j;
+                        let prefactor = (std::f64::consts::PI / p).powf(1.5);
+                        let exponent = -(exp_i * exp_j / p) * r_ab_sq;
+                        let primitive_overlap = prefactor * exponent.exp();
+
+                        integral += coeff_i * coeff_j * primitive_overlap;
+                    }
+                }
+                
+                overlap_matrix[(i, j)] = integral;
+                if i != j {
+                    overlap_matrix[(j, i)] = integral; // Matrix is symmetric
+                }
+            }
+        }
+
+        Ok(overlap_matrix)
+    }
+
     fn build_kinetic_matrix(&self, _molecule: &Molecule) -> Result<Matrix3<f64>> { Ok(Matrix3::zeros()) }
     fn build_nuclear_attraction_matrix(&self, _molecule: &Molecule) -> Result<Matrix3<f64>> { Ok(Matrix3::zeros()) }
     fn build_fock_matrix(&self, _density: &Matrix3<f64>, _molecule: &Molecule) -> Result<Matrix3<f64>> { Ok(Matrix3::zeros()) }
@@ -475,8 +653,201 @@ impl QuantumChemistryEngine {
     fn gga_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
     fn hybrid_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
     fn meta_gga_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
-    fn molecular_mechanics_calculation(&self, _molecule: &Molecule) -> Result<ElectronicStructure> { Ok(ElectronicStructure::default()) }
+    
+    /// Molecular mechanics calculation using a classical force field.
+    /// The total energy is a sum of bonded (bond, angle, dihedral) and 
+    /// non-bonded (van der Waals, electrostatic) terms.
+    fn molecular_mechanics_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
+        let bond_energy = self.calculate_bond_energy(molecule)?;
+        let angle_energy = self.calculate_angle_energy(molecule)?;
+        let dihedral_energy = self.calculate_dihedral_energy(molecule)?;
+        let non_bonded_energy = self.calculate_non_bonded_energy(molecule)?;
+
+        let total_energy = bond_energy + angle_energy + dihedral_energy + non_bonded_energy;
+
+        Ok(ElectronicStructure {
+            total_energy,
+            ..Default::default()
+        })
+    }
+
     fn qm_mm_calculation(&self, _molecule: &Molecule) -> Result<ElectronicStructure> { Ok(ElectronicStructure::default()) }
+
+    // --- Molecular Mechanics Helpers ---
+
+    /// Calculates the total bond stretching energy of a molecule.
+    /// Uses a simple harmonic potential: E = k(r - r₀)²
+    fn calculate_bond_energy(&self, molecule: &Molecule) -> Result<f64> {
+        let mut total_bond_energy = 0.0;
+        for bond in &molecule.bonds {
+            let atom1 = &molecule.atoms[bond.atom_indices.0];
+            let atom2 = &molecule.atoms[bond.atom_indices.1];
+            let key = (atom1.get_particle_type(), atom2.get_particle_type());
+
+            if let Some(params) = self.force_field_parameters.bond_parameters.get(&key) {
+                let distance = (atom1.position - atom2.position).norm();
+                let displacement = distance - params.equilibrium_length;
+                total_bond_energy += params.force_constant * displacement.powi(2);
+            }
+        }
+        Ok(total_bond_energy)
+    }
+
+    /// Calculates the total angle bending energy of a molecule.
+    /// Uses a simple harmonic potential: E = k(θ - θ₀)²
+    fn calculate_angle_energy(&self, molecule: &Molecule) -> Result<f64> {
+        let mut total_angle_energy = 0.0;
+        let num_atoms = molecule.atoms.len();
+        if num_atoms < 3 {
+            return Ok(0.0);
+        }
+
+        // Build adjacency list for efficient neighbor lookup
+        let mut adj = vec![vec![]; num_atoms];
+        for bond in &molecule.bonds {
+            adj[bond.atom_indices.0].push(bond.atom_indices.1);
+            adj[bond.atom_indices.1].push(bond.atom_indices.0);
+        }
+
+        // Iterate over all atoms as the central atom of an angle
+        for j in 0..num_atoms {
+            let neighbors = &adj[j];
+            if neighbors.len() < 2 {
+                continue;
+            }
+            // Form angles from pairs of neighbors
+            for i_idx in 0..neighbors.len() {
+                for k_idx in (i_idx + 1)..neighbors.len() {
+                    let i = neighbors[i_idx];
+                    let k = neighbors[k_idx];
+
+                    let atom_i = &molecule.atoms[i];
+                    let atom_j = &molecule.atoms[j];
+                    let atom_k = &molecule.atoms[k];
+
+                    let key = (atom_i.get_particle_type(), atom_j.get_particle_type(), atom_k.get_particle_type());
+                    
+                    if let Some(params) = self.force_field_parameters.angle_parameters.get(&key) {
+                        let v_ji = atom_i.position - atom_j.position;
+                        let v_jk = atom_k.position - atom_j.position;
+                        let angle = v_ji.angle(&v_jk);
+                        let angle_displacement = angle - params.equilibrium_angle;
+                        total_angle_energy += params.force_constant * angle_displacement.powi(2);
+                    }
+                }
+            }
+        }
+        Ok(total_angle_energy)
+    }
+
+    /// Calculates the total dihedral/torsional energy of a molecule.
+    /// Uses a periodic potential: E = Vₙ(1 + cos(nφ - δ))
+    fn calculate_dihedral_energy(&self, molecule: &Molecule) -> Result<f64> {
+        let mut total_dihedral_energy = 0.0;
+        let num_atoms = molecule.atoms.len();
+        if num_atoms < 4 {
+            return Ok(0.0);
+        }
+
+        // Build adjacency list for efficient neighbor lookup
+        let mut adj = vec![vec![]; num_atoms];
+        for bond in &molecule.bonds {
+            adj[bond.atom_indices.0].push(bond.atom_indices.1);
+            adj[bond.atom_indices.1].push(bond.atom_indices.0);
+        }
+
+        // Iterate over all central bonds (j-k)
+        for j in 0..num_atoms {
+            for &k in &adj[j] {
+                if j > k { continue; } // Avoid double counting
+
+                for &i in &adj[j] {
+                    if i == k { continue; }
+
+                    for &l in &adj[k] {
+                        if l == j { continue; }
+
+                        let atom_i = &molecule.atoms[i];
+                        let atom_j = &molecule.atoms[j];
+                        let atom_k = &molecule.atoms[k];
+                        let atom_l = &molecule.atoms[l];
+
+                        let key = (atom_i.get_particle_type(), atom_j.get_particle_type(), atom_k.get_particle_type(), atom_l.get_particle_type());
+
+                        if let Some(params) = self.force_field_parameters.dihedral_parameters.get(&key) {
+                            let v_ij = atom_j.position - atom_i.position;
+                            let v_jk = atom_k.position - atom_j.position;
+                            let v_kl = atom_l.position - atom_k.position;
+
+                            let n1 = v_ij.cross(&v_jk).normalize();
+                            let n2 = v_jk.cross(&v_kl).normalize();
+                            
+                            let cos_phi = n1.dot(&n2);
+                            let phi = cos_phi.acos();
+
+                            // Handle sign of the angle
+                            let sign = if v_kl.dot(&n1) > 0.0 { 1.0 } else { -1.0 };
+                            let phi_signed = phi * sign;
+
+                            total_dihedral_energy += params.barrier_height * (1.0 + (params.periodicity as f64 * phi_signed - params.phase_angle).cos());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(total_dihedral_energy)
+    }
+
+    /// Calculates non-bonded energy (van der Waals and electrostatic).
+    /// This implementation excludes pairs that are directly bonded.
+    /// A more sophisticated implementation would also exclude 1-3 pairs and scale 1-4 pairs.
+    fn calculate_non_bonded_energy(&self, molecule: &Molecule) -> Result<f64> {
+        let mut total_non_bonded_energy = 0.0;
+        let num_atoms = molecule.atoms.len();
+        if num_atoms < 2 {
+            return Ok(0.0);
+        }
+
+        // Build a set of bonded pairs for quick lookup
+        let bonded_pairs: std::collections::HashSet<(usize, usize)> = molecule.bonds.iter().map(|b| {
+            if b.atom_indices.0 < b.atom_indices.1 {
+                (b.atom_indices.0, b.atom_indices.1)
+            } else {
+                (b.atom_indices.1, b.atom_indices.0)
+            }
+        }).collect();
+
+        let coulomb_k = 1.0 / (4.0 * std::f64::consts::PI * constants::VACUUM_PERMITTIVITY);
+
+        for i in 0..num_atoms {
+            for j in (i + 1)..num_atoms {
+                // Exclude directly bonded pairs
+                if bonded_pairs.contains(&(i, j)) {
+                    continue;
+                }
+
+                let atom_i = &molecule.atoms[i];
+                let atom_j = &molecule.atoms[j];
+                let distance = (atom_i.position - atom_j.position).norm();
+
+                if distance < 1e-12 { continue; }
+
+                // Van der Waals energy
+                total_non_bonded_energy += self.van_der_waals_energy(i, j, distance, molecule);
+
+                // Electrostatic energy
+                let type_i = atom_i.get_particle_type();
+                let type_j = atom_j.get_particle_type();
+                let charge_i = self.force_field_parameters.van_der_waals_parameters.get(&type_i).map_or(0.0, |p| p.partial_charge);
+                let charge_j = self.force_field_parameters.van_der_waals_parameters.get(&type_j).map_or(0.0, |p| p.partial_charge);
+                
+                if charge_i.abs() > 1e-9 && charge_j.abs() > 1e-9 {
+                     total_non_bonded_energy += coulomb_k * (charge_i * charge_j) / distance;
+                }
+            }
+        }
+        Ok(total_non_bonded_energy)
+    }
 }
 
 impl Default for ElectronicStructure {

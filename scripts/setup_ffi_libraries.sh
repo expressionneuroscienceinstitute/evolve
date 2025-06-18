@@ -328,12 +328,21 @@ install_endf() {
 
     cd "$BUILD_DIR"
     
-    # Download ENDF/B-VIII.0 data
+    # Download ENDF/B-VIII.0 data (skip gracefully on failure)
     if [ ! -f "ENDF-B-VIII.0_neutrons.tar.gz" ]; then
-        log_info "Downloading ENDF/B-VIII.0 neutron data..."
-        wget https://www.nndc.bnl.gov/endf/b8.0/download/ENDF-B-VIII.0_neutrons.tar.gz
+        log_info "Attempting to download ENDF/B-VIII.0 neutron data..."
+        if ! wget https://www.nndc.bnl.gov/endf/b8.0/download/ENDF-B-VIII.0_neutrons.tar.gz; then
+            log_warning "ENDF data download failed (likely 404). Skipping ENDF installation per user instruction."
+            return 0
+        fi
     fi
-    
+
+    # Verify archive exists before extraction
+    if [ ! -f "$BUILD_DIR/ENDF-B-VIII.0_neutrons.tar.gz" ]; then
+        log_warning "ENDF neutron data archive not found after download attempt. Skipping ENDF installation."
+        return 0
+    fi
+
     # Install data
     $SUDO mkdir -p "$INSTALL_PREFIX/endf/data"
     cd "$INSTALL_PREFIX/endf/data"

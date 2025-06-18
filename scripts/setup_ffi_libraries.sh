@@ -331,6 +331,7 @@ install_gadget() {
             cp Template-Config.sh Config.sh
         fi
         if [ ! -f "Makefile.systype" ] && [ -f "Template-Makefile.systype" ]; then
+            cp Template-Makefile.systype Makefile.systype
             # Use portable sed in-place edit compatible with GNU and BSD
             if sed --version >/dev/null 2>&1; then
                 sed -i 's/^SYSTYPE=.*/SYSTYPE="Generic-gcc"/' Makefile.systype
@@ -347,6 +348,9 @@ install_gadget() {
                 log_info "Created python symlink to python3 for Gadget4 build"
             fi
         fi
+
+        # Ensure SYSTYPE env var so Makefile picks it up
+        export SYSTYPE="Generic-gcc"
 
         # Attempt to build Gadget4 (single threaded if THREADS unset)
         if make -j${THREADS:-4}; then
@@ -376,25 +380,41 @@ install_endf() {
 
     cd "$BUILD_DIR"
     
-    # Download ENDF/B-VIII.0 data (skip gracefully on failure)
-    if [ ! -f "ENDF-B-VIII.0_neutrons.tar.gz" ]; then
-        log_info "Attempting to download ENDF/B-VIII.0 neutron data..."
-        if ! wget https://www.nndc.bnl.gov/endf/b8.0/download/ENDF-B-VIII.0_neutrons.tar.gz; then
-            log_warning "ENDF data download failed (likely 404). Skipping ENDF installation per user instruction."
-            return 0
+    # Prefer newer GNDS zip of ENDF/B-VIII.1 if available
+    ENDF_ZIP="ENDF-B-VIII.1-GNDS.zip"
+    ENDF_URL="https://www.nndc.bnl.gov/endf-releases/releases/B-VIII.1/${ENDF_ZIP}"
+
+    if [ ! -f "$ENDF_ZIP" ]; then
+        log_info "Attempting to download ENDF/B-VIII.1 GNDS dataset..."
+        if ! curl -L -o "$ENDF_ZIP" "$ENDF_URL"; then
+            log_warning "ENDF/B-VIII.1 download failed. Falling back to ENDF/B-VIII.0 neutron tarball."
+            if [ ! -f "ENDF-B-VIII.0_neutrons.tar.gz" ]; then
+                log_info "Attempting to download ENDF/B-VIII.0 neutron data..."
+                if ! wget https://www.nndc.bnl.gov/endf/b8.0/download/ENDF-B-VIII.0_neutrons.tar.gz; then
+                    log_warning "ENDF data download failed again. Skipping ENDF installation."
+                    return 0
+                fi
+                ENDF_ARCHIVE="ENDF-B-VIII.0_neutrons.tar.gz"
+            else
+                ENDF_ARCHIVE="ENDF-B-VIII.0_neutrons.tar.gz"
+            fi
+        else
+            ENDF_ARCHIVE="$ENDF_ZIP"
         fi
+    else
+        ENDF_ARCHIVE="$ENDF_ZIP"
     fi
 
-    # Verify archive exists before extraction
-    if [ ! -f "$BUILD_DIR/ENDF-B-VIII.0_neutrons.tar.gz" ]; then
-        log_warning "ENDF neutron data archive not found after download attempt. Skipping ENDF installation."
-        return 0
-    fi
-
-    # Install data
+    # Determine extraction based on archive type
     $SUDO mkdir -p "$INSTALL_PREFIX/endf/data"
     cd "$INSTALL_PREFIX/endf/data"
-    $SUDO tar -xzf "$BUILD_DIR/ENDF-B-VIII.0_neutrons.tar.gz"
+    if [[ "$ENDF_ARCHIVE" == *.zip ]]; then
+        log_info "Extracting ENDF GNDS zip..."
+        $SUDO unzip -o "$BUILD_DIR/$ENDF_ARCHIVE"
+    else
+        log_info "Extracting ENDF neutron tarball..."
+        $SUDO tar -xzf "$BUILD_DIR/$ENDF_ARCHIVE"
+    fi
     
     # Clone and build ENDF parser
     cd "$BUILD_DIR"

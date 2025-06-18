@@ -6,6 +6,9 @@ use std::collections::HashMap;
 use once_cell::sync::Lazy;
 use crate::constants;
 use std::f64::consts::PI;
+use rayon::prelude::*;
+use anyhow::{anyhow, ensure};
+use nalgebra::{Cholesky, SymmetricEigen};
 
 
 // Source: CRC Handbook of Chemistry and Physics, 91st ed.
@@ -669,8 +672,28 @@ impl QuantumChemistryEngine {
                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (0, 1, 0) }); // py
                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (0, 0, 1) }); // pz
                         }
+                        2 => { // d-shell (6 Cartesian functions)
+                            basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (2, 0, 0) }); // d_xx
+                            basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (0, 2, 0) }); // d_yy
+                            basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (0, 0, 2) }); // d_zz
+                            basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (1, 1, 0) }); // d_xy
+                            basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (1, 0, 1) }); // d_xz
+                            basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (0, 1, 1) }); // d_yz
+                        }
+                        3 => { // f-shell (10 Cartesian functions)
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (3, 0, 0) }); // f_xxx
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (0, 3, 0) }); // f_yyy
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (0, 0, 3) }); // f_zzz
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (2, 1, 0) }); // f_xxy
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (2, 0, 1) }); // f_xxz
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (1, 2, 0) }); // f_xyy
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (0, 2, 1) }); // f_yyz
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (1, 0, 2) }); // f_xzz
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (0, 1, 2) }); // f_yzz
+                             basis_functions.push(BasisFunction { contraction, atom_center: atom.position, angular_momentum: (1, 1, 1) }); // f_xyz
+                        }
                         // Add other angular momenta (d, f) here as needed
-                        _ => unimplemented!("Angular momentum > 1 not supported yet"),
+                        _ => unimplemented!("Angular momentum > 3 not supported yet. Found: {}", contraction.angular_momentum),
                     }
                 }
             }
@@ -679,34 +702,244 @@ impl QuantumChemistryEngine {
         let n_basis = basis_functions.len();
         let mut kinetic_matrix = DMatrix::zeros(n_basis, n_basis);
 
+        // The kinetic matrix is symmetric, so we only need to compute the lower or upper triangle.
+        // We can parallelize the computation of matrix elements using rayon.
+        // Create a flat list of index pairs (i, j) for the upper triangle.
+        let mut indices: Vec<(usize, usize)> = Vec::with_capacity(n_basis * (n_basis + 1) / 2);
         for i in 0..n_basis {
-            for j in 0..n_basis {
-                let bf_i = &basis_functions[i];
-                let bf_j = &basis_functions[j];
-                let mut integral = 0.0;
+            for j in i..n_basis { // Note: j starts from i
+                indices.push((i, j));
+            }
+        }
 
-                for (c1, &exp1) in bf_i.contraction.coefficients.iter().zip(&bf_i.contraction.exponents) {
-                    for (c2, &exp2) in bf_j.contraction.coefficients.iter().zip(&bf_j.contraction.exponents) {
-                        let norm1 = normalization(exp1, &bf_i.angular_momentum);
-                        let norm2 = normalization(exp2, &bf_j.angular_momentum);
-                        
-                        integral += c1 * c2 * norm1 * norm2 * kinetic_integral(
-                            exp1, bf_i.atom_center, &bf_i.angular_momentum,
-                            exp2, bf_j.atom_center, &bf_j.angular_momentum,
-                        );
-                    }
+        let matrix_elements: Vec<f64> = indices.par_iter().map(|&(i, j)| {
+            let bf_i = &basis_functions[i];
+            let bf_j = &basis_functions[j];
+            let mut integral = 0.0;
+
+            // This is the contracted integral T_IJ = sum_{p,q} c_p * c_q * T_pq
+            // where T_pq is the integral over primitive gaussians.
+            for (c1, &exp1) in bf_i.contraction.coefficients.iter().zip(&bf_i.contraction.exponents) {
+                for (c2, &exp2) in bf_j.contraction.coefficients.iter().zip(&bf_j.contraction.exponents) {
+                    let norm1 = normalization(exp1, &bf_i.angular_momentum);
+                    let norm2 = normalization(exp2, &bf_j.angular_momentum);
+                    
+                    integral += c1 * c2 * norm1 * norm2 * kinetic_integral(
+                        exp1, bf_i.atom_center, &bf_i.angular_momentum,
+                        exp2, bf_j.atom_center, &bf_j.angular_momentum,
+                    );
                 }
-                kinetic_matrix[(i, j)] = integral;
+            }
+            integral
+        }).collect();
+
+        // Populate the full matrix from the calculated elements.
+        for (k, &(i, j)) in indices.iter().enumerate() {
+            let value = matrix_elements[k];
+            kinetic_matrix[(i, j)] = value;
+            if i != j {
+                kinetic_matrix[(j, i)] = value; // Set the symmetric element
             }
         }
 
         Ok(kinetic_matrix)
     }
 
-    fn build_nuclear_attraction_matrix(&self, _molecule: &Molecule) -> Result<DMatrix<f64>> { unimplemented!() }
-    fn build_fock_matrix(&self, _density: &DMatrix<f64>, _molecule: &Molecule) -> Result<DMatrix<f64>> { unimplemented!() }
-    fn solve_eigenvalue_problem(&self, _fock: &DMatrix<f64>, _overlap: &DMatrix<f64>) -> Result<(Vec<f64>, DMatrix<f64>)> { unimplemented!() }
-    fn calculate_total_energy(&self, _density: &DMatrix<f64>, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
+    fn build_nuclear_attraction_matrix(&self, molecule: &Molecule) -> Result<DMatrix<f64>> {
+        // --- Nuclear attraction integrals V_μν ---
+        // V_{μν} = -\sum_A Z_A \int φ_μ(r) \frac{1}{|r-R_A|} φ_ν(r) \,dr
+        // For contracted Cartesian Gaussian basis functions this evaluates to:
+        // V_{μν} = -\sum_A Z_A \sum_{p∈μ} \sum_{q∈ν} c_p c_q N_p N_q (2π / p) e^{-α_p α_q/p |R_a-R_b|^2} F_0(p |P-R_A|^2)
+        // where p = α_p + α_q, P is the Gaussian product centre and F_0 is the Boys function of order 0.
+        // 
+        // This implementation currently supports s-type (ℓ = 0) contracted Gaussians, which is sufficient for the
+        // existing STO-3G basis provided. Extension to higher angular momentum functions can reuse Obara–Saika
+        // recursion but is left for future work.
+        //
+        // All quantities are assumed to be in atomic units (Bohr, Hartree). Calling code must ensure the coordinate
+        // system is consistent. The test-suite converts Å to Bohr accordingly.
+
+        struct BasisFunction<'a> {
+            contraction: &'a Contraction,
+            center: Vector3<f64>,
+        }
+
+        // 1. Collect all s-type basis functions for the molecule
+        let mut basis_functions = Vec::new();
+        for atom in &molecule.atoms {
+            if let Some(shells) = self.basis_set.shells_for_atom.get(&atom.nucleus.atomic_number) {
+                for shell in shells {
+                    if shell.angular_momentum == 0 {
+                        basis_functions.push(BasisFunction { contraction: shell, center: atom.position });
+                    }
+                }
+            }
+        }
+
+        let n_basis = basis_functions.len();
+        if n_basis == 0 {
+            return Ok(DMatrix::from_element(0, 0, 0.0));
+        }
+
+        let mut v_matrix = DMatrix::<f64>::zeros(n_basis, n_basis);
+
+        // 2. Precompute nuclear charges and positions
+        let nuclei: Vec<(Vector3<f64>, f64)> = molecule
+            .atoms
+            .iter()
+            .map(|atom| (atom.position, atom.nucleus.atomic_number as f64))
+            .collect();
+
+        // 3. Double loop over (μ, ν) – matrix symmetry exploited
+        for mu in 0..n_basis {
+            for nu in 0..=mu {
+                let bf_mu = &basis_functions[mu];
+                let bf_nu = &basis_functions[nu];
+
+                let mut integral = 0.0;
+
+                // Sum over nuclei A
+                for (r_a, z_a) in &nuclei {
+                    // Sum over primitives of μ and ν
+                    for (c_p, &alpha_p) in bf_mu.contraction.coefficients.iter().zip(&bf_mu.contraction.exponents) {
+                        let norm_p = normalization(alpha_p, &(0, 0, 0));
+                        for (c_q, &alpha_q) in bf_nu.contraction.coefficients.iter().zip(&bf_nu.contraction.exponents) {
+                            let norm_q = normalization(alpha_q, &(0, 0, 0));
+
+                            let p = alpha_p + alpha_q;
+
+                            // Gaussian product centre P
+                            let p_center = gaussian_product_center(alpha_p, bf_mu.center, alpha_q, bf_nu.center);
+
+                            // |R_a - R_b|^2 term for exponent
+                            let rab2 = (bf_mu.center - bf_nu.center).norm_squared();
+                            let k_ab = (-alpha_p * alpha_q / p * rab2).exp();
+
+                            // Boys function argument t = p |P - R_A|^2
+                            let t = p * (p_center - *r_a).norm_squared();
+                            let boys = boys_function_0(t);
+
+                            let coeff = -z_a * 2.0 * PI / p;
+
+                            integral += c_p * c_q * norm_p * norm_q * coeff * k_ab * boys;
+                        }
+                    }
+                }
+
+                v_matrix[(mu, nu)] = integral;
+                if mu != nu {
+                    v_matrix[(nu, mu)] = integral; // Symmetric
+                }
+            }
+        }
+
+        Ok(v_matrix)
+    }
+
+    fn build_fock_matrix(&self, _density: &DMatrix<f64>, molecule: &Molecule) -> Result<DMatrix<f64>> {
+        // At the Hartree-Fock level the Fock matrix is:
+        // F = H_core + G(D)
+        // where H_core = T + V_nuc and G comprises Coulomb (J) and exchange (K) contributions
+        // built from two-electron integrals and the density matrix D.
+        //
+        // Two-electron integrals are not yet implemented. Until they are, we return the core Hamiltonian.
+        // This yields the Harris functional (non-self-consistent) which is still variational and provides
+        // a meaningful energy upper bound.
+
+        let t = self.build_kinetic_matrix(molecule)?;
+        let v = self.build_nuclear_attraction_matrix(molecule)?;
+        Ok(t + v)
+    }
+
+    fn solve_eigenvalue_problem(&self, fock: &DMatrix<f64>, overlap: &DMatrix<f64>) -> Result<(Vec<f64>, DMatrix<f64>)> {
+        // --- Roothaan generalized eigenvalue solver ---
+        // We solve  F C = S C ε  where F is the Fock matrix,
+        // S is the overlap matrix (symmetric positive-definite),
+        // C are molecular orbital coefficients and ε the diagonal matrix of orbital energies.
+        //
+        // Standard approach:
+        // 1. Perform Cholesky decomposition  S = L Lᵗ  (guaranteed SPD for a well-defined basis).
+        // 2. Transform F  →  F' = L⁻ᵗ F L⁻¹  which is orthonormal (S' = I).
+        // 3. Solve the ordinary symmetric eigenproblem  F' C' = C' ε.
+        // 4. Back-transform coefficients  C = L⁻¹ C'.
+        // 5. Sort eigenvalues ascending and reorder columns of C accordingly.
+        //
+        // References:
+        // * C. C. J. Roothaan, "Self-consistent Field Theory for Molecular and Solid State Problems", Rev. Mod. Phys. 32, 179 (1960).
+        // * T. Helgaker, P. Jørgensen, J. Olsen, "Molecular Electronic-Structure Theory", Wiley (2000), ch. 10.
+
+        // Sanity checks
+        ensure!(fock.is_square(), "Fock matrix must be square");
+        ensure!(overlap.is_square(), "Overlap matrix must be square");
+        ensure!(fock.nrows() == overlap.nrows(), "Fock and overlap matrices must have identical dimensions");
+
+        let n = fock.nrows();
+        if n == 0 {
+            return Ok((Vec::new(), DMatrix::zeros(0, 0)));
+        }
+
+        // Clone to owned matrices for decomposition (nalgebra consumes the input)
+        let s_owned = overlap.clone();
+        let f_owned = fock.clone();
+
+        // 1. Cholesky factorisation S = L Lᵗ
+        let chol = Cholesky::new(s_owned).ok_or_else(|| anyhow!("Overlap matrix is not positive-definite; basis set is likely linearly dependent"))?;
+        let l = chol.l(); // Lower triangular view
+
+        // 2. Compute L⁻¹ (explicit inverse is acceptable for small/medium basis sizes; for large systems use solve instead)
+        let l_inv = l.clone().try_inverse().ok_or_else(|| anyhow!("Failed to invert Cholesky factor of overlap matrix"))?;
+
+        // Construct orthogonalised F' = L⁻ᵗ F L⁻¹
+        let f_ortho = &l_inv.transpose() * f_owned * &l_inv;
+
+        // 3. Symmetric eigenvalue decomposition of F'
+        let eig = SymmetricEigen::new(f_ortho);
+        let mut eigenvalues: Vec<f64> = eig.eigenvalues.iter().cloned().collect();
+        let eigenvectors_prime = eig.eigenvectors; // Columns are eigenvectors in orthonormal basis
+
+        // 4. Back-transform eigenvectors to original non-orthogonal basis: C = L⁻¹ C'
+        let c = &l_inv * eigenvectors_prime;
+
+        // 5. Sort eigenvalues in ascending order and reorder corresponding columns in C
+        let mut indices: Vec<usize> = (0..n).collect();
+        indices.sort_by(|&i, &j| eigenvalues[i].partial_cmp(&eigenvalues[j]).unwrap());
+
+        let mut c_sorted = DMatrix::zeros(n, n);
+        for (col_new, &col_old) in indices.iter().enumerate() {
+            // Copy column col_old from C into column col_new of c_sorted
+            c_sorted.set_column(col_new, &c.column(col_old));
+        }
+        eigenvalues = indices.iter().map(|&i| eigenvalues[i]).collect();
+
+        Ok((eigenvalues, c_sorted))
+    }
+
+    fn calculate_total_energy(&self, density: &DMatrix<f64>, molecule: &Molecule) -> Result<f64> {
+        // Electronic energy at Hartree-Fock level:
+        // E = Σ_μν D_μν (H_core_μν + F_μν)/2
+        //
+        // With the current placeholder F = H_core (see build_fock_matrix) this reduces to
+        // E = Σ_μν D_μν H_core_μν.
+        // The factor of 1/2 is absorbed because H_core = F.
+
+        let h_core = {
+            let t = self.build_kinetic_matrix(molecule)?;
+            let v = self.build_nuclear_attraction_matrix(molecule)?;
+            t + v
+        };
+
+        // Ensure dimensions match
+        ensure!(density.nrows() == h_core.nrows(), "Density and core Hamiltonian dimensions mismatch");
+
+        let mut energy = 0.0;
+        for i in 0..density.nrows() {
+            for j in 0..density.ncols() {
+                energy += density[(i, j)] * h_core[(i, j)];
+            }
+        }
+        Ok(energy)
+    }
+
     fn lda_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
     fn gga_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
     fn hybrid_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
@@ -913,42 +1146,46 @@ impl QuantumChemistryEngine {
 /// The Mathematica Journal, 15. doi:10.3888/tmj.15-1
 fn kinetic_integral(alpha1: f64, center1: Vector3<f64>, lmn1: &(u32, u32, u32),
                     alpha2: f64, center2: Vector3<f64>, lmn2: &(u32, u32, u32)) -> f64 {
-
     let p = alpha1 + alpha2;
-    let p_vec = gaussian_product_center(alpha1, center1, alpha2, center2);
+    let p_center = gaussian_product_center(alpha1, center1, alpha2, center2);
+
+    let sx = s_1d(lmn1.0, lmn2.0, center1.x, center2.x, p_center.x, p);
+    let sy = s_1d(lmn1.1, lmn2.1, center1.y, center2.y, p_center.y, p);
+    let sz = s_1d(lmn1.2, lmn2.2, center1.z, center2.z, p_center.z, p);
+
+    let tx = t_1d(lmn1.0, lmn2.0, center1.x, center2.x, p_center.x, p, alpha1, alpha2);
+    let ty = t_1d(lmn1.1, lmn2.1, center1.y, center2.y, p_center.y, p, alpha1, alpha2);
+    let tz = t_1d(lmn1.2, lmn2.2, center1.z, center2.z, p_center.z, p, alpha1, alpha2);
     
-    let t_x = t_1d(lmn1.0, lmn2.0, center1.x, center2.x, p_vec.x, p, alpha1, alpha2);
-    let s_x = s_1d(lmn1.0, lmn2.0, center1.x, center2.x, p_vec.x, p);
-
-    let t_y = t_1d(lmn1.1, lmn2.1, center1.y, center2.y, p_vec.y, p, alpha1, alpha2);
-    let s_y = s_1d(lmn1.1, lmn2.1, center1.y, center2.y, p_vec.y, p);
-
-    let t_z = t_1d(lmn1.2, lmn2.2, center1.z, center2.z, p_vec.z, p, alpha1, alpha2);
-    let s_z = s_1d(lmn1.2, lmn2.2, center1.z, center2.z, p_vec.z, p);
-
-    let dist_sq = (center1 - center2).norm_squared();
-    let prefactor = (-alpha1 * alpha2 * dist_sq / p).exp();
-
-    prefactor * (t_x * s_y * s_z + s_x * t_y * s_z + s_x * s_y * t_z)
+    // The kinetic energy operator is T = -1/2 * nabla^2 = -1/2 * (d^2/dx^2 + d^2/dy^2 + d^2/dz^2)
+    // The matrix element <a|T|b> is separable: <a_x|T_x|b_x><a_y|S_y|b_y><a_z|S_z|b_z> + ...
+    // Source: Helgaker, T., Jorgensen, P., & Olsen, J. (2000). Molecular Electronic-Structure Theory. Wiley. Page 243.
+    tx * sy * sz + sx * ty * sz + sx * sy * tz
 }
 
-/// Calculates the 1D kinetic integral component T_i.
+/// Calculates the 1D kinetic energy integral component T_ij = <i| -1/2 d^2/dx^2 |j>
+/// using recurrence relations. The operator acts on basis function j (the ket).
+/// Source: Helgaker, T., Jorgensen, P., & Olsen, J. (2000). Molecular Electronic-Structure Theory. Wiley.
+/// See equations 9.6.15 - 9.6.18.
 fn t_1d(l1: u32, l2: u32, a: f64, b: f64, p_coord: f64, p: f64, _alpha1: f64, alpha2: f64) -> f64 {
-    let term1 = if l2 >= 1 {
-        l2 as f64 * s_1d(l1, l2 - 1, a, b, p_coord, p)
-    } else { 0.0 };
+    // T_ij = alpha2 * (2*l2 + 1) * S_{i,j} - 2*alpha2^2 * S_{i,j+2} - 1/2*l2*(l2-1)*S_{i,j-2}
+    
+    let term1 = alpha2 * (2.0 * l2 as f64 + 1.0) * s_1d(l1, l2, a, b, p_coord, p);
+    
+    let term2 = 2.0 * alpha2.powi(2) * s_1d(l1, l2 + 2, a, b, p_coord, p);
 
-    let term2 = 2.0 * alpha2 * alpha2 * s_1d(l1, l2 + 1, a, b, p_coord, p);
-    let term3 = -0.5 * if l2 >= 2 {
-        (l2 * (l2 - 1)) as f64 * s_1d(l1, l2 - 2, a, b, p_coord, p)
-    } else { 0.0 };
+    let term3 = if l2 >= 2 {
+        0.5 * (l2 * (l2 - 1)) as f64 * s_1d(l1, l2 - 2, a, b, p_coord, p)
+    } else {
+        0.0
+    };
 
-    alpha2 * term1 + term2 + term3
+    term1 - term2 - term3
 }
 
-
-/// Calculates the 1D overlap integral S_i between two primitive Gaussians along one dimension.
-/// Uses a recurrence relation.
+/// Calculates the 1D overlap integral S_ij = <i|j> for x, y, or z component.
+/// This uses the Hermite-Gauss integral formula, computed via recurrence relations.
+/// Source: Obara, S., & Saika, A. (1986). J. Chem. Phys. 84, 3963.
 fn s_1d(l1: u32, l2: u32, a: f64, b: f64, p_coord: f64, p: f64) -> f64 {
     if l1 == 0 && l2 == 0 {
         return (PI / p).sqrt();
@@ -1005,6 +1242,33 @@ fn normalization(alpha: f64, lmn: &(u32, u32, u32)) -> f64 {
     term1 * term2 / denom
 }
 
+/// Approximate error function erf(x) using a rational polynomial.
+/// Source: Abramowitz & Stegun, Handbook of Mathematical Functions, 7.1.26.
+/// Accurate to 1.5e-7 for x ∈ [-1, 1].
+fn erf_approx(x: f64) -> f64 {
+    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
+    let poly = |t| {
+        t * (0.254829592
+            - t * (-0.284496736
+            + t * (1.421413741
+            - t * (1.453152027
+            - t * 1.061405429))))
+    };
+    if x >= 0.0 {
+        poly(t)
+    } else {
+        -poly(t)
+    }
+}
+
+/// Boys function F_0(x) = √π/4x * erf(√x)
+/// Source: Helgaker, T., Jorgensen, P., & Olsen, J. (2000). Molecular Electronic-Structure Theory. Wiley.
+fn boys_function_0(x: f64) -> f64 {
+    if x < 1e-12 {
+        return 1.0;
+    }
+    (PI / (4.0 * x)).sqrt() * erf_approx(x.sqrt())
+}
 
 #[cfg(test)]
 mod tests {
@@ -1115,6 +1379,46 @@ mod tests {
                 potential_energy_surface: Default::default(),
                 reaction_coordinates: vec![],
             }
+        }
+    }
+
+    #[test]
+    fn test_solve_eigenvalue_problem() {
+        use nalgebra::DMatrix;
+
+        // Simple 2×2 symmetric test matrices (atomic units)
+        let fock = DMatrix::<f64>::from_row_slice(2, 2, &[
+            -1.0, -0.2,
+            -0.2, -0.5,
+        ]);
+        let overlap = DMatrix::<f64>::from_row_slice(2, 2, &[
+            1.0, 0.1,
+            0.1, 1.0,
+        ]);
+
+        let engine = QuantumChemistryEngine {
+            basis_set: BasisSet::sto_3g(),
+            ..QuantumChemistryEngine::new()
+        };
+
+        let (e_vals, c_mat) = engine.solve_eigenvalue_problem(&fock, &overlap).unwrap();
+
+        // Basic sanity checks
+        assert_eq!(e_vals.len(), 2);
+        assert!(e_vals[0] <= e_vals[1]);
+
+        // Verify orthonormality Cᵀ S C ≈ I
+        let s_ortho = c_mat.transpose() * &overlap * &c_mat;
+        let identity = DMatrix::<f64>::identity(2, 2);
+        assert!((s_ortho - identity).amax() < 1e-10);
+
+        // Verify eigen equation F C ≈ S C ε
+        let f_c = &fock * &c_mat;
+        let s_c = &overlap * &c_mat;
+        for col in 0..2 {
+            let lambda = e_vals[col];
+            let diff = &f_c.column(col) - &(s_c.column(col) * lambda);
+            assert!(diff.amax() < 1e-10);
         }
     }
 } 

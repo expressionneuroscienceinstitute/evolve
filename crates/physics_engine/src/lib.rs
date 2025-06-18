@@ -2668,6 +2668,7 @@ impl PhysicsEngine {
     }
 
     /// Validate conservation laws (energy, momentum, charge) - placeholder implementation
+    fn validate_conservation_laws(&self) -> Result<()> {
         use crate::constants::SPEED_OF_LIGHT;
 
         // Net charge should remain (approximately) conserved.
@@ -2931,7 +2932,6 @@ impl PhysicsEngine {
         })
     }
 }
-
 // Supporting types and implementations
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Interaction;
@@ -3242,8 +3242,6 @@ pub enum MaterialType {
     Gas, Regolith, Topsoil, Subsoil, SedimentaryRock, 
     IgneousRock, MetamorphicRock, OreVein, Ice, Magma,
 }
-
-// ... existing code ...
 
 
 /// General Relativity corrections for strong gravitational fields

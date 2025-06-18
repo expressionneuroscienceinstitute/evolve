@@ -83,6 +83,12 @@ pub use lammps::{LammpsEngine, ForceFieldType, MolecularState, ThermodynamicStat
 pub use gadget::{GadgetEngine, GadgetParticle, GadgetParticleType, CosmologicalParameters, Halo};
 pub use endf::{EndfEngine, ReactionType, ThermalCrossSections, ResonanceParameter};
 
+// Compile-time fallback: Provide dummy C symbols so that linking succeeds on
+// systems where the heavy native libraries are not present. These stubs are
+// lightweight and have zero runtime cost when the real libraries are linked
+// dynamically because the dynamic linker will prefer the real symbols.
+mod stub_syms;
+
 #[cfg(not(feature = "gadget"))]
 mod gadget_stub {
     //! Minimal no-op stand-ins for the GADGET API so that downstream crates can

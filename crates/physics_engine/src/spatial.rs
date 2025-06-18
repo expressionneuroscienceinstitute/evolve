@@ -389,21 +389,20 @@ fn subdivide_node(node: &mut OctreeNode, particles: &[FundamentalParticle]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ParticleType, FundamentalParticle};
     
     fn create_test_particle(position: Vector3<f64>) -> FundamentalParticle {
         FundamentalParticle {
-            particle_type: ParticleType::Electron,
+            particle_type: crate::ParticleType::Electron,
             position,
             momentum: Vector3::zeros(),
-            spin: Vector3::new(Complex::new(0.5, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
+            spin: Vector3::new(nalgebra::Complex::new(0.5, 0.0), nalgebra::Complex::new(0.0, 0.0), nalgebra::Complex::new(0.0, 0.0)),
             color_charge: None,
             electric_charge: -1.602e-19,
             mass: 9.109e-31,
             energy: 1e-13,
             creation_time: 0.0,
             decay_time: None,
-            quantum_state: QuantumState::new(),
+            quantum_state: crate::QuantumState::new(),
             interaction_history: Vec::new(),
             velocity: Vector3::zeros(),
             charge: -1.602e-19,

@@ -9,6 +9,12 @@ INSTALL_PREFIX="/usr/local"
 BUILD_DIR="/tmp/evolve_ffi_build"
 THREADS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 
+# Desired library versions for version checks
+DESIRED_G4_VERSION="11.2.0"
+
+# Array to hold selected engines; if empty, install all
+SELECTED_ENGINES=()
+
 # Color output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -133,7 +139,20 @@ setup_build_env() {
 # Install Geant4
 install_geant4() {
     log_info "Installing Geant4..."
-    
+
+    # Detect existing Geant4 installation
+    if command -v geant4-config &> /dev/null; then
+        EXISTING_G4_VERSION=$(geant4-config --version)
+        log_success "Found existing Geant4 version $EXISTING_G4_VERSION"
+        # Compare with desired version
+        if [ "$(printf '%s\n' "$DESIRED_G4_VERSION" "$EXISTING_G4_VERSION" | sort -V | head -1)" = "$DESIRED_G4_VERSION" ]; then
+            log_info "Existing Geant4 >= required version, skipping build"
+            return 0
+        else
+            log_warning "Existing Geant4 version $EXISTING_G4_VERSION < required $DESIRED_G4_VERSION, proceeding to rebuild"
+        fi
+    fi
+
     cd "$BUILD_DIR"
     
     # Download Geant4
@@ -176,7 +195,18 @@ install_geant4() {
 # Install LAMMPS
 install_lammps() {
     log_info "Installing LAMMPS..."
-    
+
+    # Detect existing LAMMPS installation
+    if [ -n "$LAMMPS_DIR" ] && [ -d "$LAMMPS_DIR" ]; then
+        if compgen -G "$LAMMPS_DIR/bin/lmp*" > /dev/null; then
+            BINARY=$(ls "$LAMMPS_DIR"/bin/lmp* | head -n1)
+            EXISTING_LAMMPS_VERSION=$($BINARY -h | head -n1 | sed -E 's/.*\((.*)\).*/\1/')
+            log_success "Found existing LAMMPS version $EXISTING_LAMMPS_VERSION"
+            log_info "Skipping LAMMPS build"
+            return 0
+        fi
+    fi
+
     cd "$BUILD_DIR"
     
     # Clone LAMMPS
@@ -222,7 +252,14 @@ install_lammps() {
 # Install GADGET (Note: Requires manual download due to licensing)
 install_gadget() {
     log_info "Setting up GADGET..."
-    
+
+    # Detect existing GADGET installation
+    if [ -n "$GADGET_SRC" ] && [ -d "$GADGET_SRC" ]; then
+        log_success "Found existing GADGET at $GADGET_SRC"
+        log_info "Skipping GADGET installation"
+        return 0
+    fi
+
     GADGET_URL="https://www.h-its.org/2018/02/22/gadget-code/"
     
     log_warning "GADGET requires manual download due to licensing requirements"
@@ -281,7 +318,14 @@ install_gadget() {
 # Install ENDF data libraries
 install_endf() {
     log_info "Installing ENDF data libraries..."
-    
+
+    # Detect existing ENDF installation
+    if [ -n "$ENDF_LIB_DIR" ] && { [ -f "$ENDF_LIB_DIR/lib/libendf.so" ] || [ -f "$ENDF_LIB_DIR/lib/libendf.dylib" ]; }; then
+        log_success "Found existing ENDF libraries at $ENDF_LIB_DIR"
+        log_info "Skipping ENDF installation"
+        return 0
+    fi
+
     cd "$BUILD_DIR"
     
     # Download ENDF/B-VIII.0 data
@@ -449,7 +493,27 @@ cleanup() {
 # Main execution
 main() {
     log_info "Starting EVOLVE FFI library installation..."
-    log_info "This will install Geant4, LAMMPS, GADGET, and ENDF libraries"
+    # Determine which engines to install
+    if [ ${#SELECTED_ENGINES[@]} -gt 0 ]; then
+        DO_GEANT4=false
+        DO_LAMMPS=false
+        DO_GADGET=false
+        DO_ENDF=false
+        for engine in "${SELECTED_ENGINES[@]}"; do
+            case $engine in
+                geant4) DO_GEANT4=true ;; 
+                lammps) DO_LAMMPS=true ;; 
+                gadget) DO_GADGET=true ;; 
+                endf) DO_ENDF=true ;; 
+            esac
+        done
+    else
+        DO_GEANT4=true
+        DO_LAMMPS=true
+        DO_GADGET=true
+        DO_ENDF=true
+    fi
+
     log_info "Installation prefix: $INSTALL_PREFIX"
     log_info "Build directory: $BUILD_DIR"
     log_info "Using $THREADS threads for compilation"
@@ -457,12 +521,31 @@ main() {
     check_root
     install_dependencies
     setup_build_env
-    
+
     # Install libraries
-    install_geant4
-    install_lammps
-    install_gadget || log_warning "GADGET installation skipped"
-    install_endf
+    if $DO_GEANT4; then
+        install_geant4
+    else
+        log_info "Skipping Geant4 installation"
+    fi
+
+    if $DO_LAMMPS; then
+        install_lammps
+    else
+        log_info "Skipping LAMMPS installation"
+    fi
+
+    if $DO_GADGET; then
+        install_gadget || log_warning "GADGET installation skipped"
+    else
+        log_info "Skipping GADGET installation"
+    fi
+
+    if $DO_ENDF; then
+        install_endf
+    else
+        log_info "Skipping ENDF installation"
+    fi
     
     # Finalize installation
     create_ffi_wrappers
@@ -493,6 +576,22 @@ while [[ $# -gt 0 ]]; do
             THREADS="$2"
             shift 2
             ;;
+        --with-geant4)
+            SELECTED_ENGINES+=("geant4")
+            shift
+            ;;
+        --with-lammps)
+            SELECTED_ENGINES+=("lammps")
+            shift
+            ;;
+        --with-gadget)
+            SELECTED_ENGINES+=("gadget")
+            shift
+            ;;
+        --with-endf)
+            SELECTED_ENGINES+=("endf")
+            shift
+            ;;
         --no-cleanup)
             NO_CLEANUP=true
             shift
@@ -500,10 +599,14 @@ while [[ $# -gt 0 ]]; do
         --help)
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
-            echo "  --prefix DIR     Installation prefix (default: /usr/local)"
-            echo "  --threads N      Number of build threads (default: $(nproc))"
-            echo "  --no-cleanup     Don't remove build directory"
-            echo "  --help           Show this help message"
+            echo "  --prefix DIR         Installation prefix (default: /usr/local)"
+            echo "  --threads N          Number of build threads (default: $(nproc))"
+            echo "  --with-geant4        Install only Geant4"
+            echo "  --with-lammps        Install only LAMMPS"
+            echo "  --with-gadget        Install only GADGET"
+            echo "  --with-endf          Install only ENDF libraries"
+            echo "  --no-cleanup         Don't remove build directory"
+            echo "  --help               Show this help message"
             exit 0
             ;;
         *)

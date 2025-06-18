@@ -162,49 +162,41 @@ impl UniverseState {
                 format!("Universe age {:.3} Myr: Primordial plasma at {:.0}K. No stable structures yet.",
                        s.age_gyr * 1000.0, s.mean_temperature)
             },
-            
-            // First structures forming
-            s if s.stellar_fraction < 0.01 => {
-                format!("Universe age {:.2} Gyr: Gas clouds cooling to {:.0}K. First gravitational collapse beginning.",
-                       s.age_gyr, s.mean_temperature)
-            },
-            
-            // Active star formation
-            s if s.stellar_fraction < 0.1 && s.metallicity < 0.01 => {
-                format!("Universe age {:.2} Gyr: {:.1}% matter in stars. Population III stars forging first heavy elements.",
-                       s.age_gyr, s.stellar_fraction * 100.0)
-            },
-            
-            // Mature stellar populations
-            s if s.metallicity < 0.02 => {
-                format!("Universe age {:.2} Gyr: {:.1}% stellar, Z={:.4}. Second-generation stars with rocky cores forming.",
-                       s.age_gyr, s.stellar_fraction * 100.0, s.metallicity)
-            },
-            
-            // Complex chemistry possible
-            s if s.habitable_count == 0 => {
-                format!("Universe age {:.2} Gyr: {:.1}% stellar, Z={:.4}. Complex chemistry possible but no habitable zones detected.",
-                       s.age_gyr, s.stellar_fraction * 100.0, s.metallicity)
-            },
-            
-            // Life emerging
-            s if s.max_complexity < 1.0 => {
-                format!("Universe age {:.2} Gyr: {} habitable environments. Basic chemical evolution in progress.",
-                       s.age_gyr, s.habitable_count)
-            },
-            
             // Biological complexity
             s if s.max_complexity < 10.0 => {
                 format!("Universe age {:.2} Gyr: Life complexity {:.1}. Biological evolution developing.",
                        s.age_gyr, s.max_complexity)
             },
-            
+            // First structures forming
+            s if s.stellar_fraction < 0.01 => {
+                format!("Universe age {:.2} Gyr: Gas clouds cooling to {:.0}K. First gravitational collapse beginning.",
+                       s.age_gyr, s.mean_temperature)
+            },
+            // Active star formation
+            s if s.stellar_fraction < 0.1 && s.metallicity < 0.01 => {
+                format!("Universe age {:.2} Gyr: {:.1}% matter in stars. Population III stars forging first heavy elements.",
+                       s.age_gyr, s.stellar_fraction * 100.0)
+            },
+            // Mature stellar populations
+            s if s.metallicity < 0.02 => {
+                format!("Universe age {:.2} Gyr: {:.1}% stellar, Z={:.4}. Second-generation stars with rocky cores forming.",
+                       s.age_gyr, s.stellar_fraction * 100.0, s.metallicity)
+            },
+            // Complex chemistry possible
+            s if s.habitable_count == 0 => {
+                format!("Universe age {:.2} Gyr: {:.1}% stellar, Z={:.4}. Complex chemistry possible but no habitable zones detected.",
+                       s.age_gyr, s.stellar_fraction * 100.0, s.metallicity)
+            },
+            // Life emerging
+            s if s.max_complexity < 1.0 => {
+                format!("Universe age {:.2} Gyr: {} habitable environments. Basic chemical evolution in progress.",
+                       s.age_gyr, s.habitable_count)
+            },
             // Intelligence emerging
             s if s.max_complexity < 100.0 => {
                 format!("Universe age {:.2} Gyr: Intelligence level {:.1}. Technology and self-modification beginning.",
                        s.age_gyr, s.max_complexity)
             },
-            
             // Advanced civilization
             _ => {
                 format!("Universe age {:.2} Gyr: Advanced civilizations (complexity {:.1}) reshaping matter and energy.",

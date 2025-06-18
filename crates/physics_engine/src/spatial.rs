@@ -4,6 +4,8 @@
 //! calculations from O(N²) to O(N) complexity using spatial hash grids and octrees.
 
 use nalgebra::Vector3;
+use nalgebra::Complex;
+use crate::QuantumState;
 use std::collections::{HashMap, HashSet};
 use crate::FundamentalParticle;
 use serde::{Serialize, Deserialize};

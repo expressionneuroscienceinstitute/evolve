@@ -221,8 +221,8 @@ mod tests {
     fn test_message_sending_and_receiving() {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (tx1, rx1) = mpsc::channel(10);
-            let (tx2, rx2) = mpsc::channel(10);
+            let (tx1, _rx1) = mpsc::channel(10);
+            let (tx2, mut rx2) = mpsc::channel(10);
 
             let mut node1 = NetworkNode::new(1, 10);
             let mut node2 = NetworkNode::new(2, 10);
@@ -233,7 +233,7 @@ mod tests {
             let msg = NetworkMessage::Command { target_node: NodeId::new(2), payload: "test command".to_string() };
             node1.send_message(msg.clone()).await.unwrap();
 
-            let received_msg = node2.message_rx.recv().await.unwrap();
+            let received_msg = rx2.recv().await.unwrap();
             assert_eq!(received_msg, msg);
         });
     }

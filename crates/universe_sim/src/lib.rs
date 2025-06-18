@@ -3,13 +3,16 @@
 //! Implements the complete universe simulation from Big Bang to far future
 //! with autonomous AI agents evolving toward immortality.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use diagnostics::{AllocationType, DiagnosticsSystem};
 use md5;
 use nalgebra::Vector3;
 use physics_engine::{
     nuclear_physics::{process_neutron_capture, NeutronCaptureProcess, Nucleus},
     PhysicsEngine, PhysicsState,
+    ParticleType,
+    FundamentalParticle,
+    QuantumState,
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -612,11 +615,59 @@ impl UniverseSimulation {
     }
 
     fn sync_store_to_physics_engine_particles(&mut self) -> Result<()> {
-        todo!();
+        // Sync store particles into physics engine particle list
+        self.physics_engine.particles.clear();
+        for i in 0..self.store.particles.count {
+            let pos = self.store.particles.position[i];
+            let vel = self.store.particles.velocity[i];
+            let mass = self.store.particles.mass[i];
+            let charge = self.store.particles.charge[i];
+            let momentum = vel * mass;
+            let energy = calculate_relativistic_energy(&momentum, mass);
+            // Determine particle type by charge magnitude
+            let particle_type = if charge.abs() > 1.5 * physics_engine::E_CHARGE {
+                physics_engine::ParticleType::Helium
+            } else {
+                physics_engine::ParticleType::Proton
+            };
+            // Manually construct FundamentalParticle
+            let fp = FundamentalParticle {
+                particle_type,
+                position: pos,
+                momentum,
+                spin: Vector3::zeros(),
+                color_charge: None,
+                electric_charge: charge,
+                mass,
+                energy,
+                creation_time: self.physics_engine.current_time,
+                decay_time: None,
+                quantum_state: QuantumState::new(),
+                interaction_history: Vec::new(),
+                velocity: vel,
+                charge,
+            };
+            self.physics_engine.particles.push(fp);
+        }
+        Ok(())
     }
 
     fn calculate_spatial_bounds(&self) -> Result<(Vector3<f64>, Vector3<f64>)> {
-        todo!();
+        let positions = &self.store.particles.position;
+        if positions.is_empty() {
+            return Err(anyhow!("Cannot calculate spatial bounds: no particles present"));
+        }
+        let mut min = positions[0];
+        let mut max = positions[0];
+        for p in positions.iter() {
+            min.x = min.x.min(p.x);
+            min.y = min.y.min(p.y);
+            min.z = min.z.min(p.z);
+            max.x = max.x.max(p.x);
+            max.y = max.y.max(p.y);
+            max.z = max.z.max(p.z);
+        }
+        Ok((min, max))
     }
 
     // Functions below here are also stubbed out for now
@@ -1099,20 +1150,50 @@ impl UniverseSimulation {
         }
     }
 
-    pub fn god_create_agent_on_planet(&mut self, _planet_id_str: &str) -> Result<String> {
-        todo!();
+    pub fn god_create_agent_on_planet(&mut self, planet_id_str: &str) -> Result<String> {
+        let target_id = Uuid::parse_str(planet_id_str)?;
+        if let Some(body) = self.store.celestials.iter().find(|c| c.id == target_id && c.has_planets) {
+            let new_id = Uuid::new_v4();
+            let lineage = AgentLineage {
+                id: new_id,
+                on_celestial_id: body.entity_id,
+                parent_id: None,
+                code_hash: new_id.to_string(),
+                generation: 1,
+                fitness: 0.0,
+                sentience_level: 0.0,
+                industrialization_level: 0.0,
+                digitalization_level: 0.0,
+                tech_level: 0.0,
+                immortality_achieved: false,
+                last_mutation_tick: self.current_tick,
+            };
+            self.store.agents.push(lineage);
+            Ok(new_id.to_string())
+        } else {
+            Err(anyhow!("Planet not found or cannot host agents"))
+        }
     }
 
     pub fn get_quantum_field_snapshot(&self) -> HashMap<String, Vec<Vec<f64>>> {
         todo!();
     }
 
-    pub fn set_speed_factor(&mut self, _factor: f64) -> Result<()> {
-        todo!();
+    pub fn set_speed_factor(&mut self, factor: f64) -> Result<()> {
+        if factor <= 0.0 {
+            return Err(anyhow!("Invalid speed factor: must be > 0"));
+        }
+        self.tick_span_years *= factor;
+        Ok(())
     }
 
-    pub fn rewind_ticks(&mut self, _ticks: u64) -> Result<u64> {
-        todo!();
+    pub fn rewind_ticks(&mut self, ticks: u64) -> Result<u64> {
+        if ticks >= self.current_tick {
+            self.current_tick = 0;
+        } else {
+            self.current_tick -= ticks;
+        }
+        Ok(self.current_tick)
     }
     
     /// Get read-only access to physics engine for rendering
@@ -1280,7 +1361,7 @@ mod tests {
         
         sim.init_big_bang().unwrap();
         
-        let stats = sim.get_stats();
+        let stats = sim.get_stats().unwrap();
         assert!(stats.particle_count > 0);
     }
 

@@ -140,12 +140,17 @@ impl StellarEvolution {
         // Very rough main-sequence lifetime scaling (t ∝ M^{-2.5}) with solar mass reference.
         let solar_mass = 1.989e30;
         let lifetime_years = 1.0e10 * (star_mass_kg / solar_mass).powf(-2.5);
+        // Scale core temperature with mass (e.g., T ∝ M^0.7)
+        let base_temp = 1.5e7; // K, rough solar core temperature
+        let core_temperature = base_temp * (star_mass_kg / solar_mass).powf(0.7);
+        // Rough core density constant for now
+        let core_density = 1.5e5; // kg/m³, rough solar core density
 
         Self {
             entity_id: 0,
             nucleosynthesis,
-            core_temperature: 1.5e7, // K, rough solar core temperature
-            core_density: 1.5e5,      // kg/m³, rough solar core density
+            core_temperature,
+            core_density,
             core_composition,
             nuclear_fuel_fraction: 1.0,
             main_sequence_lifetime: lifetime_years,
@@ -196,6 +201,17 @@ impl StellarEvolution {
         let fuel_consumed = dt_years / self.main_sequence_lifetime;
         self.nuclear_fuel_fraction = (self.nuclear_fuel_fraction - fuel_consumed).max(0.0);
 
+        // Update core composition: reduce hydrogen and increase helium by fuel consumed
+        for comp in &mut self.core_composition {
+            if comp.0 == 1 && comp.1 == 1 {
+                comp.2 = (comp.2 - fuel_consumed).max(0.0);
+            } else if comp.0 == 2 && comp.1 == 4 {
+                comp.2 += fuel_consumed;
+            }
+        }
+        // Increase core temperature slightly as fuel is consumed
+        self.core_temperature *= 1.0 + fuel_consumed;
+
         // Update evolutionary phase if required.
         self.update_evolutionary_phase(star_mass_kg, self.nuclear_fuel_fraction);
 
@@ -209,8 +225,13 @@ impl StellarEvolution {
         const M_SUN: f64 = 1.989e30;
         let mass_msun = star_mass_kg / M_SUN;
 
-        // Handle post-main-sequence transitions requested by the tests.
         match self.evolutionary_phase {
+            StellarPhase::SubgiantBranch => {
+                // Massive stars (>8 Msun) explode as supernova once fuel is sufficiently depleted
+                if mass_msun > 8.0 && fuel_fraction < 0.1 {
+                    self.evolutionary_phase = StellarPhase::Supernova;
+                }
+            }
             StellarPhase::PlanetaryNebula => {
                 // End states after envelope ejection.
                 if mass_msun < 1.4 {

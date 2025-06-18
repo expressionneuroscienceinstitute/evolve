@@ -132,6 +132,15 @@ setup_build_env() {
     export FC=gfortran
     export CMAKE_BUILD_TYPE=Release
     export OMP_NUM_THREADS=$THREADS
+
+    # Append Homebrew include/lib paths if present
+    if command -v brew >/dev/null 2>&1; then
+        BREW_PREFIX=$(brew --prefix)
+        export CXXFLAGS="-I$BREW_PREFIX/include ${CXXFLAGS:-}"
+        export CFLAGS="-I$BREW_PREFIX/include ${CFLAGS:-}"
+        export LDFLAGS="-L$BREW_PREFIX/lib ${LDFLAGS:-}"
+        export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    fi
     
     log_success "Build environment ready"
 }
@@ -284,31 +293,77 @@ install_gadget() {
         
         cd "$GADGET_DIR"
         
-        # Create FFI-compatible Makefile
-        if [ -f "Makefile.template" ]; then
-            cp Makefile.template Makefile
-            
-            # Configure for FFI usage
-            sed -i 's/^SYSTYPE=.*/SYSTYPE="Generic-gcc"/' Makefile
-            sed -i 's/^#DOUBLEPRECISION/DOUBLEPRECISION/' Makefile
-            echo "GADGET_FFI" >> Makefile
-            
-            # Build library version
-            make -j$THREADS
-            
-            # Install manually
-            $SUDO mkdir -p "$INSTALL_PREFIX/gadget"
-            $SUDO cp -r . "$INSTALL_PREFIX/gadget/"
-            
-            # Set environment variables
-            echo "export GADGET_SRC=$INSTALL_PREFIX/gadget" | $SUDO tee -a /etc/environment
-            export GADGET_SRC="$INSTALL_PREFIX/gadget"
-            
-            log_success "GADGET installed successfully"
-        else
-            log_error "Could not find Makefile.template in GADGET directory"
-            return 1
+        # --- Ensure 'python' executable exists *before* any configure scripts ---
+        if ! command -v python >/dev/null 2>&1; then
+            if command -v python3 >/dev/null 2>&1; then
+                PY3=$(which python3)
+                ln -sf "$PY3" "$BUILD_DIR/gadget4/python"
+                export PATH="$BUILD_DIR/gadget4:$PATH"
+                log_info "Created temporary python symlink for buildsystem"
+            fi
         fi
+
+        # --- Generate a clean Config.sh with Homebrew paths resolved ---
+        if command -v brew >/dev/null 2>&1; then
+            BREW_PREFIX=$(brew --prefix)
+        else
+            BREW_PREFIX="/usr/local"
+        fi
+
+        # Patch Makefile.gen.libs to use Homebrew paths
+        GEN_LIBS_FILE="buildsystem/Makefile.gen.libs"
+        if [ -f "$GEN_LIBS_FILE" ]; then
+            log_info "Patching $GEN_LIBS_FILE for Homebrew paths"
+            if sed --version >/dev/null 2>&1; then SEDI="sed -i"; else SEDI="sed -i ''"; fi
+            $SEDI "s|\$(LIB_DIR)/gsl/build/include|${BREW_PREFIX}/include|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/gsl/build/lib|${BREW_PREFIX}/lib|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/fftw3/build/include|${BREW_PREFIX}/include|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/fftw3/build/lib|${BREW_PREFIX}/lib|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/hdf5/build/include|${BREW_PREFIX}/include|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/hdf5/build/lib|${BREW_PREFIX}/lib|g" $GEN_LIBS_FILE
+        fi
+
+        cat > Config.sh <<EOF
+# Minimal Config.sh – compile-time macros only (no shell vars)
+# External libraries assumed to live in Homebrew prefix resolved during make
+
+SELFGRAVITY
+TREEPM_NOTIMESPLIT
+PERIODIC
+PMGRID=512
+DOUBLEPRECISION=1
+NTYPES=6
+EOF
+
+        log_info "Wrote Config.sh with Homebrew paths (${BREW_PREFIX})"
+
+        # Build with Homebrew env vars and Generic-gcc systype
+        log_info "Building GADGET-4 with Homebrew toolchain..."
+
+        env \
+            PYTHON=$(which python3) \
+            SYSTYPE="Generic-gcc" \
+            CPPFLAGS="-I${BREW_PREFIX}/include" \
+            CFLAGS="-I${BREW_PREFIX}/include" \
+            CXXFLAGS="-I${BREW_PREFIX}/include" \
+            LDFLAGS="-L${BREW_PREFIX}/lib" \
+            GSL_INCL="-I${BREW_PREFIX}/include" \
+            GSL_LIBS="-L${BREW_PREFIX}/lib -lgsl -lgslcblas" \
+            HDF5_INCL="-I${BREW_PREFIX}/include" \
+            HDF5_LIBS="-L${BREW_PREFIX}/lib -lhdf5 -lhdf5_cpp" \
+            FFTW_INCL="-I${BREW_PREFIX}/include" \
+            FFTW_LIBS="-L${BREW_PREFIX}/lib -lfftw3" \
+            make build -j$THREADS || { log_error "GADGET-4 build failed"; return 1; }
+        
+        # Install manually
+        $SUDO mkdir -p "$INSTALL_PREFIX/gadget"
+        $SUDO cp -r . "$INSTALL_PREFIX/gadget/"
+        
+        # Set environment variables
+        echo "export GADGET_SRC=$INSTALL_PREFIX/gadget" | $SUDO tee -a /etc/environment
+        export GADGET_SRC="$INSTALL_PREFIX/gadget"
+        
+        log_success "GADGET installed successfully"
     else
         log_info "GADGET tarball not found; cloning public repository instead..."
         cd "$BUILD_DIR"
@@ -340,12 +395,42 @@ install_gadget() {
             fi
         fi
 
-        # Ensure 'python' executable exists (GADGET Makefile expects it)
+        # --------------------------------------------------------------
+        # Patch include/lib placeholders with Homebrew prefix so headers
+        # like gsl/gsl_math.h and hdf5.h are found.
+        # --------------------------------------------------------------
+        if command -v brew >/dev/null 2>&1; then
+            BREW_PREFIX=$(brew --prefix)
+
+            # Replace generic placeholder paths with actual brew include dirs
+            for HDR in hdf5 gsl fftw3; do
+                if [ -d "$BREW_PREFIX/include" ]; then
+                    # BSD/GNU sed compatibility
+                    if sed --version >/dev/null 2>&1; then
+                        sed -i "s|-I$HDR/build/include|-I$BREW_PREFIX/include|g" Makefile.systype
+                    else
+                        sed -i '' "s|-I$HDR\\/build\\/include|-I$BREW_PREFIX/include|g" Makefile.systype
+                    fi
+                fi
+            done
+
+            # Likewise patch library search paths
+            if sed --version >/dev/null 2>&1; then
+                sed -i "s|-L$HDR/build/lib|-L$BREW_PREFIX/lib|g" Makefile.systype
+            else
+                sed -i '' "s|-L$HDR\\/build\\/lib|-L$BREW_PREFIX/lib|g" Makefile.systype
+            fi
+        fi
+
+        # --------------------------------------------------------------
+        # Guarantee 'python' is resolvable during buildsystem/config.py
+        # --------------------------------------------------------------
         if ! command -v python >/dev/null 2>&1; then
             if command -v python3 >/dev/null 2>&1; then
-                ln -sf "$(which python3)" "$BUILD_DIR/gadget4/python"
+                PY3=$(which python3)
+                ln -sf "$PY3" "$BUILD_DIR/gadget4/python"
                 export PATH="$BUILD_DIR/gadget4:$PATH"
-                log_info "Created python symlink to python3 for Gadget4 build"
+                log_info "Temporarily symlinked python -> python3 for Gadget4 build"
             fi
         fi
 

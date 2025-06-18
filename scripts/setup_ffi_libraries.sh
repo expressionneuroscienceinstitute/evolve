@@ -310,8 +310,44 @@ install_gadget() {
             return 1
         fi
     else
-        log_warning "GADGET tarball not found - skipping installation"
-        return 1
+        log_info "GADGET tarball not found; cloning public repository instead..."
+        cd "$BUILD_DIR"
+        if [ ! -d "gadget4" ]; then
+            if git clone --depth 1 http://gitlab.mpcdf.mpg.de/vrs/gadget4.git gadget4; then
+                GADGET_DIR="gadget4"
+            else
+                log_warning "Failed to clone GADGET-4 repository. Skipping installation."
+                return 1
+            fi
+        else
+            GADGET_DIR="gadget4"
+            log_info "Found existing gadget4 directory; using it."
+        fi
+
+        cd "$GADGET_DIR"
+
+        # Generate default Config.sh and Makefile.systype if not present
+        if [ ! -f "Config.sh" ] && [ -f "Template-Config.sh" ]; then
+            cp Template-Config.sh Config.sh
+        fi
+        if [ ! -f "Makefile.systype" ] && [ -f "Template-Makefile.systype" ]; then
+            cp Template-Makefile.systype Makefile.systype
+            # Select generic gcc build by default
+            sed -i 's/^SYSTYPE=.*/SYSTYPE="Generic-gcc"/' Makefile.systype
+        fi
+
+        # Attempt to build Gadget4 (single threaded if THREADS unset)
+        if make -j${THREADS:-4}; then
+            $SUDO mkdir -p "$INSTALL_PREFIX/gadget"
+            $SUDO cp -r . "$INSTALL_PREFIX/gadget/"
+            echo "export GADGET_SRC=$INSTALL_PREFIX/gadget" | $SUDO tee -a /etc/environment
+            export GADGET_SRC="$INSTALL_PREFIX/gadget"
+            log_success "GADGET-4 installed successfully from git clone"
+            return 0
+        else
+            log_warning "GADGET-4 build failed; skipping installation."
+            return 1
+        fi
     fi
 }
 

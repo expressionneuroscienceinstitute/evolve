@@ -1533,7 +1533,39 @@ impl UniverseSimulation {
     }
 
     pub fn get_quantum_field_snapshot(&self) -> HashMap<String, Vec<Vec<f64>>> {
-        todo!();
+        use nalgebra::ComplexField;
+        let mut snapshot: HashMap<String, Vec<Vec<f64>>> = HashMap::new();
+
+        for (field_type, field) in &self.physics_engine.quantum_fields {
+            // Convert field type to string identifier (e.g. "ElectronField")
+            let key = format!("{:?}", field_type);
+            if field.field_values.is_empty() {
+                snapshot.insert(key, Vec::new());
+                continue;
+            }
+            // We convert the complex field amplitude to a 2-D slice by taking the
+            // magnitude |ψ| of the first z-slice (index 0). This keeps the return
+            // structure lightweight while still conveying spatial information that
+            // front-ends (dashboard, CLI, etc.) can visualise as a heat-map.
+            let slice_z0 = &field.field_values;
+            let mut plane: Vec<Vec<f64>> = Vec::with_capacity(slice_z0.len());
+            for x_row in slice_z0 {
+                if x_row.is_empty() {
+                    plane.push(Vec::new());
+                    continue;
+                }
+                // We take the y-dimension at z = 0 (index 0)
+                let mut row: Vec<f64> = Vec::with_capacity(x_row.len());
+                for y_col in x_row {
+                    // y_col is Vec<Complex<f64>> (z dimension). Use first element if available
+                    let amp = y_col.first().copied().unwrap_or_default();
+                    row.push(amp.modulus());
+                }
+                plane.push(row);
+            }
+            snapshot.insert(key, plane);
+        }
+        snapshot
     }
 
     pub fn set_speed_factor(&mut self, factor: f64) -> Result<()> {

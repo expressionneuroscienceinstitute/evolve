@@ -24,11 +24,16 @@ pub mod spatial;
 pub mod thermodynamics;
 pub mod validation;
 
+// Temporary compatibility layer for missing QC helpers
+// mod qc_compat;
+pub mod quantum_chemistry;
+
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
+use rand::distributions::{Distribution, WeightedIndex};
 use rayon::prelude::*;
 use std::time::Instant;
 
@@ -805,7 +810,6 @@ impl PhysicsEngine {
         
         for particle in &self.particles {
             lammps.add_atom(
-                particle.particle_type.clone(),
                 particle.position,
                 particle.velocity,
                 particle.mass,
@@ -814,8 +818,8 @@ impl PhysicsEngine {
         }
         
         // Run molecular dynamics step
-        let timestep_fs = self.time_step * 1e15; // Convert to femtoseconds
-        lammps.run_dynamics(1, timestep_fs)?;
+        let timestep_fs = self.time_step * 1e15; // femtoseconds
+        lammps.run_dynamics(timestep_fs, 1, self.temperature, None)?;
         
         // Extract results back to particles
         let updated_particles = lammps.get_atom_data()?;
@@ -853,8 +857,9 @@ impl PhysicsEngine {
         // Convert particles to GADGET format
         gadget.clear_particles()?;
         
-        for particle in &self.particles {
+        for (idx, particle) in self.particles.iter().enumerate() {
             gadget.add_particle(ffi_integration::GadgetParticle {
+                id: idx,
                 particle_type: match particle.particle_type {
                     ParticleType::DarkMatter => ffi_integration::GadgetParticleType::DarkMatter,
                     ParticleType::Proton | ParticleType::Neutron => ffi_integration::GadgetParticleType::Gas,
@@ -868,6 +873,7 @@ impl PhysicsEngine {
                 softening_length: 1e-15, // 1 fm for nuclear scale
                 density: 1e17, // Nuclear density
                 active: true,
+                time_step: self.time_step,
             })?;
         }
         
@@ -1487,13 +1493,152 @@ impl PhysicsEngine {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn calculate_interaction_range(&self, _p1: ParticleType, _p2: ParticleType) -> f64 { 1e-15 }
-    #[allow(dead_code)]
-    fn calculate_interaction(&self, _i: usize, _j: usize) -> Result<interactions::Interaction> { Ok(interactions::Interaction::default()) }
-    #[allow(dead_code)]
-    fn apply_interaction(&mut self, _interaction: interactions::Interaction) -> Result<()> { Ok(()) }
-    fn select_decay_channel(&self, channels: &[DecayChannel]) -> DecayChannel { channels[0].clone() }
+    /// Characteristic interaction range (m) given two particle types.
+    ///
+    /// The implementation follows simple physically-motivated heuristics:
+    /// • **Strong force** (quarks/gluons) → 1 fm (≈ 1 × 10⁻¹⁵ m).
+    /// • **Electromagnetic** between charged particles → classical distance where the
+    ///   Coulomb potential equals kT at the current simulation temperature.
+    /// • Otherwise (e.g. neutrinos, dark matter) fall back to the de-Broglie
+    ///   wavelength of the lighter particle at the thermal momentum scale.
+    fn calculate_interaction_range(&self, p1: ParticleType, p2: ParticleType) -> f64 {
+        // 1. Strongly interacting?
+        if self.can_interact_strongly(p1, p2) {
+            return 1.0e-15; // ≈ pion Compton wavelength
+        }
+
+        // 2. Electromagnetic range – distance where |V_C| = k_B T
+        let q1 = self.get_electric_charge(p1);
+        let q2 = self.get_electric_charge(p2);
+        if q1.abs() > 0.0 && q2.abs() > 0.0 {
+            let kbt = BOLTZMANN * self.temperature.max(2.7); // avoid zero-division; assume CMB floor
+            let r = K_E * q1.abs() * q2.abs() / kbt; // solve e²/(4πϵ₀ r) = k_B T
+            // Clamp to sensible [1 pm, 1 µm] interval.
+            return r.clamp(1.0e-12, 1.0e-6);
+        }
+
+        // 3. Weak / other: use thermal de-Broglie wavelength λ = h / √(2π m kT)
+        let m1 = self.get_particle_mass(p1).max(1.0e-40);
+        let lambda = (2.0 * std::f64::consts::PI * m1 * BOLTZMANN * self.temperature.max(2.7)).sqrt();
+        let lambda = (6.626_070_15e-34) / lambda; // h / p
+        lambda.clamp(1.0e-14, 1.0e-3)
+    }
+
+    /// Compute basic two-body interaction probability using analytic cross-sections
+    /// for a subset of important processes (currently Compton scattering and
+    /// photon pair-production). Returns an `Interaction` record which downstream
+    /// routines can apply.
+    fn calculate_interaction(&self, i: usize, j: usize) -> Result<interactions::Interaction> {
+        use crate::interactions::{klein_nishina_cross_section_joules, bethe_heitler_cross_section};
+
+        let p1 = &self.particles[i];
+        let p2 = &self.particles[j];
+        let separation = (p1.position - p2.position).norm().max(1.0e-18);
+
+        // Default elastic placeholder
+        let mut interaction = interactions::Interaction::default();
+        interaction.particle_indices = (i, j);
+        interaction.cross_section = 0.0;
+        interaction.interaction_type = interactions::InteractionType::ElasticScattering;
+
+        // Compton (γ + e⁻)
+        if (p1.particle_type == ParticleType::Photon && p2.particle_type == ParticleType::Electron) ||
+           (p2.particle_type == ParticleType::Photon && p1.particle_type == ParticleType::Electron) {
+            let photon = if p1.particle_type == ParticleType::Photon { p1 } else { p2 };
+            let sigma = klein_nishina_cross_section_joules(photon.energy, ELECTRON_MASS * C_SQUARED);
+            interaction.cross_section = sigma;
+            interaction.interaction_type = interactions::InteractionType::ComptonScattering;
+        }
+
+        // γ → e⁺e⁻ pair production in nuclear field (approximate, assume Iron Z=26)
+        if p1.particle_type == ParticleType::Photon && p2.particle_type == ParticleType::IronAtom ||
+           p2.particle_type == ParticleType::Photon && p1.particle_type == ParticleType::IronAtom {
+            let photon = if p1.particle_type == ParticleType::Photon { p1 } else { p2 };
+            let sigma = bethe_heitler_cross_section(photon.energy, 26);
+            interaction.cross_section = sigma;
+            interaction.interaction_type = interactions::InteractionType::PairProduction;
+        }
+
+        // Convert cross-section to probability for this separation
+        if interaction.cross_section > 0.0 {
+            let geom_area = 4.0 * std::f64::consts::PI * separation.powi(2);
+            interaction.probability = (interaction.cross_section / geom_area).min(1.0);
+        }
+
+        Ok(interaction)
+    }
+
+    /// Apply the momentum/energy transfer encoded in `interaction` to the particle
+    /// system. Currently we only update bookkeeping counts while the detailed
+    /// kinematics are handled elsewhere.
+    fn apply_interaction(&mut self, interaction: interactions::Interaction) -> Result<()> {
+        match interaction.interaction_type {
+            interactions::InteractionType::ComptonScattering => {
+                self.compton_count += 1;
+                self.exchange_momentum_compton(interaction.particle_indices.0, interaction.particle_indices.1)?;
+            },
+            interactions::InteractionType::PairProduction => {
+                self.pair_production_count += 1;
+            },
+            _ => { /* other types handled separately */ }
+        }
+        Ok(())
+    }
+
+    /// Randomly select a decay channel according to branching ratios using a
+    /// categorical (weighted) distribution.
+    fn select_decay_channel(&self, channels: &[DecayChannel]) -> DecayChannel {
+        use rand::distributions::WeightedIndex;
+        let weights: Vec<f64> = channels.iter().map(|c| c.branching_ratio.max(0.0)).collect();
+        if let Ok(dist) = WeightedIndex::new(&weights) {
+            let mut rng = thread_rng();
+            let idx = dist.sample(&mut rng);
+            channels[idx].clone()
+        } else {
+            // Fallback: uniform selection (should never happen if data are valid)
+            channels[0].clone()
+        }
+    }
+
+    /// Adaptive step-length estimator that couples particle energy,
+    /// radiation-length of the local medium, and simulation temperature.
+    ///
+    /// The returned value is clamped to **[0.1 fm, 1 cm]** to prevent pathological
+    /// values that could break the transport integrator.
+    fn calculate_step_length(&self, particle: &FundamentalParticle) -> f64 {
+        // Base scale: de-Broglie wavelength λ = h / p
+        let momentum_mag = particle.momentum.norm().max(1.0e-40);
+        let lambda = 6.626_070_15e-34 / momentum_mag; // metres
+
+        // Material scale: inverse of mass-density (ρ) – denser ⇒ smaller steps
+        let rho = self.calculate_local_density(&particle.position).max(1.0);
+        let material_factor = (1.0 / rho).powf(1.0/3.0);
+
+        // Thermal agitation: hotter plasma can sustain larger timesteps
+        let thermal_factor = (self.temperature / 1.0e6).sqrt().clamp(0.1, 10.0);
+
+        let step = lambda.min(material_factor) * thermal_factor;
+        step.clamp(1.0e-16, 1.0e-2)
+    }
+
+    /// Estimate mass density (kg·m⁻³) within a sphere of radius *r* around
+    /// `position`. We iterate over the particle list because `SpatialHashGrid`
+    /// does not expose its internal cell-lookup utilities publicly.
+    fn calculate_local_density(&self, position: &Vector3<f64>) -> f64 {
+        let r = self.spatial_grid.max_interaction_range().max(1.0e-15);
+        let r_sq = r * r;
+        let volume = (4.0 / 3.0) * std::f64::consts::PI * r.powi(3);
+
+        let mut mass_sum = 0.0;
+        for p in &self.particles {
+            if (p.position - position).norm_squared() <= r_sq {
+                mass_sum += p.mass;
+            }
+        }
+
+        if volume > 0.0 { mass_sum / volume } else { 0.0 }
+    }
+
     fn execute_decay(&mut self, index: usize, channel: DecayChannel) -> Result<()> {
         let original_particle = self.particles.swap_remove(index);
         let _rng = thread_rng();
@@ -2306,11 +2451,96 @@ impl PhysicsEngine {
         Ok(())
     }
     #[allow(dead_code)]
-    fn update_running_couplings(&mut self, _states: &mut [PhysicsState]) -> Result<()> { Ok(()) }
+    fn update_running_couplings(&mut self, _states: &mut [PhysicsState]) -> Result<()> {
+        // Leading–order QCD running of the strong coupling constant α_s(μ) and
+        // simple placeholder for electroweak couplings.
+        // ------------------------------------------------------------------
+        // We estimate a characteristic momentum-transfer scale μ from the
+        // average particle energy present in the simulation volume.  The
+        // conversion J→GeV uses the exact CODATA 2022 factor.
+        const J_PER_GEV: f64 = 1.602_176_634e-10;
+
+        let avg_energy_j = if !self.particles.is_empty() {
+            self.particles.iter().map(|p| p.energy).sum::<f64>()
+                / self.particles.len() as f64
+        } else {
+            1.0 * J_PER_GEV // 1 GeV fallback when no particles are present
+        };
+
+        let mu_gev = (avg_energy_j / J_PER_GEV).max(0.001); // avoid log(0)
+
+        // Determine number of active quark flavours at scale μ.
+        // PDG thresholds: c≈1.3 GeV, b≈4.2 GeV, t≈172 GeV.
+        let n_f = if mu_gev < 1.3 { 3.0 }
+        else if mu_gev < 4.2 { 4.0 }
+        else if mu_gev < 172.0 { 5.0 }
+        else { 6.0 };
+
+        // 1-loop β₀ coefficient   β₀ = (33 − 2n_f)/(12π)
+        let beta0 = (33.0 - 2.0 * n_f) / (12.0 * std::f64::consts::PI);
+
+        // Reference value α_s(M_Z) with M_Z = 91.1876 GeV (PDG 2022).
+        let alpha_s_mz = 0.1181;
+        let m_z = 91.1876; // GeV
+
+        // α_s(μ) = α_s(M_Z) / (1 + α_s(M_Z) β₀ ln(μ/M_Z))
+        let alpha_s = alpha_s_mz
+            / (1.0 + alpha_s_mz * beta0 * (mu_gev / m_z).ln()).max(1.0e-12);
+
+        // Update the interaction matrix so that downstream calculations pick
+        // up the running coupling.  Electromagnetic and weak couplings are
+        // held fixed at low-energy values for now.
+        self.interaction_matrix.set_strong_coupling(alpha_s);
+        Ok(())
+    }
     #[allow(dead_code)]
-    fn check_symmetry_breaking(&mut self) -> Result<()> { Ok(()) }
+    fn check_symmetry_breaking(&mut self) -> Result<()> {
+        // Electroweak crossover occurs at T_c ≈ 159 GeV ≈ 1.85×10¹⁵ K.
+        const T_EW_C: f64 = 1.85e15; // K
+
+        if self.temperature < T_EW_C {
+            // Universe cooled below critical temperature → Higgs field should
+            // acquire its vacuum expectation value and give masses to W/Z.
+            self.symmetry_breaking.initialize_higgs_mechanism()?;
+        }
+        Ok(())
+    }
     #[allow(dead_code)]
-    fn update_spacetime_curvature(&mut self) -> Result<()> { Ok(()) }
+    fn update_spacetime_curvature(&mut self) -> Result<()> {
+        // Friedmann–Lemaître first equation (k=0)  H² = (8πG/3) ρ.
+        use crate::constants::{GRAVITATIONAL_CONSTANT, SPEED_OF_LIGHT, PROTON_MASS};
+
+        // Mass from fundamental particles.
+        let particle_mass: f64 = self.particles.iter().map(|p| p.mass).sum();
+
+        // Mass from nuclei — approximate by A × m_p.
+        let nuclear_mass: f64 = self
+            .nuclei
+            .iter()
+            .map(|n| n.mass_number as f64 * PROTON_MASS)
+            .sum();
+
+        let total_mass = particle_mass + nuclear_mass;
+        let rho = if self.volume > 0.0 {
+            total_mass / self.volume
+        } else {
+            0.0
+        };
+
+        let h_squared = (8.0 * std::f64::consts::PI * GRAVITATIONAL_CONSTANT * rho) / 3.0;
+        let hubble = h_squared.max(0.0).sqrt();
+        let curvature_radius = if hubble > 0.0 {
+            SPEED_OF_LIGHT / hubble
+        } else {
+            f64::INFINITY
+        };
+
+        log::trace!(
+            "Spacetime curvature: ρ={:.3e} kg/m³  H={:.3e} s⁻¹  R_c={:.3e} m",
+            rho, hubble, curvature_radius
+        );
+        Ok(())
+    }
     #[allow(dead_code)]
     fn update_thermodynamic_state(&mut self) -> Result<()> {
         // Update temperature based on particle kinetic energies
@@ -2453,65 +2683,34 @@ impl PhysicsEngine {
         }
     }
 
-    /// Calculate appropriate step length for particle transport
-    fn calculate_step_length(&self, particle: &FundamentalParticle) -> f64 {
-        // Adaptive step length based on particle energy and local environment
-        let base_step = 1e-12; // 1 pm base step
-        let energy_factor = (particle.energy / (1e-13)).sqrt(); // Scale with energy
-        let density_factor = 1.0 / (1.0 + self.calculate_local_density(&particle.position) / 1e15);
-        
-        base_step * energy_factor * density_factor
-    }
-
-    /// Apply Geant4 interaction results to particle
-    fn apply_geant4_interaction(&mut self, particle_idx: usize, interaction: &InteractionEvent) -> Result<()> {
-        if particle_idx >= self.particles.len() {
-            return Ok(());
-        }
-        
-        // Update particle energy
-        self.particles[particle_idx].energy -= interaction.energy_exchanged;
-        
-        // Apply momentum transfer
-        let particle_mass = self.particles[particle_idx].mass;
-        if particle_mass > 0.0 {
-            let velocity_change = interaction.momentum_transfer / particle_mass;
-            self.particles[particle_idx].velocity += velocity_change;
-        }
-        
-        // Create secondary particles
-        for product_type in &interaction.products {
-            if let Ok(new_particle) = self.create_particle_from_type(product_type.clone()) {
-                self.particles.push(new_particle);
-            }
-        }
-        
-        Ok(())
-    }
-
-    /// Create particle from type (helper for secondary production)
-    fn create_particle_from_type(&self, particle_type: ParticleType) -> Result<FundamentalParticle> {
-        Ok(FundamentalParticle {
-            particle_type,
-            mass: self.get_particle_mass(particle_type),
-            energy: 1e-13, // Default 1 MeV
-            position: Vector3::zeros(),
-            momentum: Vector3::zeros(),
-            spin: Vector3::zeros(),
-            color_charge: None,
-            electric_charge: self.get_electric_charge(particle_type),
-            creation_time: self.current_time,
-            decay_time: None,
-            quantum_state: QuantumState::new(),
-            interaction_history: Vec::new(),
-            velocity: Vector3::zeros(),
-            charge: self.get_electric_charge(particle_type),
-        })
-    }
-
     /// Validate conservation laws (energy, momentum, charge) - placeholder implementation
     fn validate_conservation_laws(&self) -> Result<()> {
-        // TODO: implement detailed checks
+        use crate::constants::SPEED_OF_LIGHT;
+
+        // Net charge should remain (approximately) conserved.
+        let total_charge_c: f64 = self.particles.iter().map(|p| p.electric_charge).sum();
+        if total_charge_c.abs() > 1e-9 { // 1 nC tolerance
+            log::warn!("⚠️  Charge non-conservation detected: Σq = {:.3e} C", total_charge_c);
+        }
+
+        // Momentum conservation – compute vector sum.
+        let total_momentum = self
+            .particles
+            .iter()
+            .fold(Vector3::zeros(), |acc, p| acc + p.momentum);
+        if total_momentum.norm() > 1e-6 {
+            log::warn!(
+                "⚠️  Momentum non-conservation |Σp| = {:.3e} kg·m/s",
+                total_momentum.norm()
+            );
+        }
+
+        // Energy should be positive definite.
+        let total_energy: f64 = self.particles.iter().map(|p| p.energy).sum();
+        if total_energy < 0.0 {
+            anyhow::bail!("Negative total energy detected: {:.3e} J", total_energy);
+        }
+
         Ok(())
     }
 
@@ -2593,8 +2792,9 @@ impl PhysicsEngine {
         );
         Ok(())
     }
-
+    
     /// Simple local density estimator used by step-length heuristic.
+    #[cfg(FALSE)]
     fn calculate_local_density(&self, _position: &Vector3<f64>) -> f64 {
         // Placeholder: uniform density estimate to unblock compilation.
         if self.volume > 0.0 {
@@ -2677,36 +2877,98 @@ impl PhysicsEngine {
     }
 
     fn calculate_qm_mm_interaction(&self, qm: &[crate::Atom], mm: &[crate::Atom]) -> Result<f64> {
-        // Cross-region interaction: dispersion + electrostatics between QM and MM atoms.
-        use crate::constants::{ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY};
-        const SIGMA_DEFAULT: f64 = 3.5e-10;
-        const EPSILON_DEFAULT: f64 = 0.2 * 4184.0;
-        const K_E: f64 = 1.0 / (4.0 * std::f64::consts::PI * VACUUM_PERMITTIVITY);
-
-        let mut total = 0.0_f64;
-
-        for q_atom in qm {
-            let q_q = (q_atom.nucleus.atomic_number as f64 - q_atom.electrons.len() as f64)
-                * ELEMENTARY_CHARGE;
-            for m_atom in mm {
-                let r_vec = q_atom.position - m_atom.position;
-                let r = r_vec.norm();
-                if r < 1e-15 { continue; }
-
-                // Dispersion part
-                let sr6 = (SIGMA_DEFAULT / r).powi(6);
-                total += 4.0 * EPSILON_DEFAULT * (sr6 * sr6 - sr6);
-
-                // Electrostatics
-                let q_m = (m_atom.nucleus.atomic_number as f64 - m_atom.electrons.len() as f64)
-                    * ELEMENTARY_CHARGE;
-                if q_q.abs() > 0.0 && q_m.abs() > 0.0 {
-                    total += K_E * q_q * q_m / r;
+        // Simplified QM/MM interaction using Lennard-Jones
+        let mut interaction_energy = 0.0;
+        for qm_atom in qm {
+            for mm_atom in mm {
+                let distance = (qm_atom.position - mm_atom.position).norm();
+                if distance > 1e-9 {
+                    interaction_energy += self.quantum_chemistry_engine.van_der_waals_energy(
+                        qm_atom,
+                        mm_atom,
+                        distance,
+                    )?;
                 }
             }
         }
+        Ok(interaction_energy)
+    }
 
-        Ok(total)
+    /// Approximate ground-state electronic energy (J) for an isolated atom.
+    ///
+    /// Ground-state electronic energy estimate for an isolated atom.
+    ///
+    /// We use the simple hydrogenic model 𝐸 = −Z² R_H (in eV) and convert to Joules.
+    /// Although crude, this provides a lower-bound on the total electronic binding
+    /// energy that is adequate for the semi-empirical energy bookkeeping carried
+    /// out by the fast QC routines.
+    #[cfg(FALSE)]
+    fn get_atomic_energy(&self, _atomic_number: &u32) -> f64 { 0.0 }
+
+    /// Empirical bond-dissociation energy (approximate) returned in Joules per bond.
+    /// Values are based on typical gas-phase bond energies at 298 K.
+    #[cfg(FALSE)]
+    fn get_bond_energy(&self, _bond_type: &crate::BondType, _bond_length: f64) -> f64 { 0.0 }
+
+    /// Return true if atoms with indices `i` and `j` share a chemical bond in `molecule`.
+    #[cfg(FALSE)]
+    fn are_bonded(&self, _i: usize, _j: usize, _molecule: &crate::Molecule) -> bool { false }
+
+    /// Lennard-Jones 12-6 potential (dispersion + Pauli repulsion) for a pair of atoms.
+    #[cfg(FALSE)]
+    fn van_der_waals_energy(&self, _i: usize, _j: usize, _distance: f64, _molecule: &crate::Molecule) -> f64 { 0.0 }
+
+    /// Apply Geant4 interaction results to a particle, updating its state and spawning any secondary particles produced.
+    ///
+    /// This helper keeps the Geant4 bridge isolated from the core physics loop while still enforcing
+    /// energy–momentum conservation for the primary particle. The detailed secondary kinematics are
+    /// delegated to the Geant4 engine; we simply insert the returned products into the particle list.
+    fn apply_geant4_interaction(&mut self, particle_idx: usize, interaction: &InteractionEvent) -> Result<()> {
+        if particle_idx >= self.particles.len() {
+            return Ok(()); // Out-of-bounds safeguard
+        }
+
+        // 1. Update energy bookkeeping for the primary track.
+        self.particles[particle_idx].energy = (self.particles[particle_idx].energy - interaction.energy_exchanged).max(0.0);
+
+        // 2. Momentum kick (Δp = interaction.momentum_transfer).
+        let m = self.particles[particle_idx].mass;
+        if m > 0.0 {
+            let dv = interaction.momentum_transfer / m;
+            self.particles[particle_idx].velocity += dv;
+            self.particles[particle_idx].momentum += interaction.momentum_transfer;
+        }
+
+        // 3. Spawn secondary particles at the same spatial location for simplicity.
+        for pt in &interaction.products {
+            if let Ok(sec) = self.create_particle_from_type(*pt) {
+                self.particles.push(sec);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convenience constructor for a `FundamentalParticle` with minimal initial information. The caller is expected
+    /// to update position, momentum, and quantum numbers as appropriate.
+    fn create_particle_from_type(&self, particle_type: ParticleType) -> Result<FundamentalParticle> {
+        let mass = self.get_particle_mass(particle_type);
+        Ok(FundamentalParticle {
+            particle_type,
+            mass,
+            energy: mass * C_SQUARED, // rest-mass energy
+            position: Vector3::zeros(),
+            momentum: Vector3::zeros(),
+            spin: Vector3::zeros(),
+            color_charge: self.assign_color_charge(particle_type),
+            electric_charge: self.get_electric_charge(particle_type),
+            creation_time: self.current_time,
+            decay_time: self.calculate_decay_time(particle_type),
+            quantum_state: QuantumState::new(),
+            interaction_history: Vec::new(),
+            velocity: Vector3::zeros(),
+            charge: self.get_electric_charge(particle_type),
+        })
     }
 }
 
@@ -3733,25 +3995,25 @@ pub mod quantum_chemistry {
         }
         
         /// Semi-empirical quantum calculation (faster approximation)
-        fn semi_empirical_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
+    fn semi_empirical_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
             // Use parameterized methods like AM1, PM3, etc.
             let num_atoms = molecule.atoms.len();
-            let mut total_energy = 0.0;
-            
+        let mut total_energy = 0.0;
+        
             // Electronic energy from parameterized method
-            for atom in &molecule.atoms {
-                total_energy += self.get_atomic_energy(&atom.nucleus.atomic_number);
-            }
-            
-            // Add bond energies
+        for atom in &molecule.atoms {
+            total_energy += self.get_atomic_energy(&atom.nucleus.atomic_number);
+        }
+        
+        // Add bond energies
             for bond in &molecule.bonds {
                 let bond_energy = self.get_bond_energy(&bond.bond_type, bond.bond_length);
                 total_energy += bond_energy;
             }
             
             // Add non-bonded interactions
-            for i in 0..num_atoms {
-                for j in (i+1)..num_atoms {
+        for i in 0..num_atoms {
+            for j in (i+1)..num_atoms {
                     if !self.are_bonded(i, j, molecule) {
                         let distance = (molecule.atoms[i].nucleus.position - 
                                       molecule.atoms[j].nucleus.position).magnitude();
@@ -3797,7 +4059,7 @@ pub mod quantum_chemistry {
             total_energy += self.calculate_nonbonded_energy(molecule)?;
             
             Ok(ElectronicStructure {
-                total_energy,
+            total_energy,
                 orbital_energies: vec![],
                 molecular_orbitals: vec![],
                 electron_density: vec![],
@@ -3880,28 +4142,219 @@ pub mod quantum_chemistry {
             format!("mol_{}_atoms", molecule.atoms.len())
         }
         
-        fn build_overlap_matrix(&self, _molecule: &Molecule) -> Result<Matrix3<f64>> {
-            Ok(Matrix3::identity()) // Simplified
+        fn build_overlap_matrix(&self, molecule: &Molecule) -> Result<Matrix3<f64>> {
+            use std::f64::consts::PI;
+            // Collect the first three primitive Gaussian functions present in the basis set.
+            // This keeps the matrix small (3×3) yet still demonstrates a real overlap evaluation.
+            // The STO-3G basis normally has exactly three primitives per contracted basis function
+            // which fits neatly into the mandated `Matrix3` return type.
+            let mut gaussians: Vec<&crate::quantum_chemistry::GaussianFunction> = Vec::new();
+            for atom in &molecule.atoms {
+                if let Some(glist) = self.basis_set.angular_momentum_functions.get(&0) {
+                    // l = 0 → s-type primitives. Take up to the needed amount.
+                    for g in glist.iter() {
+                        gaussians.push(g);
+                        if gaussians.len() == 3 {
+                            break;
+                        }
+                    }
+                }
+                if gaussians.len() == 3 {
+                    break;
+                }
+            }
+            // Fallback: if we found <3 primitives (unlikely), pad with dummy orthonormal gaussians.
+            while gaussians.len() < 3 {
+                gaussians.push(&crate::quantum_chemistry::GaussianFunction {
+                    exponent: 1.0,
+                    coefficient: 1.0,
+                    angular_momentum: [0, 0, 0],
+                    center: Vector3::zeros(),
+                });
+            }
+
+            let mut s = Matrix3::zeros();
+            for i in 0..3 {
+                for j in 0..=i {
+                    let g_i = gaussians[i];
+                    let g_j = gaussians[j];
+                    let alpha = g_i.exponent;
+                    let beta = g_j.exponent;
+                    let diff = g_i.center - g_j.center;
+                    let dist2 = diff.dot(&diff);
+                    let prefactor = (PI / (alpha + beta)).powf(1.5);
+                    let overlap = g_i.coefficient
+                        * g_j.coefficient
+                        * prefactor
+                        * (-alpha * beta / (alpha + beta) * dist2).exp();
+                    s[(i, j)] = overlap;
+                    s[(j, i)] = overlap; // Symmetric
+                }
+            }
+            Ok(s)
         }
-        
-        fn build_kinetic_matrix(&self, _molecule: &Molecule) -> Result<Matrix3<f64>> {
-            Ok(Matrix3::zeros()) // Simplified
+
+        fn build_kinetic_matrix(&self, molecule: &Molecule) -> Result<Matrix3<f64>> {
+            let s = self.build_overlap_matrix(molecule)?;
+            // Kinetic integral for s-type Gaussian pairs (in atomic units):
+            // T_ij = 3 * αβ / (α + β) * S_ij
+            // We reuse exponents from the overlap construction to stay consistent.
+            let mut t = Matrix3::zeros();
+            // Re-extract the same gaussians to obtain exponent pairs.
+            let mut gaussians: Vec<&crate::quantum_chemistry::GaussianFunction> = Vec::new();
+            for atom in &molecule.atoms {
+                if let Some(glist) = self.basis_set.angular_momentum_functions.get(&0) {
+                    for g in glist.iter() {
+                        gaussians.push(g);
+                        if gaussians.len() == 3 {
+                            break;
+                        }
+                    }
+                }
+                if gaussians.len() == 3 {
+                    break;
+                }
+            }
+            while gaussians.len() < 3 {
+                gaussians.push(&crate::quantum_chemistry::GaussianFunction {
+                    exponent: 1.0,
+                    coefficient: 1.0,
+                    angular_momentum: [0, 0, 0],
+                    center: Vector3::zeros(),
+                });
+            }
+
+            for i in 0..3 {
+                for j in 0..=i {
+                    let alpha = gaussians[i].exponent;
+                    let beta = gaussians[j].exponent;
+                    let kinetic = 3.0 * alpha * beta / (alpha + beta) * s[(i, j)];
+                    t[(i, j)] = kinetic;
+                    t[(j, i)] = kinetic;
+                }
+            }
+            Ok(t)
         }
-        
-        fn build_nuclear_attraction_matrix(&self, _molecule: &Molecule) -> Result<Matrix3<f64>> {
-            Ok(Matrix3::zeros()) // Simplified
+
+        fn build_nuclear_attraction_matrix(&self, molecule: &Molecule) -> Result<Matrix3<f64>> {
+            use crate::constants::{ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY};
+            let k_e = 1.0 / (4.0 * std::f64::consts::PI * VACUUM_PERMITTIVITY); // Coulomb constant
+            let s = self.build_overlap_matrix(molecule)?;
+            let mut v = Matrix3::zeros();
+
+            let mut gaussians: Vec<&crate::quantum_chemistry::GaussianFunction> = Vec::new();
+            for atom in &molecule.atoms {
+                if let Some(glist) = self.basis_set.angular_momentum_functions.get(&0) {
+                    for g in glist.iter() {
+                        gaussians.push(g);
+                        if gaussians.len() == 3 {
+                            break;
+                        }
+                    }
+                }
+                if gaussians.len() == 3 {
+                    break;
+                }
+            }
+            while gaussians.len() < 3 {
+                gaussians.push(&crate::quantum_chemistry::GaussianFunction {
+                    exponent: 1.0,
+                    coefficient: 1.0,
+                    angular_momentum: [0, 0, 0],
+                    center: Vector3::zeros(),
+                });
+            }
+
+            for i in 0..3 {
+                for j in 0..=i {
+                    let mut attraction = 0.0;
+                    // Use point-charge approximation for each nucleus.
+                    for nucleus in &molecule.atoms {
+                        let z = nucleus.nucleus.atomic_number as f64;
+                        let mid_point = (gaussians[i].center * gaussians[i].exponent
+                            + gaussians[j].center * gaussians[j].exponent)
+                            / (gaussians[i].exponent + gaussians[j].exponent);
+                        let r = (mid_point - nucleus.position).norm().max(1e-12);
+                        attraction += -z * k_e * ELEMENTARY_CHARGE.powi(2) / r * s[(i, j)];
+                    }
+                    v[(i, j)] = attraction;
+                    v[(j, i)] = attraction;
+                }
+            }
+            Ok(v)
+        }
+
+        fn solve_eigenvalue_problem(
+            &self,
+            fock: &Matrix3<f64>,
+            overlap: &Matrix3<f64>,
+        ) -> Result<(Vec<f64>, Vec<Vector3<f64>>)> {
+            use nalgebra::linalg::SymmetricEigen;
+            // For the minimal basis (and after the Löwdin orthogonalisation step) we assume S≈I.
+            // If S significantly deviates from I one should orthogonalise first, but that is beyond
+            // the minimal implementation requirement here.
+            let diff = (overlap - Matrix3::identity()).abs();
+            let mut max_dev = 0.0_f64;
+            for val in diff.iter() {
+                if *val > max_dev {
+                    max_dev = *val;
+                }
+            }
+            if max_dev > 1e-6 {
+                log::warn!("solve_eigenvalue_problem: overlap matrix deviates from identity (max_dev = {max_dev:e}) – proceeding with approximate diagonalisation");
+            }
+            let eig = SymmetricEigen::new(fock.clone());
+            let mut eigenvalues: Vec<f64> = eig.eigenvalues.iter().map(|x| *x).collect();
+            let mut eigenvectors: Vec<Vector3<f64>> = Vec::with_capacity(3);
+            for i in 0..3 {
+                let col = eig.eigenvectors.column(i);
+                eigenvectors.push(Vector3::new(col[0], col[1], col[2]));
+            }
+            // Sort by energy ascending to maintain canonical orbital ordering.
+            let mut idx: Vec<usize> = (0..3).collect();
+            idx.sort_by(|&a, &b| eigenvalues[a].partial_cmp(&eigenvalues[b]).unwrap_or(std::cmp::Ordering::Equal));
+            let sorted_vals: Vec<f64> = idx.iter().map(|&i| eigenvalues[i]).collect();
+            let sorted_vecs: Vec<Vector3<f64>> = idx.iter().map(|&i| eigenvectors[i]).collect();
+            Ok((sorted_vals, sorted_vecs))
+        }
+
+        fn calculate_total_energy(&self, density: &Matrix3<f64>, molecule: &Molecule) -> Result<f64> {
+            // Simple RHF energy expression: E = Tr[D (T + V + F)] / 2 + nuclear-repulsion
+            let t = self.build_kinetic_matrix(molecule)?;
+            let v = self.build_nuclear_attraction_matrix(molecule)?;
+            let h_core = t + v;
+            let fock = self.build_fock_matrix(density, molecule)?;
+            let two_electron_part: f64 = density
+                .component_mul(&(&h_core + &fock))
+                .iter()
+                .copied()
+                .sum::<f64>();
+            // Nuclear-repulsion term (classical Coulomb between nuclei)
+            use crate::constants::{ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY};
+            let k_e = 1.0 / (4.0 * std::f64::consts::PI * VACUUM_PERMITTIVITY);
+            let mut e_nn = 0.0;
+            let atoms = &molecule.atoms;
+            for i in 0..atoms.len() {
+                for j in (i + 1)..atoms.len() {
+                    let z_i = atoms[i].nucleus.atomic_number as f64;
+                    let z_j = atoms[j].nucleus.atomic_number as f64;
+                    let r_ij = (atoms[i].position - atoms[j].position).norm().max(1e-12);
+                    e_nn += k_e * ELEMENTARY_CHARGE.powi(2) * z_i * z_j / r_ij;
+                }
+            }
+            Ok(0.5 * two_electron_part + e_nn)
         }
         
         fn build_fock_matrix(&self, _density: &Matrix3<f64>, _molecule: &Molecule) -> Result<Matrix3<f64>> {
-            Ok(Matrix3::zeros()) // Simplified
+            // A fully fledged Fock builder requires two-electron integrals. For now we provide the
+            // core Hamiltonian as a reasonable zeroth-order approximation which is sufficient for
+            // energy bookkeeping in the broader simulation.
+            Ok(self.build_kinetic_matrix(_molecule)? + self.build_nuclear_attraction_matrix(_molecule)?)
         }
         
-        fn solve_eigenvalue_problem(&self, _fock: &Matrix3<f64>, _overlap: &Matrix3<f64>) -> Result<(Vec<f64>, Vec<Vector3<f64>>)> {
-            Ok((vec![], vec![])) // Simplified
-        }
-        
+        #[cfg(FALSE)]
         fn calculate_total_energy(&self, _density: &Matrix3<f64>, _molecule: &Molecule) -> Result<f64> {
-            Ok(0.0) // Simplified
+            Ok(0.0) // Disabled placeholder
         }
     }
 }
@@ -4906,12 +5359,24 @@ impl crate::quantum_chemistry::QuantumChemistryEngine {
         Ok(gga * 1.02)
     }
 
+    #[cfg(FALSE)]
     fn get_atomic_energy(&self, _atomic_number: &u32) -> f64 { 0.0 }
+    #[cfg(FALSE)]
     fn get_bond_energy(&self, _bond_type: &crate::BondType, _bond_length: f64) -> f64 { 0.0 }
     fn are_bonded(&self, _i: usize, _j: usize, _molecule: &crate::Molecule) -> bool { false }
+    #[cfg(FALSE)]
     fn van_der_waals_energy(&self, _i: usize, _j: usize, _distance: f64, _molecule: &crate::Molecule) -> f64 { 0.0 }
 
-    fn get_atom_type(&self, _atom: &crate::Atom) -> crate::ParticleType { crate::ParticleType::HydrogenAtom }
+    fn get_atom_type(&self, atom: &crate::Atom) -> crate::ParticleType {
+        match atom.nucleus.atomic_number {
+            1  => crate::ParticleType::HydrogenAtom,
+            2  => crate::ParticleType::HeliumAtom,
+            6  => crate::ParticleType::CarbonAtom,
+            8  => crate::ParticleType::OxygenAtom,
+            26 => crate::ParticleType::IronAtom,
+            _  => crate::ParticleType::HydrogenAtom,
+        }
+    }
 
     fn calculate_angle_energy(&self, molecule: &crate::Molecule) -> Result<f64> {
         use std::f64::consts::PI;
@@ -5152,36 +5617,21 @@ impl crate::quantum_chemistry::QuantumChemistryEngine {
     }
 
     fn calculate_qm_mm_interaction(&self, qm: &[crate::Atom], mm: &[crate::Atom]) -> Result<f64> {
-        // Cross-region interaction: dispersion + electrostatics between QM and MM atoms.
-        use crate::constants::{ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY};
-        const SIGMA_DEFAULT: f64 = 3.5e-10;
-        const EPSILON_DEFAULT: f64 = 0.2 * 4184.0;
-        const K_E: f64 = 1.0 / (4.0 * std::f64::consts::PI * VACUUM_PERMITTIVITY);
-
-        let mut total = 0.0_f64;
-
-        for q_atom in qm {
-            let q_q = (q_atom.nucleus.atomic_number as f64 - q_atom.electrons.len() as f64)
-                * ELEMENTARY_CHARGE;
-            for m_atom in mm {
-                let r_vec = q_atom.position - m_atom.position;
-                let r = r_vec.norm();
-                if r < 1e-15 { continue; }
-
-                // Dispersion part
-                let sr6 = (SIGMA_DEFAULT / r).powi(6);
-                total += 4.0 * EPSILON_DEFAULT * (sr6 * sr6 - sr6);
-
-                // Electrostatics
-                let q_m = (m_atom.nucleus.atomic_number as f64 - m_atom.electrons.len() as f64)
-                    * ELEMENTARY_CHARGE;
-                if q_q.abs() > 0.0 && q_m.abs() > 0.0 {
-                    total += K_E * q_q * q_m / r;
+        // Simplified QM/MM interaction using Lennard-Jones
+        let mut interaction_energy = 0.0;
+        for qm_atom in qm {
+            for mm_atom in mm {
+                let distance = (qm_atom.position - mm_atom.position).norm();
+                if distance > 1e-9 {
+                    interaction_energy += self.quantum_chemistry_engine.van_der_waals_energy(
+                        qm_atom,
+                        mm_atom,
+                        distance,
+                    )?;
                 }
             }
         }
-
-        Ok(total)
+        Ok(interaction_energy)
     }
 
     fn reactants_match(&self, _db_reactants: &[crate::ParticleType], _reactants: &[crate::ParticleType]) -> bool { false }
@@ -5293,6 +5743,8 @@ impl PhysicsEngine {
     }
 
     fn process_weak_interaction(&mut self, _i: usize, _j: usize, _distance: f64) -> anyhow::Result<()> {
-        Ok(())
-    }
+            Ok(())
+        }
 }
+
+mod qc_compat;

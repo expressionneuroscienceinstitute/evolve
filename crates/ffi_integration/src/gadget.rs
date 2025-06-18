@@ -167,6 +167,7 @@ impl GadgetEngine {
                     softening_length: 0.01, // Default value
                     time_step: self.time_step,
                     active: true,
+                    density: 0.0,
                 });
             }
         }
@@ -225,6 +226,94 @@ impl GadgetEngine {
             Ok(halos)
         }
     }
+
+    /// Remove all particles from the simulation (clears internal vector and resets counters)
+    pub fn clear_particles(&mut self) -> Result<()> {
+        self.particles.clear();
+        self.n_particles = 0;
+        Ok(())
+    }
+
+    /// Add a single particle to the simulation. Convenience wrapper around [`add_particles`].
+    pub fn add_particle(&mut self, particle: GadgetParticle) -> Result<()> {
+        // For high-performance we push to internal vector first and batch-upload later.
+        self.particles.push(particle);
+        self.n_particles = self.particles.len() as c_int;
+        Ok(())
+    }
+
+    /// Calculate gravitational forces for the current particle set.
+    ///
+    /// If the real GADGET library is present we delegate to its tree builder.
+    /// Otherwise we fall back to a simple O(N²) pairwise summation that is
+    /// scientifically valid but obviously not production-grade for large N.
+    pub fn calculate_forces(&mut self) -> Result<()> {
+        if !self.is_initialized {
+            return Err(anyhow!("GADGET not initialized"));
+        }
+
+        if is_available() {
+            unsafe {
+                gadget_init_tree();
+                gadget_calculate_forces();
+            }
+            return Ok(());
+        }
+
+        // Fallback – compute Newtonian forces directly in Rust.
+        let g_const: f64 = 6.67430e-11; // m^3 kg^-1 s^-2
+        let eps2 = 1.0e-4_f64.powi(2); // Softening term to avoid singularities
+        for i in 0..self.particles.len() {
+            let mut acc = Vector3::zeros();
+            for j in 0..self.particles.len() {
+                if i == j { continue; }
+                let diff = self.particles[j].position - self.particles[i].position;
+                let r2 = diff.dot(&diff) + eps2;
+                let inv_r3 = 1.0 / (r2 * r2.sqrt());
+                acc += diff * (g_const * self.particles[j].mass * inv_r3);
+            }
+            self.particles[i].acceleration = acc;
+        }
+        Ok(())
+    }
+
+    /// Integrate particle positions & velocities for a single timestep.
+    pub fn integrate_step(&mut self, dt: f64) -> Result<()> {
+        if !self.is_initialized {
+            return Err(anyhow!("GADGET not initialized"));
+        }
+
+        // If the native library is present we ask it to advance.
+        if is_available() {
+            unsafe {
+                gadget_update_particles(dt);
+            }
+        } else {
+            // Leap-frog integration (Kick-Drift-Kick) – simple but symplectic.
+            // 1) Kick – half step velocity update
+            for p in &mut self.particles {
+                p.velocity += 0.5 * dt * p.acceleration;
+            }
+            // 2) Drift – full step position update
+            for p in &mut self.particles {
+                p.position += p.velocity * dt;
+            }
+            // 3) Recompute forces and final Kick
+            self.calculate_forces()?;
+            for p in &mut self.particles {
+                p.velocity += 0.5 * dt * p.acceleration;
+            }
+        }
+
+        self.time_current += dt;
+        Ok(())
+    }
+
+    /// Retrieve an owned copy of current particle data.
+    pub fn get_particle_data(&self) -> Result<Vec<GadgetParticle>> {
+        // Delegates to existing `get_particles` which already performs ownership conversion.
+        self.get_particles()
+    }
 }
 
 impl Drop for GadgetEngine {
@@ -250,6 +339,7 @@ pub struct GadgetParticle {
     pub softening_length: f64,
     pub time_step: f64,
     pub active: bool,
+    pub density: f64,
 }
 
 /// Types of particles in cosmological simulation

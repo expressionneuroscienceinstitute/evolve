@@ -153,6 +153,12 @@ impl SpatialHashGrid {
             avg_particles_per_cell,
         }
     }
+
+    /// Get the maximum interaction range (in meters) configured for this grid.
+    #[inline]
+    pub fn max_interaction_range(&self) -> f64 {
+        self.max_interaction_range
+    }
 }
 
 /// Statistics about the spatial grid
@@ -213,30 +219,30 @@ impl SpatialOctree {
         
         // Insert all particles
         for (i, particle) in particles.iter().enumerate() {
-            self.insert_particle(i, &particle.position);
+            self.insert_particle(i, &particle.position, particles);
         }
     }
     
     /// Insert a particle into the octree
-    fn insert_particle(&mut self, particle_idx: usize, position: &Vector3<f64>) {
+    fn insert_particle(&mut self, particle_idx: usize, position: &Vector3<f64>, particles: &[FundamentalParticle]) {
         let position = *position; // Clone position to avoid borrow conflicts
-        self.insert_recursive_with_position(particle_idx, position);
+        self.insert_recursive_with_position(particle_idx, position, particles);
     }
     
     /// Helper method to avoid borrowing conflicts
-    fn insert_recursive_with_position(&mut self, particle_idx: usize, position: Vector3<f64>) {
+    fn insert_recursive_with_position(&mut self, particle_idx: usize, position: Vector3<f64>, particles: &[FundamentalParticle]) {
         // Implementation that doesn't create borrow conflicts
         if !self.point_in_bounds(&position, &self.root.bounds) {
             return;
         }
-        // For simplicity, just add to root for now
-        self.root.particles.push(particle_idx);
+        // This is where the recursive insertion should start from the root
+        self.insert_recursive_internal(&mut self.root, particle_idx, position, particles);
     }
     
-    /// Recursive particle insertion
-    fn insert_recursive(&mut self, node: &mut OctreeNode, particle_idx: usize, position: &Vector3<f64>) {
+    /// Recursive particle insertion (internal helper that only needs an immutable reference to `self`).
+    fn insert_recursive_internal(&self, node: &mut OctreeNode, particle_idx: usize, position: Vector3<f64>, particles: &[FundamentalParticle]) {
         // Check if position is within node bounds
-        if !self.point_in_bounds(position, &node.bounds) {
+        if !self.point_in_bounds(&position, &node.bounds) {
             return;
         }
         
@@ -246,23 +252,26 @@ impl SpatialOctree {
             
             // Subdivide if we've exceeded capacity and haven't reached max depth
             if node.particles.len() > self.max_particles_per_node && node.depth < self.max_depth {
-                self.subdivide_node(node);
+                self.subdivide_node(node, particles);
             }
         } else {
             // Insert into appropriate child
             if let Some(ref mut children) = node.children {
-                let child_idx = self.determine_child_index(position, &node.bounds);
-                self.insert_recursive(&mut children[child_idx], particle_idx, position);
+                let child_idx = self.determine_child_index(&position, &node.bounds);
+                // Correctly handle the case where the particle might not fit exactly in one child due to floating point inaccuracies
+                // For a robust octree, the `point_in_bounds` check needs to be precise, or particles might be "lost" if they fall on boundaries.
+                // For now, assuming perfect fit.
+                self.insert_recursive_internal(&mut children[child_idx], particle_idx, position, particles);
             }
         }
     }
     
     /// Subdivide a node into 8 children
-    fn subdivide_node(&mut self, node: &mut OctreeNode) {
+    fn subdivide_node(&self, node: &mut OctreeNode, particles: &[FundamentalParticle]) {
         let (min, max) = node.bounds;
         let center = (min + max) * 0.5;
         
-        let children = [
+        let mut new_children: Box<[OctreeNode; 8]> = Box::new([
             // Bottom layer (z = min)
             OctreeNode::new((min, center), node.depth + 1),
             OctreeNode::new((Vector3::new(center.x, min.y, min.z), Vector3::new(max.x, center.y, center.z)), node.depth + 1),
@@ -273,19 +282,19 @@ impl SpatialOctree {
             OctreeNode::new((Vector3::new(center.x, min.y, center.z), Vector3::new(max.x, center.y, max.z)), node.depth + 1),
             OctreeNode::new((Vector3::new(min.x, center.y, center.z), Vector3::new(center.x, max.y, max.z)), node.depth + 1),
             OctreeNode::new((center, max), node.depth + 1),
-        ];
-        
-        node.children = Some(Box::new(children));
+        ]);
         
         // Redistribute particles to children
         let particles_to_redistribute = std::mem::take(&mut node.particles);
-        if let Some(ref mut children) = node.children {
-            for particle_idx in particles_to_redistribute {
-                // We need the particle position to redistribute - this would need to be passed in
-                // For now, we'll just put all particles in the first child as a placeholder
-                children[0].particles.push(particle_idx);
+        for particle_idx in particles_to_redistribute {
+            if particle_idx < particles.len() {
+                let particle_position = particles[particle_idx].position;
+                let child_idx = self.determine_child_index(&particle_position, &node.bounds);
+                // Directly push to the new_children's particle list
+                new_children[child_idx].particles.push(particle_idx);
             }
         }
+        node.children = Some(new_children);
     }
     
     /// Check if a point is within bounds

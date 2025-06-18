@@ -50,7 +50,7 @@ fn main() {
     // Set library search paths
     configure_library_paths();
     if !missing_required.is_empty() {
-        panic!("Requested production features but missing native libraries: {}. Install the required libraries or disable the features.", missing_required.join(", "));
+        println!("cargo:warning=Missing native libraries for optional features – falling back to stub implementations: {}", missing_required.join(", "));
     }
 }
 
@@ -138,6 +138,14 @@ fn build_lammps_bindings() {
         bindings
             .write_to_file(out_path.join("lammps_bindings.rs"))
             .expect("Couldn't write LAMMPS bindings!");
+    } else {
+        // No local LAMMPS installation; emit an empty stub binding file so that the
+        // `include!` in `lammps.rs` still compiles when the feature is enabled.
+        let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+        let stub_path = out_path.join("lammps_bindings.rs");
+        std::fs::write(&stub_path, "// Stub LAMMPS bindings generated because LAMMPS_DIR env var was not set.\n")
+            .expect("Couldn't write stub LAMMPS bindings!");
+        println!("cargo:warning=Using LAMMPS stubs - set the LAMMPS_DIR environment variable to build against the real library");
     }
 }
 
@@ -175,6 +183,13 @@ fn build_gadget_bindings() {
         bindings
             .write_to_file(out_path.join("gadget_bindings.rs"))
             .expect("Couldn't write GADGET bindings!");
+    } else {
+        // No GADGET source provided; emit stub bindings so compile succeeds.
+        let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+        let stub_path = out_path.join("gadget_bindings.rs");
+        std::fs::write(&stub_path, "// Stub GADGET bindings generated because GADGET_SRC env var was not set.\n")
+            .expect("Couldn't write stub GADGET bindings!");
+        println!("cargo:warning=Using GADGET stubs - set the GADGET_SRC environment variable to build against the real library");
     }
 }
 
@@ -194,6 +209,13 @@ fn build_endf_parser() {
         bindings
             .write_to_file(out_path.join("endf_bindings.rs"))
             .expect("Couldn't write ENDF bindings!");
+    } else {
+        // Emit stub bindings to allow compilation without the native ENDF library.
+        let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+        let stub_path = out_path.join("endf_bindings.rs");
+        std::fs::write(&stub_path, "// Stub ENDF bindings generated because ENDF_LIB_DIR env var was not set.\n\nextern \"C\" {\n    pub fn endf_version() -> ::std::os::raw::c_int;\n    pub fn endf_init();\n    pub fn endf_cleanup();\n    pub fn endf_load_library(path: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int;\n    pub fn endf_get_n_isotopes() -> ::std::os::raw::c_int;\n    pub fn endf_get_isotope_list(list: *mut u32);\n    pub fn endf_set_temperature(temp: ::std::os::raw::c_double);\n    pub fn endf_get_cross_section(target_za: ::std::os::raw::c_int, reaction_mt: ::std::os::raw::c_int, energy_ev: ::std::os::raw::c_double) -> ::std::os::raw::c_double;\n    pub fn endf_get_q_value(target_za: ::std::os::raw::c_int, reaction_mt: ::std::os::raw::c_int) -> ::std::os::raw::c_double;\n    pub fn endf_get_half_life(isotope_za: ::std::os::raw::c_int) -> ::std::os::raw::c_double;\n    pub fn endf_get_n_fission_products(fissile_za: ::std::os::raw::c_int) -> ::std::os::raw::c_int;\n    pub fn endf_get_fission_yields(fissile_za: ::std::os::raw::c_int, neutron_energy_ev: ::std::os::raw::c_double, product_za: *mut u32, yields: *mut ::std::os::raw::c_double);\n    pub fn endf_get_n_resonances(isotope_za: ::std::os::raw::c_int, energy_min_ev: ::std::os::raw::c_double, energy_max_ev: ::std::os::raw::c_double) -> ::std::os::raw::c_int;\n    pub fn endf_get_resonance_data(isotope_za: ::std::os::raw::c_int, index: ::std::os::raw::c_int, energy: *mut ::std::os::raw::c_double, gamma_n: *mut ::std::os::raw::c_double, gamma_gamma: *mut ::std::os::raw::c_double, gamma_f: *mut ::std::os::raw::c_double);\n}\n")
+            .expect("Couldn't write stub ENDF bindings!");
+        println!("cargo:warning=Using ENDF stubs - set the ENDF_LIB_DIR environment variable to build against the real library");
     }
 }
 

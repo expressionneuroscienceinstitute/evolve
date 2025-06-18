@@ -4,24 +4,25 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-nalgebra = { workspace = true }
+nalgebra = { workspace = true, version = "0.32", features = ["serde"] }
 ndarray = { workspace = true }
-rand = { workspace = true }
+rand = { workspace = true, version = "0.8" }
 rand_chacha = { workspace = true }
 rand_distr = { workspace = true }
 serde = { workspace = true }
 serde_arrays = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-rayon = { workspace = true }
+rayon = { workspace = true, version = "1.5" }
 ordered-float = { workspace = true }
 approx = { workspace = true }
 bevy_ecs = { workspace = true, optional = true }
-once_cell = { workspace = true }
-log = { workspace = true }
+once_cell = { workspace = true, version = "1.19" }
+log = { workspace = true, version = "0.4" }
 endf_parser = "0.2.0"
 physics_types = { path = "../physics_types" }
 ffi_integration = { path = "../ffi_integration", default-features = false }
+itertools = "0.10"
 
 [features]
 default = ["gpu-acceleration", "bevy"]
@@ -37,5 +38,7 @@ amr = []
 gadget-gravity = []
 geant4-integration = []
 gadget = []
+lammps = []
+FALSE = []
 
 [build-dependencies]

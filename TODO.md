@@ -52,8 +52,15 @@ This file tracks the development status, completed work, and remaining tasks for
 - **Quantum Tunneling:** Gamow peak calculations for stellar conditions
 - **General Relativity:** Basic spacetime curvature effects (placeholder ready)
 - **Thermodynamics:** Proper statistical mechanics with quantum corrections
+- **Quantum Chemistry:** Refactored to a modular, extensible, and scientifically-grounded engine.
 
 ### ⚠️ Active Scientific TODOs
+
+#### Codebase Refactoring & Cleanup
+- [ ] **HIGH PRIORITY** - Resolve `lib.rs` compilation errors
+  - **Status:** `quantum_chemistry.rs` has been fully refactored, but `lib.rs` contains dead code that is causing compilation failures.
+  - **Needed:** Remove the old inline `quantum_chemistry` module from `lib.rs` and update the `ParticleType` enum to include the necessary elements for the new module.
+  - **Impact:** Critical for enabling further development and ensuring a clean build.
 
 #### Nuclear Physics Enhancements
 - [ ] **MEDIUM PRIORITY** - Expand nuclear database with complete ENDF/B-VIII.0 dataset

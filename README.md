@@ -11,7 +11,7 @@ EVOLVE is a comprehensive universe simulation that models the complete evolution
 - **Cosmic Evolution:** Big Bang to present day with realistic stellar formation and chemical evolution
 - **AI Evolution Tracking:** Consciousness emergence, technology development, civilization growth
 - **Real-time Visualization:** Web dashboard and CLI tools for monitoring and control
-- **Scientific Accuracy:** Experimental nuclear cross-sections, proper quantum mechanics, validated physics
+- **Scientific Accuracy:** Experimental nuclear cross-sections, proper quantum mechanics, validated physics, and a modular quantum chemistry engine.
 
 ## 🚀 Quick Start Guide
 
@@ -138,7 +138,7 @@ cargo run --bin universectl -- map [OPTIONS]
 **Available Layers:**
 - `stars`: Stellar density and stellar clusters ⭐
 - `gas`: Gas density and shock fronts 💨  
-- `dark_matter`: Dark matter distribution 🌌
+- `dark_matter`: Dark matter distribution ��
 - `radiation`: Radiation temperature and AGN activity 🔥
 
 **Examples:**
@@ -374,6 +374,17 @@ cargo run --bin universectl -- --godmode set-constant \
 - **Physical Constants**: CODATA 2023 internationally accepted values
 - **Stellar Models**: Validated against known stellar evolution theory
 - **Nuclear Data**: Cross-checked with experimental measurements
+
+## 🔬 Quantum Chemistry Engine
+
+EVOLVE now includes a sophisticated, modular quantum chemistry engine designed for scientific accuracy and future extensibility. This engine replaces previous placeholder models with scientifically-grounded calculations for molecular properties and interactions.
+
+### Core Features:
+- **Accurate Energy Calculations:** Implements the Thomas-Fermi model for atomic energy and uses average bond energies from experimental data for molecular bond calculations.
+- **Realistic Bonding:** Predicts chemical bonds based on the covalent radii of atoms, providing a more accurate representation of molecular structures.
+- **Van der Waals Interactions:** Models van der Waals forces using the Lennard-Jones 12-6 potential, which is critical for understanding non-bonded interactions.
+- **Modular Design:** The engine is built as a separate module, `quantum_chemistry.rs`, which makes it easy to maintain, extend, and improve in the future.
+- **Extensible Framework:** The engine is designed to support multiple calculation methods, including Hartree-Fock, Density Functional Theory (DFT), and semi-empirical methods, allowing for future enhancements and higher-fidelity simulations.
 
 ## 📊 Performance & Scale
 

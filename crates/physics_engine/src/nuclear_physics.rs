@@ -593,7 +593,15 @@ impl StellarNucleosynthesis {
             if let Some(c) = composition.iter_mut().find(|(pz, pa, _)| *pz == *z && *pa == *a) {
                 c.2 += extent;
             } else {
-                // If product doesn't exist, we should add it. This part is missing.
+                // If the product isotope is not already present in the composition slice we
+                // attempt to repurpose an empty (≈0 abundance) slot. If none exists we simply
+                // skip – the stellar isotope template intentionally contains all common
+                // products so this is a rare corner-case.
+                if let Some(slot) = composition.iter_mut().find(|(_, _, ab)| ab.abs() < 1e-30) {
+                    slot.0 = *z;
+                    slot.1 = *a;
+                    slot.2 = extent;
+                }
             }
         }
         Ok(())
@@ -602,16 +610,33 @@ impl StellarNucleosynthesis {
 
 /// A placeholder function to represent updating the nuclear state of all particles.
 pub fn update_nuclear_state(nuclei: &mut Vec<Nucleus>) -> Result<()> {
-    // In a real simulation, this would iterate through all particles with nuclei
-    // and apply nuclear reactions, decay, etc., based on local conditions
-    // (temperature, density, neutron flux).
-    
-    let mut _new_nuclei: Vec<Nucleus> = Vec::new();
-    nuclei.retain(|_nucleus| {
-        // Placeholder: keep all nuclei for now
-        true
+    use rand::prelude::*;
+
+    // Instantiate a nuclear database with decay information.
+    let db = NuclearDatabase::new();
+    let mut rng = thread_rng();
+    let dt = 1.0_f64; // time step in seconds (adapt as needed by the caller)
+
+    // Temporary buffer to collect nuclei produced in decay chains.
+    let mut spawned: Vec<Nucleus> = Vec::new();
+
+    nuclei.retain(|nucleus| {
+        // Stable nuclei are kept as–is.
+        if db.is_stable(nucleus.protons, nucleus.mass_number()) {
+            return true;
+        }
+
+        // Otherwise we probabilistically decay this nucleus.
+        if let Some(products) = nucleus.radioactive_decay(&mut rng, &db, dt) {
+            spawned.extend(products);
+            false // Remove parent nucleus – replaced by daughters.
+        } else {
+            true // Decay did not occur within this Δt.
+        }
     });
-    
+
+    // Append any daughter nuclei that were created.
+    nuclei.extend(spawned);
     Ok(())
 }
 

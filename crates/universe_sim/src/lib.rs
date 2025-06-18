@@ -523,8 +523,82 @@ impl UniverseSimulation {
         &mut self.diagnostics
     }
 
-    pub fn get_stats(&mut self) -> SimulationStats {
-        todo!();
+    /// Retrieve comprehensive statistics about the current state of the simulation.
+    pub fn get_stats(&mut self) -> Result<SimulationStats> {
+        let (star_count, stellar_stats) = self.calculate_stellar_statistics();
+        let energy_stats = self.calculate_energy_statistics();
+        let chemical_stats = self.calculate_chemical_composition();
+        let planetary_stats = self.calculate_planetary_statistics();
+        let evolution_stats = self.calculate_evolution_statistics();
+        let performance_stats = self.calculate_physics_performance();
+        let cosmic_stats = self.calculate_cosmic_structure();
+        
+        Ok(SimulationStats {
+            // Basic metrics
+            current_tick: self.current_tick,
+            universe_age_gyr: self.universe_age_gyr(),
+            universe_description: self.config.simulation_seed.map_or("N/A".to_string(), |s| s.to_string()),
+            target_ups: self.config.target_ups,
+            
+            // Population counts
+            particle_count: self.store.particles.count,
+            celestial_body_count: self.store.celestials.len(),
+            planet_count: planetary_stats.total_count,
+            lineage_count: self.store.agents.len(),
+            
+            // Stellar statistics
+            star_count,
+            stellar_formation_rate: stellar_stats.formation_rate,
+            average_stellar_mass: stellar_stats.average_mass,
+            stellar_mass_distribution: stellar_stats.mass_distribution,
+            main_sequence_stars: stellar_stats.main_sequence_count,
+            evolved_stars: stellar_stats.evolved_count,
+            stellar_remnants: stellar_stats.remnant_count,
+            
+            // Energy distribution
+            total_energy: energy_stats.total,
+            kinetic_energy: energy_stats.kinetic,
+            potential_energy: energy_stats.potential,
+            radiation_energy: energy_stats.radiation,
+            nuclear_binding_energy: energy_stats.binding,
+            average_temperature: energy_stats.average_temperature,
+            energy_density: energy_stats.density,
+            
+            // Chemical composition
+            hydrogen_fraction: chemical_stats.hydrogen,
+            helium_fraction: chemical_stats.helium,
+            carbon_fraction: chemical_stats.carbon,
+            oxygen_fraction: chemical_stats.oxygen,
+            iron_fraction: chemical_stats.iron,
+            heavy_elements_fraction: chemical_stats.heavy_elements,
+            metallicity: chemical_stats.metallicity,
+            
+            // Planetary statistics
+            habitable_planets: planetary_stats.habitable_count,
+            earth_like_planets: planetary_stats.earth_like_count,
+            gas_giants: planetary_stats.gas_giant_count,
+            average_planet_mass: planetary_stats.average_mass,
+            planet_formation_rate: planetary_stats.formation_rate,
+            
+            // Evolution and life statistics
+            extinct_lineages: evolution_stats.extinct,
+            average_tech_level: evolution_stats.average_tech,
+            immortal_lineages: evolution_stats.immortal_count,
+            consciousness_emergence_rate: evolution_stats.consciousness_rate,
+            
+            // Physics engine performance
+            physics_step_time_ms: performance_stats.step_time_ms,
+            interactions_per_step: performance_stats.nuclear_reactions,
+            particle_interactions_per_step: performance_stats.interactions,
+            
+            // Cosmic structure
+            universe_radius: cosmic_stats.radius,
+            hubble_constant: cosmic_stats.hubble_constant,
+            dark_matter_fraction: cosmic_stats.dark_matter_fraction,
+            dark_energy_fraction: cosmic_stats.dark_energy_fraction,
+            ordinary_matter_fraction: cosmic_stats.ordinary_matter_fraction,
+            critical_density: cosmic_stats.critical_density,
+        })
     }
 
     pub fn get_map_data(
@@ -584,31 +658,445 @@ impl UniverseSimulation {
     }
 
     fn calculate_stellar_statistics(&mut self) -> (usize, StellarStatistics) {
-        todo!();
+        use crate::storage::{CelestialBodyType, StellarPhase};
+        use std::collections::HashMap;
+
+        const M_SUN: f64 = 1.989e30;
+
+        if self.store.celestials.is_empty() {
+            return (
+                0,
+                StellarStatistics {
+                    count: 0,
+                    formation_rate: 0.0,
+                    average_mass: 0.0,
+                    mass_distribution: vec![],
+                    main_sequence_count: 0,
+                    evolved_count: 0,
+                    remnant_count: 0,
+                },
+            );
+        }
+
+        // Build a lookup map for faster access to stellar evolution data.
+        let evolution_map: HashMap<usize, &StellarEvolution> = self
+            .store
+            .stellar_evolutions
+            .iter()
+            .map(|ev| (ev.entity_id, ev))
+            .collect();
+
+        let mut star_count = 0;
+        let mut main_sequence_count = 0;
+        let mut evolved_count = 0;
+        let mut remnant_count = 0;
+        let mut total_mass_kg = 0.0;
+        let mut mass_bins: HashMap<usize, u32> = HashMap::new();
+        // Mass bins in Solar Masses: <0.5, 0.5-2, 2-8, 8-20, >20
+        let bin_thresholds = [0.5, 2.0, 8.0, 20.0];
+
+        for body in &self.store.celestials {
+            if !matches!(
+                body.body_type,
+                CelestialBodyType::Star
+                    | CelestialBodyType::WhiteDwarf
+                    | CelestialBodyType::NeutronStar
+                    | CelestialBodyType::BlackHole
+            ) {
+                continue;
+            }
+
+            star_count += 1;
+            total_mass_kg += body.mass;
+            let mass_msun = body.mass / M_SUN;
+
+            let bin_index = bin_thresholds.iter().position(|&t| mass_msun < t).unwrap_or(bin_thresholds.len());
+            *mass_bins.entry(bin_index).or_insert(0) += 1;
+
+            if let Some(evolution) = evolution_map.get(&body.entity_id) {
+                match evolution.evolutionary_phase {
+                    StellarPhase::MainSequence | StellarPhase::SubgiantBranch => {
+                        main_sequence_count += 1;
+                    }
+                    StellarPhase::RedGiantBranch
+                    | StellarPhase::HorizontalBranch
+                    | StellarPhase::AsymptoticGiantBranch => {
+                        evolved_count += 1;
+                    }
+                    StellarPhase::PlanetaryNebula | StellarPhase::Supernova => {
+                        // Transitional phases, count as evolved for now
+                        evolved_count += 1;
+                    }
+                    StellarPhase::WhiteDwarf
+                    | StellarPhase::NeutronStar
+                    | StellarPhase::BlackHole => {
+                        remnant_count += 1;
+                    }
+                }
+            } else {
+                 // If no evolution data, assume it's a main-sequence star for stats.
+                 // This can happen for stars at simulation start.
+                main_sequence_count += 1;
+            }
+        }
+
+        let universe_age_gyr = self.universe_age_gyr().max(1e-9); // Avoid division by zero
+        let formation_rate = star_count as f64 / universe_age_gyr;
+        let average_mass = if star_count > 0 {
+            total_mass_kg / star_count as f64
+        } else {
+            0.0
+        };
+
+        let mass_distribution = bin_thresholds
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| {
+                let lower_bound = if i == 0 { 0.0 } else { bin_thresholds[i - 1] };
+                (
+                    (lower_bound + t) / 2.0, // Midpoint of bin
+                    *mass_bins.get(&i).unwrap_or(&0) as f64,
+                )
+            })
+            .collect();
+
+        (
+            star_count,
+            StellarStatistics {
+                count: star_count,
+                formation_rate,
+                average_mass,
+                mass_distribution,
+                main_sequence_count,
+                evolved_count,
+                remnant_count,
+            },
+        )
     }
 
     fn calculate_energy_statistics(&mut self) -> EnergyStatistics {
-        todo!();
+        use crate::physics_engine::{classical::ClassicalSolver, PhysicsConstants, PhysicsState};
+
+        // 1. Convert SoA particle store to AoS for physics calculations
+        let mut states: Vec<PhysicsState> = Vec::with_capacity(self.store.particles.count);
+        for i in 0..self.store.particles.count {
+            states.push(PhysicsState {
+                position: self.store.particles.position[i],
+                velocity: self.store.particles.velocity[i],
+                acceleration: self.store.particles.acceleration[i],
+                mass: self.store.particles.mass[i],
+                charge: self.store.particles.charge[i],
+                temperature: self.store.particles.temperature[i],
+                entropy: self.store.particles.entropy[i],
+            });
+        }
+
+        if states.is_empty() {
+            return EnergyStatistics::default();
+        }
+
+        let constants = PhysicsConstants::default();
+        let classical_solver = ClassicalSolver::new(self.tick_span_years); // timestep not critical here
+
+        // 2. Calculate Kinetic and Potential Energy
+        let mut kinetic_energy = 0.0;
+        let mut potential_energy = 0.0;
+        for state in &states {
+            kinetic_energy += classical_solver.kinetic_energy(state, &constants);
+        }
+
+        for i in 0..states.len() {
+            for j in (i + 1)..states.len() {
+                let r_vec = states[j].position - states[i].position;
+                let r = r_vec.magnitude();
+                if r > 1e-10 { // Avoid singularity
+                    // Gravitational potential energy
+                    potential_energy -= constants.g * states[i].mass * states[j].mass / r;
+
+                    // Electromagnetic potential energy
+                    if (states[i].charge * states[j].charge).abs() > 1e-30 {
+                         let k_e = 1.0 / (4.0 * std::f64::consts::PI * constants.epsilon_0);
+                         potential_energy += k_e * states[i].charge * states[j].charge / r;
+                    }
+                }
+            }
+        }
+        
+        // 3. Calculate Nuclear Binding Energy from atoms
+        let nuclear_binding_energy = self
+            .physics_engine
+            .calculate_qm_region_energy(&self.physics_engine.atoms)
+            .unwrap_or(0.0);
+
+        // 4. Radiation Energy (Placeholder - requires electromagnetic field solver)
+        // TODO: Implement radiation energy calculation once EM field solver is integrated.
+        let radiation_energy = 0.0;
+
+        // 5. Aggregate total energy
+        let total_energy = kinetic_energy + potential_energy + nuclear_binding_energy + radiation_energy;
+        
+        // 6. Calculate Average Temperature
+        let total_temperature: f64 = self.store.particles.temperature.iter().sum();
+        let average_temperature = if !self.store.particles.temperature.is_empty() {
+            total_temperature / self.store.particles.temperature.len() as f64
+        } else {
+            0.0
+        };
+
+        // 7. Calculate Energy Density
+        const LY_TO_M: f64 = 9_460_730_777_160_000.0; // IAU 2015 Resolution B2
+        let radius_m = self.config.universe_radius_ly * LY_TO_M;
+        let volume_m3 = if radius_m > 0.0 {
+            (4.0 / 3.0) * std::f64::consts::PI * radius_m.powi(3)
+        } else {
+            0.0
+        };
+        let energy_density = if volume_m3 > 0.0 { total_energy / volume_m3 } else { 0.0 };
+
+        EnergyStatistics {
+            total: total_energy,
+            kinetic: kinetic_energy,
+            potential: potential_energy,
+            radiation: radiation_energy,
+            binding: nuclear_binding_energy,
+            average_temperature,
+            density: energy_density,
+        }
     }
 
     fn calculate_chemical_composition(&mut self) -> ChemicalComposition {
-        todo!();
+        let mut total_mass = 0.0;
+        let mut composition_mass = std::collections::HashMap::<String, f64>::new();
+
+        for body in &self.store.celestials {
+            total_mass += body.mass;
+            // The `abundances` field is an array where the index corresponds to the atomic number.
+            // We need to map this to element symbols.
+            for (z, &ppm) in body.composition.abundances.iter().enumerate() {
+                if ppm > 0 {
+                    let element_symbol = match z + 1 { // z is 0-indexed, atomic number is 1-indexed
+                        1 => "H",
+                        2 => "He",
+                        6 => "C",
+                        8 => "O",
+                        26 => "Fe",
+                        _ => continue, // Skip other elements for this statistic
+                    };
+                    // This is a rough approximation: mass ≈ ppm * atomic_mass_unit * mass_of_body
+                    // A better implementation would store mass fractions directly.
+                    let mass_fraction = ppm as f64 * 1e-6; 
+                    let element_mass = mass_fraction * body.mass;
+                    *composition_mass.entry(element_symbol.to_string()).or_insert(0.0) += element_mass;
+                }
+            }
+        }
+        
+        if total_mass == 0.0 {
+            return ChemicalComposition::default();
+        }
+
+        let get_fraction = |element: &str| {
+            composition_mass.get(element).map_or(0.0, |m| m / total_mass)
+        };
+
+        let hydrogen_fraction = get_fraction("H");
+        let helium_fraction = get_fraction("He");
+        let carbon_fraction = get_fraction("C");
+        let oxygen_fraction = get_fraction("O");
+        let iron_fraction = get_fraction("Fe");
+
+        // Simplified metallicity [Fe/H] = log10((Fe/H)_star / (Fe/H)_sun)
+        // Using solar abundance from Asplund et al. (2009) by number: H=12, Fe=7.50
+        // (Fe/H)_sun_mass_ratio = (10^7.50 * 55.845) / (10^12 * 1.008) ≈ 1.75e-3
+        const FE_H_SUN_MASS_RATIO: f64 = 1.75e-3;
+        let fe_h_star_ratio = if hydrogen_fraction > 0.0 { iron_fraction / hydrogen_fraction } else { 0.0 };
+        let metallicity = if fe_h_star_ratio > 0.0 {
+            (fe_h_star_ratio / FE_H_SUN_MASS_RATIO).log10()
+        } else {
+            -99.0 // Sentinel for no metals
+        };
+
+        let heavy_elements_fraction = 1.0 - (hydrogen_fraction + helium_fraction + carbon_fraction + oxygen_fraction + iron_fraction);
+
+        ChemicalComposition {
+            hydrogen: hydrogen_fraction,
+            helium: helium_fraction,
+            carbon: carbon_fraction,
+            oxygen: oxygen_fraction,
+            iron: iron_fraction,
+            heavy_elements: heavy_elements_fraction.max(0.0),
+            metallicity,
+        }
     }
 
     fn calculate_planetary_statistics(&mut self) -> PlanetaryStatistics {
-        todo!();
+        use crate::storage::{CelestialBodyType, PlanetClass};
+
+        let mut total_count = 0;
+        let mut habitable_count = 0;
+        let mut earth_like_count = 0;
+        let mut gas_giant_count = 0;
+        let mut total_mass_kg = 0.0;
+        
+        // Build a lookup for planetary environments
+        let environment_map: std::collections::HashMap<usize, &crate::storage::PlanetaryEnvironment> = self
+            .store
+            .planetary_environments
+            .iter()
+            .map(|env| (env.entity_id, env))
+            .collect();
+
+        for body in &self.store.celestials {
+            if !matches!(body.body_type, CelestialBodyType::Planet) {
+                continue;
+            }
+
+            total_count += 1;
+            total_mass_kg += body.mass;
+
+            if let Some(env) = environment_map.get(&body.entity_id) {
+                if env.habitability_score > 0.5 { // Arbitrary threshold for habitability
+                    habitable_count += 1;
+                }
+                match env.planet_class {
+                    PlanetClass::E => earth_like_count += 1,
+                    PlanetClass::G => gas_giant_count += 1,
+                    _ => {} // Other classes not specifically tracked yet
+                }
+            }
+        }
+        
+        let universe_age_gyr = self.universe_age_gyr().max(1e-9); // Avoid division by zero
+        let formation_rate = total_count as f64 / universe_age_gyr;
+
+        const EARTH_MASS_KG: f64 = 5.972e24;
+        let average_mass_earths = if total_count > 0 {
+            (total_mass_kg / total_count as f64) / EARTH_MASS_KG
+        } else {
+            0.0
+        };
+
+        PlanetaryStatistics {
+            total_count,
+            habitable_count,
+            earth_like_count,
+            gas_giant_count,
+            average_mass: average_mass_earths,
+            formation_rate,
+        }
     }
 
     fn calculate_evolution_statistics(&mut self) -> EvolutionStatistics {
-        todo!();
+        let lineages = &self.store.agents;
+        if lineages.is_empty() {
+            return EvolutionStatistics::default();
+        }
+
+        let total_ever = lineages.len();
+        // Assuming no extinction mechanism is implemented yet.
+        // TODO: Add a flag or mechanism to track extinct lineages.
+        let extinct = 0;
+        
+        let mut total_fitness = 0.0;
+        let mut total_sentience = 0.0;
+        let mut total_tech = 0.0;
+        let mut immortal_count = 0;
+
+        for lineage in lineages {
+            total_fitness += lineage.fitness;
+            total_sentience += lineage.sentience_level;
+            total_tech += lineage.tech_level;
+            if lineage.immortality_achieved {
+                immortal_count += 1;
+            }
+        }
+
+        let n = total_ever as f64;
+        let average_fitness = total_fitness / n;
+        let average_sentience = total_sentience / n;
+        let average_tech = total_tech / n;
+        
+        // This is a placeholder; a real implementation would track emergence events over time.
+        let universe_age_gyr = self.universe_age_gyr().max(1e-9);
+        let consciousness_rate = if average_sentience > 0.0 {
+            total_ever as f64 / universe_age_gyr
+        } else {
+            0.0
+        };
+
+        EvolutionStatistics {
+            total_ever,
+            extinct,
+            average_fitness,
+            average_sentience,
+            average_tech,
+            immortal_count,
+            consciousness_rate,
+        }
     }
 
     fn calculate_physics_performance(&self) -> PhysicsPerformance {
-        todo!();
+        // 1. Calculate average physics step time from diagnostics
+        let step_times = &self.diagnostics.metrics.physics_step_times.data;
+        let average_step_time_ms = if !step_times.is_empty() {
+            step_times.iter().map(|&(_t, v)| v).sum::<f64>() / step_times.len() as f64
+        } else {
+            0.0
+        };
+
+        // 2. Get total nuclear reactions from the physics engine
+        let nuclear_reactions =
+            self.physics_engine.fusion_count + self.physics_engine.fission_count;
+            
+        // 3. Get total particle interactions (placeholder, as this is not yet tracked)
+        // TODO: Add a counter for particle_interactions in the physics engine
+        let interactions = self.physics_engine.interaction_history.len();
+
+        PhysicsPerformance {
+            step_time_ms: average_step_time_ms,
+            nuclear_reactions: nuclear_reactions as usize,
+            interactions,
+        }
     }
 
     fn calculate_cosmic_structure(&self) -> CosmicStructure {
-        todo!();
+        const G: f64 = 6.67430e-11; // Gravitational constant (m³ kg⁻¹ s⁻²)
+        const KM_PER_MPC: f64 = 3.0857e19; // Kilometers per Megaparsec
+
+        #[cfg(feature = "gadget")]
+        let (hubble_constant, omega_matter, omega_lambda) =
+            if let Some(gadget) = &self.physics_engine.gadget_engine {
+                let params = &gadget.cosmological_parameters;
+                (params.hubble_constant, params.omega_matter, params.omega_lambda)
+            } else {
+                // Fallback if gadget feature is on but engine not initialized
+                (70.0, 0.3, 0.7) 
+            };
+        
+        #[cfg(not(feature = "gadget"))]
+        let (hubble_constant, omega_matter, omega_lambda) = {
+            // Use simplified defaults or derive from config if not using GADGET
+            // For now, using standard ΛCDM model parameters as placeholders.
+            (70.0, 0.3, 0.7) // H₀ in km/s/Mpc, Ωm, ΩΛ
+        };
+        
+        // Critical density: ρ_c = 3H₀² / (8πG)
+        let h_si = hubble_constant * 1000.0 / KM_PER_MPC; // Convert H₀ to s⁻¹
+        let critical_density = 3.0 * h_si * h_si / (8.0 * std::f64::consts::PI * G);
+
+        // Assume dark matter is the non-baryonic part of omega_matter.
+        // A proper implementation would track baryonic mass separately.
+        let omega_baryon = 0.05; // Approximate baryonic matter fraction
+        let dark_matter_fraction = omega_matter - omega_baryon;
+
+        CosmicStructure {
+            radius: self.config.universe_radius_ly,
+            hubble_constant,
+            dark_matter_fraction,
+            dark_energy_fraction: omega_lambda,
+            ordinary_matter_fraction: omega_baryon,
+            critical_density,
+        }
     }
 
     pub fn god_create_agent_on_planet(&mut self, _planet_id_str: &str) -> Result<String> {
@@ -682,28 +1170,26 @@ pub struct SimulationStats {
     pub planet_formation_rate: f64,   // Planets formed per billion years
     
     // Evolution and life statistics
-    pub total_lineages_ever: usize,
     pub extinct_lineages: usize,
-    pub average_fitness: f64,
-    pub average_sentience_level: f64,
     pub average_tech_level: f64,
     pub immortal_lineages: usize,
     pub consciousness_emergence_rate: f64, // Events per billion years
     
     // Physics engine performance
     pub physics_step_time_ms: f64,
-    pub nuclear_reactions_per_step: usize,
+    pub interactions_per_step: usize,
     pub particle_interactions_per_step: usize,
     
     // Cosmic structure
     pub universe_radius: f64,         // Light-years
-    pub expansion_rate: f64,          // km/s/Mpc (Hubble parameter)
+    pub hubble_constant: f64,
     pub dark_matter_fraction: f64,
     pub dark_energy_fraction: f64,
     pub ordinary_matter_fraction: f64,
     pub critical_density: f64,       // kg/m³
 }
 
+#[derive(Debug, Default)]
 struct StellarStatistics {
     count: usize,
     formation_rate: f64,
@@ -714,16 +1200,18 @@ struct StellarStatistics {
     remnant_count: usize,
 }
 
+#[derive(Debug, Default)]
 struct EnergyStatistics {
     total: f64,
     kinetic: f64,
     potential: f64,
     radiation: f64,
-    nuclear_binding: f64,
+    binding: f64,
     average_temperature: f64,
     density: f64,
 }
 
+#[derive(Debug, Default)]
 struct ChemicalComposition {
     hydrogen: f64,
     helium: f64,
@@ -734,6 +1222,7 @@ struct ChemicalComposition {
     metallicity: f64,
 }
 
+#[derive(Debug, Default)]
 struct PlanetaryStatistics {
     total_count: usize,
     habitable_count: usize,
@@ -743,6 +1232,7 @@ struct PlanetaryStatistics {
     formation_rate: f64,
 }
 
+#[derive(Debug, Default)]
 struct EvolutionStatistics {
     total_ever: usize,
     extinct: usize,
@@ -753,12 +1243,14 @@ struct EvolutionStatistics {
     consciousness_rate: f64,
 }
 
+#[derive(Debug, Default)]
 struct PhysicsPerformance {
     step_time_ms: f64,
     nuclear_reactions: usize,
     interactions: usize,
 }
 
+#[derive(Debug, Default)]
 struct CosmicStructure {
     radius: f64,
     hubble_constant: f64,
@@ -1020,7 +1512,7 @@ mod stellar_evolution_integration_tests {
         // Our simplified model won't match exactly, but should be reasonable order of magnitude
     }
     
-    #[test]
+    #[test] 
     fn test_initial_mass_function_sampling() {
         // Test that IMF sampling produces realistic stellar mass distribution
         let config = SimulationConfig::default();

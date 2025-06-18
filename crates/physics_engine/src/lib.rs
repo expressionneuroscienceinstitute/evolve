@@ -2604,7 +2604,7 @@ impl PhysicsEngine {
         }
     }
 
-    fn calculate_qm_region_energy(&self, atoms: &[crate::Atom]) -> Result<f64> {
+    pub fn calculate_qm_region_energy(&self, atoms: &[crate::Atom]) -> Result<f64> {
         // Estimate total quantum energy of the QM region.
         // --------------------------------------------------------------------
         // We combine two main energetic contributions that are readily

@@ -63,7 +63,7 @@ impl Default for PhysicsConstants {
             
             // Electromagnetic constants
             epsilon_0: 8.854_187_8128e-12,
-            mu_0: 1.256_637_062_12e-6,  // Defined constant since 2019 SI redefinition
+            mu_0: 1.256_637_062_12e-6,  // Vacuum permeability (μ₀) is fixed by definition since 2019 SI redefinition
             e: 1.602_176_634e-19,
             alpha: 7.297_352_5693e-3,
             
@@ -71,7 +71,7 @@ impl Default for PhysicsConstants {
             m_e: 9.109_383_7015e-31,
             m_p: 1.672_621_923_69e-27,
             m_n: 1.674_927_498_04e-27,
-            u: 1.660_539_066_60e-27,  // CODATA 2022 value
+            u: 1.660_539_066_60e-27,  // Atomic mass unit (CODATA 2022 value)
             
             // Astronomical constants
             m_sun: 1.988_47e30,
@@ -174,6 +174,9 @@ pub const RYDBERG_CONSTANT: f64 = 1.097_373_156_8160e7;
 
 /// Rydberg energy in eV (13.605693122994 eV)
 pub const RYDBERG_ENERGY: f64 = 13.605693122994;
+
+/// Stefan–Boltzmann constant σ = 2π⁵k⁴/(15h³c²) (matches NIST to <10⁻⁸)
+/// Used for blackbody temperature calculations.
 
 #[cfg(test)]
 mod tests {

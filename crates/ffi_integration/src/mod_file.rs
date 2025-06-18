@@ -6,7 +6,9 @@
 // Module declarations are in lib.rs
 
 use anyhow::Result;
-use crate::{geant4, lammps, gadget, endf};
+use crate::{geant4, lammps, endf};
+#[cfg(feature = "gadget")]
+use crate::gadget;
 
 /// Initialize all FFI libraries
 pub fn initialize_ffi_libraries() -> Result<()> {
@@ -15,6 +17,7 @@ pub fn initialize_ffi_libraries() -> Result<()> {
     // Initialize libraries in order of dependency
     geant4::initialize()?;
     lammps::initialize()?;
+    #[cfg(feature = "gadget")]
     gadget::initialize()?;
     endf::initialize()?;
     
@@ -28,6 +31,7 @@ pub fn cleanup_ffi_libraries() -> Result<()> {
     
     // Cleanup in reverse order
     endf::cleanup()?;
+    #[cfg(feature = "gadget")]
     gadget::cleanup()?;
     lammps::cleanup()?;
     geant4::cleanup()?;
@@ -41,7 +45,10 @@ pub fn check_library_availability() -> LibraryStatus {
     LibraryStatus {
         geant4_available: geant4::is_available(),
         lammps_available: lammps::is_available(),
+        #[cfg(feature = "gadget")]
         gadget_available: gadget::is_available(),
+        #[cfg(not(feature = "gadget"))]
+        gadget_available: false,
         endf_available: endf::is_available(),
     }
 }

@@ -9,6 +9,7 @@
 
 pub mod geant4;
 pub mod lammps;
+#[cfg(feature = "gadget")]
 pub mod gadget;
 pub mod endf;
 pub mod mod_file;
@@ -78,5 +79,6 @@ pub enum FfiPrecision {
 // Re-export commonly used types
 pub use geant4::{Geant4Engine};
 pub use lammps::{LammpsEngine, ForceFieldType, MolecularState, ThermodynamicState};
+#[cfg(feature = "gadget")]
 pub use gadget::{GadgetEngine, GadgetParticle, CosmologicalParameters, Halo};
 pub use endf::{EndfEngine, ReactionType, ThermalCrossSections, ResonanceParameter}; 

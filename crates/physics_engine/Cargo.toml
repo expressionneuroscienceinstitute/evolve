@@ -36,5 +36,6 @@ geodynamics-sim = []
 amr = []
 gadget-gravity = []
 geant4-integration = []
+gadget = []
 
 [build-dependencies]

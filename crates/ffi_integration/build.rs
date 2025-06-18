@@ -15,25 +15,43 @@ fn main() {
     // Build configuration for different scientific libraries only if the
     // corresponding Cargo feature is enabled. This prevents unconditional
     // linking against libraries that may be absent on the system.
-
+    let mut missing_required = Vec::new();
     if env::var("CARGO_FEATURE_GEANT4").is_ok() {
+        let wrapper_lib_so = "build/lib/libgeant4_wrapper.so";
+        let wrapper_lib_dylib = "build/lib/libgeant4_wrapper.dylib";
+        let wrapper_lib_versioned_dylib = "build/lib/libgeant4_wrapper.1.0.0.dylib";
+        let found = std::path::Path::new(wrapper_lib_so).exists() ||
+                    std::path::Path::new(wrapper_lib_dylib).exists() ||
+                    std::path::Path::new(wrapper_lib_versioned_dylib).exists();
+        if !found {
+            missing_required.push("Geant4");
+        }
         build_geant4_bindings();
     }
-
     if env::var("CARGO_FEATURE_LAMMPS").is_ok() {
+        if env::var("LAMMPS_DIR").is_err() {
+            missing_required.push("LAMMPS");
+        }
         build_lammps_bindings();
     }
-
     if env::var("CARGO_FEATURE_GADGET").is_ok() {
+        if env::var("GADGET_SRC").is_err() {
+            missing_required.push("GADGET");
+        }
         build_gadget_bindings();
     }
-
     if env::var("CARGO_FEATURE_ENDF").is_ok() {
+        if env::var("ENDF_LIB_DIR").is_err() {
+            missing_required.push("ENDF");
+        }
         build_endf_parser();
     }
     
     // Set library search paths
     configure_library_paths();
+    if !missing_required.is_empty() {
+        panic!("Requested production features but missing native libraries: {}. Install the required libraries or disable the features.", missing_required.join(", "));
+    }
 }
 
 fn build_geant4_bindings() {
@@ -47,59 +65,59 @@ fn build_geant4_bindings() {
                           std::path::Path::new(wrapper_lib_dylib).exists() ||
                           std::path::Path::new(wrapper_lib_versioned_dylib).exists();
     
-            if use_real_library {
-            // Use the real Geant4 wrapper library
-            let current_dir = std::env::current_dir().unwrap();
-            let lib_path = current_dir.join("build/lib");
-            println!("cargo:rustc-link-search=native={}", lib_path.display());
-            println!("cargo:rustc-link-lib=geant4_wrapper");
-            
-            // Link appropriate C++ standard library for the platform
-            if cfg!(target_os = "macos") {
-                println!("cargo:rustc-link-lib=c++");  // macOS uses libc++
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_path.display());
-            } else {
-                println!("cargo:rustc-link-lib=stdc++");  // Linux uses libstdc++
-            }
+    if use_real_library {
+        // Use the real Geant4 wrapper library
+        let current_dir = std::env::current_dir().unwrap();
+        let lib_path = current_dir.join("build/lib");
+        println!("cargo:rustc-link-search=native={}", lib_path.display());
+        println!("cargo:rustc-link-lib=geant4_wrapper");
         
-        // If we have geant4-config available, use it to get library paths
-        if let Ok(output) = std::process::Command::new("geant4-config")
-            .arg("--libs")
-            .output() {
-            if output.status.success() {
-                let lib_line = String::from_utf8_lossy(&output.stdout);
-                for token in lib_line.split_whitespace() {
-                    if let Some(stripped) = token.strip_prefix("-l") {
-                        println!("cargo:rustc-link-lib={}", stripped);
-                    } else if let Some(stripped) = token.strip_prefix("-L") {
-                        println!("cargo:rustc-link-search=native={}", stripped);
-                    }
+        // Link appropriate C++ standard library for the platform
+        if cfg!(target_os = "macos") {
+            println!("cargo:rustc-link-lib=c++");  // macOS uses libc++
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_path.display());
+        } else {
+            println!("cargo:rustc-link-lib=stdc++");  // Linux uses libstdc++
+        }
+    
+    // If we have geant4-config available, use it to get library paths
+    if let Ok(output) = std::process::Command::new("geant4-config")
+        .arg("--libs")
+        .output() {
+        if output.status.success() {
+            let lib_line = String::from_utf8_lossy(&output.stdout);
+            for token in lib_line.split_whitespace() {
+                if let Some(stripped) = token.strip_prefix("-l") {
+                    println!("cargo:rustc-link-lib={}", stripped);
+                } else if let Some(stripped) = token.strip_prefix("-L") {
+                    println!("cargo:rustc-link-search=native={}", stripped);
                 }
             }
         }
-        
-        println!("cargo:warning=Using real Geant4 wrapper library");
-    } else {
-        // Fall back to C stubs if the real library isn't available
-        cc::Build::new()
-            .file("src/geant4_stubs.c")
-            .flag("-std=c11")
-            .compile("geant4_stub");
-        println!("cargo:warning=Using Geant4 stubs - build the real library with 'make' in the ffi_integration directory");
     }
     
-    // Always generate basic bindings from the header
-    // This works whether using real library or stubs since the header defines the same interface
-    let bindings = bindgen::Builder::default()
-        .header("src/geant4_wrapper.h")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        .generate()
-        .expect("Unable to generate Geant4 bindings");
-        
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    bindings
-        .write_to_file(out_path.join("geant4_bindings.rs"))
-        .expect("Couldn't write Geant4 bindings!");
+    println!("cargo:warning=Using real Geant4 wrapper library");
+} else {
+    // Fall back to C stubs if the real library isn't available
+    cc::Build::new()
+        .file("src/geant4_stubs.c")
+        .flag("-std=c11")
+        .compile("geant4_stub");
+    println!("cargo:warning=Using Geant4 stubs - build the real library with 'make' in the ffi_integration directory");
+}
+
+// Always generate basic bindings from the header
+// This works whether using real library or stubs since the header defines the same interface
+let bindings = bindgen::Builder::default()
+    .header("src/geant4_wrapper.h")
+    .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+    .generate()
+    .expect("Unable to generate Geant4 bindings");
+    
+let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+bindings
+    .write_to_file(out_path.join("geant4_bindings.rs"))
+    .expect("Couldn't write Geant4 bindings!");
 }
 
 fn build_lammps_bindings() {

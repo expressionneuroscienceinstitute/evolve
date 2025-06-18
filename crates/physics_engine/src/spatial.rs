@@ -4,8 +4,6 @@
 //! calculations from O(N²) to O(N) complexity using spatial hash grids and octrees.
 
 use nalgebra::Vector3;
-use nalgebra::Complex;
-use crate::QuantumState;
 use std::collections::{HashMap, HashSet};
 use crate::FundamentalParticle;
 use serde::{Serialize, Deserialize};
@@ -232,99 +230,20 @@ impl SpatialOctree {
     /// Helper method to avoid borrowing conflicts
     fn insert_recursive_with_position(&mut self, particle_idx: usize, position: Vector3<f64>, particles: &[FundamentalParticle]) {
         // Implementation that doesn't create borrow conflicts
-        if !self.point_in_bounds(&position, &self.root.bounds) {
+        if !point_in_bounds(&position, &self.root.bounds) {
             return;
         }
         // This is where the recursive insertion should start from the root
-        self.insert_recursive_internal(&mut self.root, particle_idx, position, particles);
+        insert_recursive_internal(&mut self.root, particle_idx, position, particles, self.max_depth, self.max_particles_per_node);
     }
-    
-    /// Recursive particle insertion (internal helper that only needs an immutable reference to `self`).
-    fn insert_recursive_internal(&self, node: &mut OctreeNode, particle_idx: usize, position: Vector3<f64>, particles: &[FundamentalParticle]) {
-        // Check if position is within node bounds
-        if !self.point_in_bounds(&position, &node.bounds) {
-            return;
-        }
-        
-        // If this is a leaf node and hasn't reached capacity, add particle
-        if node.children.is_none() {
-            node.particles.push(particle_idx);
-            
-            // Subdivide if we've exceeded capacity and haven't reached max depth
-            if node.particles.len() > self.max_particles_per_node && node.depth < self.max_depth {
-                self.subdivide_node(node, particles);
-            }
-        } else {
-            // Insert into appropriate child
-            if let Some(ref mut children) = node.children {
-                let child_idx = self.determine_child_index(&position, &node.bounds);
-                // Correctly handle the case where the particle might not fit exactly in one child due to floating point inaccuracies
-                // For a robust octree, the `point_in_bounds` check needs to be precise, or particles might be "lost" if they fall on boundaries.
-                // For now, assuming perfect fit.
-                self.insert_recursive_internal(&mut children[child_idx], particle_idx, position, particles);
-            }
-        }
-    }
-    
-    /// Subdivide a node into 8 children
-    fn subdivide_node(&self, node: &mut OctreeNode, particles: &[FundamentalParticle]) {
-        let (min, max) = node.bounds;
-        let center = (min + max) * 0.5;
-        
-        let mut new_children: Box<[OctreeNode; 8]> = Box::new([
-            // Bottom layer (z = min)
-            OctreeNode::new((min, center), node.depth + 1),
-            OctreeNode::new((Vector3::new(center.x, min.y, min.z), Vector3::new(max.x, center.y, center.z)), node.depth + 1),
-            OctreeNode::new((Vector3::new(min.x, center.y, min.z), Vector3::new(center.x, max.y, center.z)), node.depth + 1),
-            OctreeNode::new((Vector3::new(center.x, center.y, min.z), Vector3::new(max.x, max.y, center.z)), node.depth + 1),
-            // Top layer (z = max)
-            OctreeNode::new((Vector3::new(min.x, min.y, center.z), Vector3::new(center.x, center.y, max.z)), node.depth + 1),
-            OctreeNode::new((Vector3::new(center.x, min.y, center.z), Vector3::new(max.x, center.y, max.z)), node.depth + 1),
-            OctreeNode::new((Vector3::new(min.x, center.y, center.z), Vector3::new(center.x, max.y, max.z)), node.depth + 1),
-            OctreeNode::new((center, max), node.depth + 1),
-        ]);
-        
-        // Redistribute particles to children
-        let particles_to_redistribute = std::mem::take(&mut node.particles);
-        for particle_idx in particles_to_redistribute {
-            if particle_idx < particles.len() {
-                let particle_position = particles[particle_idx].position;
-                let child_idx = self.determine_child_index(&particle_position, &node.bounds);
-                // Directly push to the new_children's particle list
-                new_children[child_idx].particles.push(particle_idx);
-            }
-        }
-        node.children = Some(new_children);
-    }
-    
-    /// Check if a point is within bounds
-    fn point_in_bounds(&self, point: &Vector3<f64>, bounds: &(Vector3<f64>, Vector3<f64>)) -> bool {
-        let (min, max) = bounds;
-        point.x >= min.x && point.x <= max.x &&
-        point.y >= min.y && point.y <= max.y &&
-        point.z >= min.z && point.z <= max.z
-    }
-    
-    /// Determine which child index a point belongs to
-    fn determine_child_index(&self, point: &Vector3<f64>, bounds: &(Vector3<f64>, Vector3<f64>)) -> usize {
-        let (min, max) = bounds;
-        let center = (min + max) * 0.5;
-        
-        let mut index = 0;
-        if point.x >= center.x { index += 1; }
-        if point.y >= center.y { index += 2; }
-        if point.z >= center.z { index += 4; }
-        
-        index
-    }
-    
+
     /// Find neighbors within a radius using the octree
     pub fn find_neighbors_in_radius(&self, query_point: &Vector3<f64>, radius: f64, particles: &[FundamentalParticle]) -> Vec<usize> {
         let mut neighbors = Vec::new();
         self.find_neighbors_recursive(&self.root, query_point, radius, particles, &mut neighbors);
         neighbors
     }
-    
+
     /// Recursive neighbor search
     fn find_neighbors_recursive(
         &self,
@@ -338,7 +257,7 @@ impl SpatialOctree {
         if !self.sphere_intersects_bounds(query_point, radius, &node.bounds) {
             return;
         }
-        
+
         if let Some(ref children) = node.children {
             // Recursively search children
             for child in children.iter() {
@@ -356,20 +275,51 @@ impl SpatialOctree {
             }
         }
     }
-    
+
     /// Check if a sphere intersects with a bounding box
     fn sphere_intersects_bounds(&self, center: &Vector3<f64>, radius: f64, bounds: &(Vector3<f64>, Vector3<f64>)) -> bool {
         let (min, max) = bounds;
-        
+
         // Find the closest point on the bounding box to the sphere center
         let closest_x = center.x.max(min.x).min(max.x);
         let closest_y = center.y.max(min.y).min(max.y);
         let closest_z = center.z.max(min.z).min(max.z);
-        
+
         let closest_point = Vector3::new(closest_x, closest_y, closest_z);
         let distance = (closest_point - center).norm();
-        
+
         distance <= radius
+    }
+}
+
+/// Recursive particle insertion
+fn insert_recursive_internal(
+    node: &mut OctreeNode,
+    particle_idx: usize,
+    position: Vector3<f64>,
+    particles: &[FundamentalParticle],
+    max_depth: usize,
+    max_particles_per_node: usize,
+) {
+    // Check if position is within node bounds
+    if !point_in_bounds(&position, &node.bounds) {
+        return;
+    }
+
+    // If this is a leaf node and hasn't reached capacity, add particle
+    if node.children.is_none() {
+        node.particles.push(particle_idx);
+
+        // Subdivide if we've exceeded capacity and haven't reached max depth
+        if node.particles.len() > max_particles_per_node && node.depth < max_depth {
+            subdivide_node(node, particles);
+        }
+    } else {
+        // Insert into appropriate child
+        if let Some(ref mut children) = node.children {
+            let child_idx = determine_child_index(&position, &node.bounds);
+            insert_recursive_internal(&mut children[child_idx], particle_idx, position, particles, max_depth, max_particles_per_node);
+        }
     }
 }
 
@@ -382,6 +332,58 @@ impl OctreeNode {
             depth,
         }
     }
+}
+
+/// Check if a point is within bounds
+fn point_in_bounds(point: &Vector3<f64>, bounds: &(Vector3<f64>, Vector3<f64>)) -> bool {
+    let (min, max) = bounds;
+    point.x >= min.x && point.x <= max.x &&
+    point.y >= min.y && point.y <= max.y &&
+    point.z >= min.z && point.z <= max.z
+}
+
+/// Determine which child index a point belongs to
+fn determine_child_index(point: &Vector3<f64>, bounds: &(Vector3<f64>, Vector3<f64>)) -> usize {
+    let (min, max) = bounds;
+    let center = (min + max) * 0.5;
+    
+    let mut index = 0;
+    if point.x >= center.x { index += 1; }
+    if point.y >= center.y { index += 2; }
+    if point.z >= center.z { index += 4; }
+    
+    index
+}
+
+/// Subdivide a node into 8 children
+fn subdivide_node(node: &mut OctreeNode, particles: &[FundamentalParticle]) {
+    let (min, max) = node.bounds;
+    let center = (min + max) * 0.5;
+    
+    let mut new_children: Box<[OctreeNode; 8]> = Box::new([
+        // Bottom layer (z = min)
+        OctreeNode::new((min, center), node.depth + 1),
+        OctreeNode::new((Vector3::new(center.x, min.y, min.z), Vector3::new(max.x, center.y, center.z)), node.depth + 1),
+        OctreeNode::new((Vector3::new(min.x, center.y, min.z), Vector3::new(center.x, max.y, center.z)), node.depth + 1),
+        OctreeNode::new((Vector3::new(center.x, center.y, min.z), Vector3::new(max.x, max.y, center.z)), node.depth + 1),
+        // Top layer (z = max)
+        OctreeNode::new((Vector3::new(min.x, min.y, center.z), Vector3::new(center.x, center.y, max.z)), node.depth + 1),
+        OctreeNode::new((Vector3::new(center.x, min.y, center.z), Vector3::new(max.x, center.y, max.z)), node.depth + 1),
+        OctreeNode::new((Vector3::new(min.x, center.y, center.z), Vector3::new(center.x, max.y, max.z)), node.depth + 1),
+        OctreeNode::new((center, max), node.depth + 1),
+    ]);
+    
+    // Redistribute particles to children
+    let particles_to_redistribute = std::mem::take(&mut node.particles);
+    for particle_idx in particles_to_redistribute {
+        if particle_idx < particles.len() {
+            let particle_position = particles[particle_idx].position;
+            let child_idx = determine_child_index(&particle_position, &node.bounds);
+            // Directly push to the new_children's particle list
+            new_children[child_idx].particles.push(particle_idx);
+        }
+    }
+    node.children = Some(new_children);
 }
 
 #[cfg(test)]

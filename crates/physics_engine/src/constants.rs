@@ -175,6 +175,10 @@ pub const RYDBERG_CONSTANT: f64 = 1.097_373_156_8160e7;
 /// Rydberg energy in eV (13.605693122994 eV)
 pub const RYDBERG_ENERGY: f64 = 13.605693122994;
 
+/// Hartree energy (2 Rydbergs) in Joules (4.3597447222071e-18 J)
+/// This is the atomic unit of energy used in quantum chemistry
+pub const HARTREE_TO_JOULE: f64 = 4.3597447222071e-18;
+
 /// Stefan–Boltzmann constant σ = 2π⁵k⁴/(15h³c²) (matches NIST to <10⁻⁸)
 /// Used for blackbody temperature calculations.
 

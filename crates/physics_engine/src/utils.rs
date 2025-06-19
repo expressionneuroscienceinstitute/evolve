@@ -3,10 +3,13 @@
 //! Common utility functions for physics calculations, conversions, and mathematical operations.
 //! This module extracts reusable functionality to reduce code duplication across the physics engine.
 
-use nalgebra::{Vector3, Complex};
-use anyhow::Result;
-use std::collections::HashMap;
+use nalgebra::Vector3;
+use anyhow::{Result, anyhow};
 use crate::{ParticleType, FundamentalParticle, constants::*};
+use std::f64::consts::PI;
+
+// Coulomb constant K_e = 1/(4πε₀)
+const K_E: f64 = 1.0 / (4.0 * PI * VACUUM_PERMITTIVITY);
 
 /// Mathematical and conversion utilities
 pub mod math {
@@ -222,7 +225,7 @@ pub mod physics {
 
 /// Stellar physics utilities
 pub mod stellar {
-    use super::*;
+    use super::{SPEED_OF_LIGHT, BOLTZMANN};
     
     /// Calculate stellar radius using empirical mass-radius relation
     /// R ∝ M^α where α depends on stellar mass regime
@@ -358,10 +361,10 @@ pub mod validation {
     /// Validate that a physical quantity is finite and non-negative
     pub fn validate_positive_finite(value: f64, name: &str) -> Result<()> {
         if !value.is_finite() {
-            return Err(anyhow::anyhow!("{} must be finite, got: {}", name, value));
+            return Err(anyhow!("{} must be finite, got: {}", name, value));
         }
         if value < 0.0 {
-            return Err(anyhow::anyhow!("{} must be non-negative, got: {}", name, value));
+            return Err(anyhow!("{} must be non-negative, got: {}", name, value));
         }
         Ok(())
     }
@@ -370,7 +373,7 @@ pub mod validation {
     pub fn validate_vector_finite(vector: &Vector3<f64>, name: &str) -> Result<()> {
         for (i, &component) in vector.iter().enumerate() {
             if !component.is_finite() {
-                return Err(anyhow::anyhow!("{} component {} must be finite, got: {}", name, i, component));
+                return Err(anyhow!("{} component {} must be finite, got: {}", name, i, component));
             }
         }
         Ok(())
@@ -384,10 +387,10 @@ pub mod validation {
         validate_positive_finite(mass, "particle mass")?;
         
         if mass < MIN_MASS {
-            return Err(anyhow::anyhow!("Particle mass too small: {} kg", mass));
+            return Err(anyhow!("Particle mass too small: {} kg", mass));
         }
         if mass > MAX_MASS {
-            return Err(anyhow::anyhow!("Particle mass too large: {} kg", mass));
+            return Err(anyhow!("Particle mass too large: {} kg", mass));
         }
         
         Ok(())
@@ -400,7 +403,7 @@ pub mod validation {
         const MAX_TEMP: f64 = 1e12; // 1 TK (roughly Planck temperature / 100)
         
         if temperature > MAX_TEMP {
-            return Err(anyhow::anyhow!("Temperature too high: {} K", temperature));
+            return Err(anyhow!("Temperature too high: {} K", temperature));
         }
         
         Ok(())
@@ -416,7 +419,7 @@ pub mod validation {
         let relative_error = energy_difference / initial_energy.max(final_energy).max(1e-100);
         
         if relative_error > tolerance {
-            return Err(anyhow::anyhow!(
+            return Err(anyhow!(
                 "Energy conservation violated: initial={:.3e} J, final={:.3e} J, error={:.3e}",
                 initial_energy, final_energy, relative_error
             ));
@@ -472,17 +475,17 @@ pub mod performance {
         particle_count * BYTES_PER_PARTICLE
     }
     
-    /// Calculate optimal number of threads for parallel processing
-    pub fn optimal_thread_count(workload_size: usize, min_work_per_thread: usize) -> usize {
-        let max_threads = num_cpus::get();
-        let optimal_threads = workload_size / min_work_per_thread;
-        optimal_threads.min(max_threads).max(1)
+    /// Get optimal number of threads for parallel computation
+    pub fn get_optimal_thread_count() -> usize {
+        // Use standard library function available since Rust 1.59
+        std::thread::available_parallelism()
+            .map(|p| p.get())
+            .unwrap_or(1) // Fallback to single thread if detection fails
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     
     #[test]
     fn test_relativistic_energy() {

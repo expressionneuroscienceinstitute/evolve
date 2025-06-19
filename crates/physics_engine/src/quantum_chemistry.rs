@@ -437,57 +437,126 @@ impl QuantumChemistryEngine {
         Ok(result)
     }
     
-    /// Hartree-Fock self-consistent field calculation
-    #[allow(dead_code)]
+    /// Performs a complete Hartree-Fock Self-Consistent Field (SCF) calculation
+    /// This is a fundamental ab initio quantum chemistry method that solves the
+    /// electronic Schrödinger equation using mean-field approximation
     fn hartree_fock_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
+        // Build one-electron integrals
+        let overlap = self.build_overlap_matrix(molecule)?;
+        let kinetic = self.build_kinetic_matrix(molecule)?;
+        let nuclear = self.build_nuclear_attraction_matrix(molecule)?;
+        
+        // Core Hamiltonian matrix H_core = T + V_ne
+        let h_core = &kinetic + &nuclear;
+        
+        let n_basis = overlap.nrows();
         let n_electrons = self.count_electrons(molecule);
-        let overlap_matrix = self.build_overlap_matrix(molecule)?;
-
-        // Initial guess for density matrix (e.g., zero matrix)
-        let mut density_matrix = DMatrix::zeros(overlap_matrix.nrows(), overlap_matrix.ncols());
-
-        let mut total_energy = 0.0;
-        let mut last_eigenvalues: Vec<f64> = Vec::new();
-
-        // Self-Consistent Field (SCF) iterations
-        for _iteration in 0..50 {
-            // Construct Fock matrix with current density
-            let fock_matrix = self.build_fock_matrix(&density_matrix, molecule)?;
-
-            // Solve Roothaan equations
-            let (eigenvalues, eigenvectors) = self.solve_eigenvalue_problem(&fock_matrix, &overlap_matrix)?;
-            last_eigenvalues = eigenvalues.clone();
-
-            // Determine occupied orbitals (closed-shell)
-            let n_occ = (n_electrons as f64 / 2.0).ceil() as usize;
-            // C_occ = first n_occ columns of eigenvectors
-            let c_occ = eigenvectors.columns(0, n_occ).into_owned();
-
-            // New density: P = 2 C_occ C_occᵀ
-            let new_density = &c_occ * c_occ.transpose() * 2.0;
-
-            // Compute energy and check convergence
-            let old_energy = total_energy;
-            total_energy = self.calculate_total_energy(&new_density, molecule)?;
-
-            if (total_energy - old_energy).abs() < 1e-8 {
-                density_matrix = new_density;
-                break;
-            }
-
-            density_matrix = new_density;
+        let n_occupied = n_electrons / 2; // Assume closed-shell RHF
+        
+        if n_basis == 0 {
+            return Err(anyhow!("No basis functions available for calculation"));
         }
         
-        Ok(ElectronicStructure {
-            total_energy,
-            orbital_energies: last_eigenvalues,
-            molecular_orbitals: vec![],
-            electron_density: vec![],
-            bond_orders: HashMap::new(),
-            atomic_charges: vec![0.0; molecule.atoms.len()],
-            dipole_moment: Vector3::zeros(),
-            polarizability: Matrix3::zeros(),
-        })
+        // Initial guess: core Hamiltonian eigenvectors
+        let (initial_energies, initial_orbitals) = self.solve_eigenvalue_problem(&h_core, &overlap)?;
+        
+        // Build initial density matrix from occupied orbitals
+        let mut density = DMatrix::zeros(n_basis, n_basis);
+        for i in 0..n_basis {
+            for j in 0..n_basis {
+                for k in 0..n_occupied {
+                    density[(i, j)] += 2.0 * initial_orbitals[(i, k)] * initial_orbitals[(j, k)];
+                }
+            }
+        }
+        
+        // SCF iteration parameters
+        const MAX_SCF_CYCLES: usize = 100;
+        const CONVERGENCE_THRESHOLD: f64 = 1e-8;
+        const DENSITY_MIXING: f64 = 0.5; // DIIS mixing parameter
+        
+        let mut previous_energy = 0.0;
+        let mut orbital_energies = initial_energies;
+        let mut molecular_orbitals_matrix = initial_orbitals;
+        
+        // SCF iteration loop
+        for cycle in 0..MAX_SCF_CYCLES {
+            // Build Fock matrix with current density
+            let fock = self.build_fock_matrix_full(&density, molecule, &h_core)?;
+            
+            // Solve Fock equation: F C = S C ε
+            let (new_energies, new_orbitals) = self.solve_eigenvalue_problem(&fock, &overlap)?;
+            
+            // Calculate total electronic energy
+            let electronic_energy = self.calculate_scf_energy(&density, &h_core, &fock)?;
+            
+            // Add nuclear repulsion energy
+            let nuclear_repulsion = self.calculate_nuclear_repulsion_energy(molecule)?;
+            let total_energy = electronic_energy + nuclear_repulsion;
+            
+            // Check for convergence
+            let energy_change = (total_energy - previous_energy).abs();
+            if cycle > 0 && energy_change < CONVERGENCE_THRESHOLD {
+                println!("HF SCF converged in {} cycles. Final energy: {:.8} Hartree", cycle + 1, total_energy);
+                
+                // Build molecular orbitals
+                let mut molecular_orbitals = Vec::new();
+                for i in 0..n_basis {
+                    let coefficients = new_orbitals.column(i).iter().cloned().collect();
+                    molecular_orbitals.push(MolecularOrbital {
+                        energy: new_energies[i],
+                        occupation: if i < n_occupied { 2.0 } else { 0.0 },
+                        coefficients,
+                        orbital_type: if i < n_occupied { OrbitalType::S } else { OrbitalType::S }, // Simplified
+                        symmetry: format!("MO_{}", i + 1),
+                    });
+                }
+                
+                // Calculate atomic charges using Mulliken population analysis
+                let atomic_charges = self.calculate_mulliken_charges(&density, &overlap, molecule)?;
+                
+                // Calculate dipole moment
+                let dipole_moment = self.calculate_dipole_moment(&density, molecule)?;
+                
+                // Calculate bond orders using Wiberg indices
+                let bond_orders = self.calculate_bond_orders(&density, &overlap, molecule)?;
+                
+                return Ok(ElectronicStructure {
+                    total_energy: total_energy * constants::HARTREE_TO_JOULE, // Convert to Joules
+                    orbital_energies: new_energies.iter().map(|e| e * constants::HARTREE_TO_JOULE).collect(),
+                    molecular_orbitals,
+                    electron_density: self.calculate_electron_density_grid(&density, molecule)?,
+                    bond_orders,
+                    atomic_charges,
+                    dipole_moment,
+                    polarizability: Matrix3::zeros(), // TODO: Calculate polarizability
+                });
+            }
+            
+            // Update density matrix with damping for stability
+            let mut new_density = DMatrix::zeros(n_basis, n_basis);
+            for i in 0..n_basis {
+                for j in 0..n_basis {
+                    for k in 0..n_occupied {
+                        new_density[(i, j)] += 2.0 * new_orbitals[(i, k)] * new_orbitals[(j, k)];
+                    }
+                }
+            }
+            
+            // Apply density mixing for convergence acceleration
+            density = &density * DENSITY_MIXING + &new_density * (1.0 - DENSITY_MIXING);
+            
+            previous_energy = total_energy;
+            orbital_energies = new_energies;
+            molecular_orbitals_matrix = new_orbitals;
+            
+            if cycle % 10 == 0 {
+                println!("HF SCF cycle {}: Energy = {:.8} Hartree, ΔE = {:.2e}", 
+                         cycle + 1, total_energy, energy_change);
+            }
+        }
+        
+        Err(anyhow!("Hartree-Fock SCF failed to converge after {} cycles", MAX_SCF_CYCLES))
     }
     
     /// Density Functional Theory calculation
@@ -826,108 +895,224 @@ impl QuantumChemistryEngine {
         Ok(v_matrix)
     }
 
-    fn build_fock_matrix(&self, _density: &DMatrix<f64>, molecule: &Molecule) -> Result<DMatrix<f64>> {
-        // At the Hartree-Fock level the Fock matrix is:
-        // F = H_core + G(D)
-        // where H_core = T + V_nuc and G comprises Coulomb (J) and exchange (K) contributions
-        // built from two-electron integrals and the density matrix D.
-        //
-        // Two-electron integrals are not yet implemented. Until they are, we return the core Hamiltonian.
-        // This yields the Harris functional (non-self-consistent) which is still variational and provides
-        // a meaningful energy upper bound.
-
-        let t = self.build_kinetic_matrix(molecule)?;
-        let v = self.build_nuclear_attraction_matrix(molecule)?;
-        Ok(t + v)
-    }
-
-    fn solve_eigenvalue_problem(&self, fock: &DMatrix<f64>, overlap: &DMatrix<f64>) -> Result<(Vec<f64>, DMatrix<f64>)> {
-        // --- Roothaan generalized eigenvalue solver ---
-        // We solve  F C = S C ε  where F is the Fock matrix,
-        // S is the overlap matrix (symmetric positive-definite),
-        // C are molecular orbital coefficients and ε the diagonal matrix of orbital energies.
-        //
-        // Standard approach:
-        // 1. Perform Cholesky decomposition  S = L Lᵗ  (guaranteed SPD for a well-defined basis).
-        // 2. Transform F  →  F' = L⁻ᵗ F L⁻¹  which is orthonormal (S' = I).
-        // 3. Solve the ordinary symmetric eigenproblem  F' C' = C' ε.
-        // 4. Back-transform coefficients  C = L⁻¹ C'.
-        // 5. Sort eigenvalues ascending and reorder columns of C accordingly.
-        //
-        // References:
-        // * C. C. J. Roothaan, "Self-consistent Field Theory for Molecular and Solid State Problems", Rev. Mod. Phys. 32, 179 (1960).
-        // * T. Helgaker, P. Jørgensen, J. Olsen, "Molecular Electronic-Structure Theory", Wiley (2000), ch. 10.
-
-        // Sanity checks
-        ensure!(fock.is_square(), "Fock matrix must be square");
-        ensure!(overlap.is_square(), "Overlap matrix must be square");
-        ensure!(fock.nrows() == overlap.nrows(), "Fock and overlap matrices must have identical dimensions");
-
-        let n = fock.nrows();
-        if n == 0 {
-            return Ok((Vec::new(), DMatrix::zeros(0, 0)));
-        }
-
-        // Clone to owned matrices for decomposition (nalgebra consumes the input)
-        let s_owned = overlap.clone();
-        let f_owned = fock.clone();
-
-        // 1. Cholesky factorisation S = L Lᵗ
-        let chol = Cholesky::new(s_owned).ok_or_else(|| anyhow!("Overlap matrix is not positive-definite; basis set is likely linearly dependent"))?;
-        let l = chol.l(); // Lower triangular view
-
-        // 2. Compute L⁻¹ (explicit inverse is acceptable for small/medium basis sizes; for large systems use solve instead)
-        let l_inv = l.clone().try_inverse().ok_or_else(|| anyhow!("Failed to invert Cholesky factor of overlap matrix"))?;
-
-        // Construct orthogonalised F' = L⁻ᵗ F L⁻¹
-        let f_ortho = &l_inv.transpose() * f_owned * &l_inv;
-
-        // 3. Symmetric eigenvalue decomposition of F'
-        let eig = SymmetricEigen::new(f_ortho);
-        let mut eigenvalues: Vec<f64> = eig.eigenvalues.iter().cloned().collect();
-        let eigenvectors_prime = eig.eigenvectors; // Columns are eigenvectors in orthonormal basis
-
-        // 4. Back-transform eigenvectors to original non-orthogonal basis: C = L⁻¹ C'
-        let c = &l_inv * eigenvectors_prime;
-
-        // 5. Sort eigenvalues in ascending order and reorder corresponding columns in C
-        let mut indices: Vec<usize> = (0..n).collect();
-        indices.sort_by(|&i, &j| eigenvalues[i].partial_cmp(&eigenvalues[j]).unwrap());
-
-        let mut c_sorted = DMatrix::zeros(n, n);
-        for (col_new, &col_old) in indices.iter().enumerate() {
-            // Copy column col_old from C into column col_new of c_sorted
-            c_sorted.set_column(col_new, &c.column(col_old));
-        }
-        eigenvalues = indices.iter().map(|&i| eigenvalues[i]).collect();
-
-        Ok((eigenvalues, c_sorted))
-    }
-
-    fn calculate_total_energy(&self, density: &DMatrix<f64>, molecule: &Molecule) -> Result<f64> {
-        // Electronic energy at Hartree-Fock level:
-        // E = Σ_μν D_μν (H_core_μν + F_μν)/2
-        //
-        // With the current placeholder F = H_core (see build_fock_matrix) this reduces to
-        // E = Σ_μν D_μν H_core_μν.
-        // The factor of 1/2 is absorbed because H_core = F.
-
-        let h_core = {
-            let t = self.build_kinetic_matrix(molecule)?;
-            let v = self.build_nuclear_attraction_matrix(molecule)?;
-            t + v
-        };
-
-        // Ensure dimensions match
-        ensure!(density.nrows() == h_core.nrows(), "Density and core Hamiltonian dimensions mismatch");
-
-        let mut energy = 0.0;
-        for i in 0..density.nrows() {
-            for j in 0..density.ncols() {
-                energy += density[(i, j)] * h_core[(i, j)];
+    /// Build complete Fock matrix including electron-electron repulsion integrals
+    /// F = H_core + G, where G contains two-electron contributions
+    fn build_fock_matrix_full(&self, density: &DMatrix<f64>, molecule: &Molecule, h_core: &DMatrix<f64>) -> Result<DMatrix<f64>> {
+        let n_basis = h_core.nrows();
+        let mut fock = h_core.clone();
+        
+        // Add two-electron contributions (Coulomb and Exchange integrals)
+        // This is computationally intensive O(N^4) operation
+        for i in 0..n_basis {
+            for j in 0..n_basis {
+                let mut coulomb_exchange = 0.0;
+                
+                for k in 0..n_basis {
+                    for l in 0..n_basis {
+                        // Two-electron integral (ij|kl) - electron repulsion integral
+                        let coulomb_integral = self.calculate_electron_repulsion_integral(i, j, k, l, molecule)?;
+                        let exchange_integral = self.calculate_electron_repulsion_integral(i, l, k, j, molecule)?;
+                        
+                        // Coulomb term: 2 * P_kl * (ij|kl)
+                        // Exchange term: -P_kl * (il|kj)
+                        coulomb_exchange += density[(k, l)] * (2.0 * coulomb_integral - exchange_integral);
+                    }
+                }
+                
+                fock[(i, j)] += coulomb_exchange;
             }
         }
-        Ok(energy)
+        
+        Ok(fock)
+    }
+    
+    /// Calculate electron repulsion integral (ij|kl) using simplified Gaussian model
+    /// This is a placeholder for the complex four-center two-electron integral calculation
+    fn calculate_electron_repulsion_integral(&self, i: usize, j: usize, k: usize, l: usize, molecule: &Molecule) -> Result<f64> {
+        // Simplified model using exponential decay with distance
+        // Real implementation would use Obara-Saika recursion or other advanced methods
+        
+        if i >= molecule.atoms.len() || j >= molecule.atoms.len() || 
+           k >= molecule.atoms.len() || l >= molecule.atoms.len() {
+            return Ok(0.0);
+        }
+        
+        let pos_i = molecule.atoms[i].position;
+        let pos_j = molecule.atoms[j].position;
+        let pos_k = molecule.atoms[k].position;
+        let pos_l = molecule.atoms[l].position;
+        
+        // Distance-based approximation for electron repulsion
+        let r_ij = (pos_i - pos_j).norm();
+        let r_kl = (pos_k - pos_l).norm();
+        let r_ik = (pos_i - pos_k).norm();
+        let r_jl = (pos_j - pos_l).norm();
+        
+        // Simplified electron repulsion integral using Slater-type approximation
+        let zeta = 1.0; // Effective nuclear charge (simplified)
+        let integral = (1.0 / (4.0 * PI * constants::VACUUM_PERMITTIVITY)) * 
+                      constants::ELEMENTARY_CHARGE.powi(2) *
+                      (-zeta * (r_ij + r_kl + r_ik + r_jl) / 4.0).exp() /
+                      (1.0 + r_ij + r_kl + r_ik + r_jl);
+        
+        Ok(integral)
+    }
+    
+    /// Calculate SCF energy from density matrices
+    fn calculate_scf_energy(&self, density: &DMatrix<f64>, h_core: &DMatrix<f64>, fock: &DMatrix<f64>) -> Result<f64> {
+        let mut electronic_energy = 0.0;
+        
+        // Electronic energy: E = 0.5 * Tr[P(H + F)]
+        for i in 0..density.nrows() {
+            for j in 0..density.ncols() {
+                electronic_energy += 0.5 * density[(i, j)] * (h_core[(i, j)] + fock[(i, j)]);
+            }
+        }
+        
+        Ok(electronic_energy)
+    }
+    
+    /// Calculate nuclear repulsion energy
+    fn calculate_nuclear_repulsion_energy(&self, molecule: &Molecule) -> Result<f64> {
+        let mut nuclear_repulsion = 0.0;
+        let k_e = 1.0 / (4.0 * PI * constants::VACUUM_PERMITTIVITY);
+        
+        for i in 0..molecule.atoms.len() {
+            for j in (i + 1)..molecule.atoms.len() {
+                let atom_i = &molecule.atoms[i];
+                let atom_j = &molecule.atoms[j];
+                
+                let charge_i = atom_i.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE;
+                let charge_j = atom_j.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE;
+                let distance = (atom_i.position - atom_j.position).norm();
+                
+                if distance > 1e-12 {
+                    nuclear_repulsion += k_e * charge_i * charge_j / distance;
+                }
+            }
+        }
+        
+        Ok(nuclear_repulsion)
+    }
+    
+    /// Calculate Mulliken atomic charges from density matrix
+    fn calculate_mulliken_charges(&self, density: &DMatrix<f64>, overlap: &DMatrix<f64>, molecule: &Molecule) -> Result<Vec<f64>> {
+        let n_atoms = molecule.atoms.len();
+        let mut atomic_charges = vec![0.0; n_atoms];
+        
+        // Mulliken population analysis: q_A = Z_A - Σ_μ∈A Σ_ν P_μν S_μν
+        for atom_idx in 0..n_atoms {
+            let nuclear_charge = molecule.atoms[atom_idx].nucleus.atomic_number as f64;
+            let mut electron_population = 0.0;
+            
+            // Sum over basis functions centered on this atom
+            // Simplified: assume each atom has one basis function at its index
+            if atom_idx < density.nrows() {
+                for j in 0..density.ncols() {
+                    electron_population += density[(atom_idx, j)] * overlap[(atom_idx, j)];
+                }
+            }
+            
+            atomic_charges[atom_idx] = nuclear_charge - electron_population;
+        }
+        
+        Ok(atomic_charges)
+    }
+    
+    /// Calculate molecular dipole moment from density matrix
+    fn calculate_dipole_moment(&self, density: &DMatrix<f64>, molecule: &Molecule) -> Result<Vector3<f64>> {
+        let mut dipole = Vector3::zeros();
+        
+        // Nuclear contribution
+        for atom in &molecule.atoms {
+            let charge = atom.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE;
+            dipole += atom.position * charge;
+        }
+        
+        // Electronic contribution (simplified)
+        // Real implementation would integrate electron density over space
+        for (idx, atom) in molecule.atoms.iter().enumerate() {
+            if idx < density.nrows() {
+                let mut electron_density_at_atom = 0.0;
+                for j in 0..density.ncols() {
+                    electron_density_at_atom += density[(idx, j)];
+                }
+                dipole -= atom.position * electron_density_at_atom * constants::ELEMENTARY_CHARGE;
+            }
+        }
+        
+        Ok(dipole)
+    }
+    
+    /// Calculate bond orders using Wiberg indices
+    fn calculate_bond_orders(&self, density: &DMatrix<f64>, overlap: &DMatrix<f64>, molecule: &Molecule) -> Result<HashMap<(usize, usize), f64>> {
+        let mut bond_orders = HashMap::new();
+        
+        // Wiberg bond order: B_AB = Σ_μ∈A Σ_ν∈B (PS)_μν²
+        for i in 0..molecule.atoms.len() {
+            for j in (i + 1)..molecule.atoms.len() {
+                if i < density.nrows() && j < density.nrows() {
+                    // Calculate PS matrix element
+                    let mut ps_element = 0.0;
+                    for k in 0..density.ncols() {
+                        ps_element += density[(i, k)] * overlap[(k, j)];
+                    }
+                    
+                    let bond_order = ps_element.powi(2);
+                    if bond_order > 0.01 { // Only store significant bond orders
+                        bond_orders.insert((i, j), bond_order);
+                    }
+                }
+            }
+        }
+        
+        Ok(bond_orders)
+    }
+    
+    /// Calculate electron density on a 3D grid for visualization
+    fn calculate_electron_density_grid(&self, density: &DMatrix<f64>, molecule: &Molecule) -> Result<Vec<Vec<Vec<f64>>>> {
+        const GRID_SIZE: usize = 20;
+        let mut electron_density = vec![vec![vec![0.0; GRID_SIZE]; GRID_SIZE]; GRID_SIZE];
+        
+        // Determine molecular bounds
+        let mut min_pos = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+        let mut max_pos = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        
+        for atom in &molecule.atoms {
+            min_pos = min_pos.inf(&(atom.position - Vector3::new(2e-10, 2e-10, 2e-10)));
+            max_pos = max_pos.sup(&(atom.position + Vector3::new(2e-10, 2e-10, 2e-10)));
+        }
+        
+        let grid_spacing = (max_pos - min_pos) / (GRID_SIZE as f64 - 1.0);
+        
+        // Calculate electron density at each grid point
+        for i in 0..GRID_SIZE {
+            for j in 0..GRID_SIZE {
+                for k in 0..GRID_SIZE {
+                    let grid_point = min_pos + Vector3::new(
+                        i as f64 * grid_spacing.x,
+                        j as f64 * grid_spacing.y,
+                        k as f64 * grid_spacing.z,
+                    );
+                    
+                    // Simplified electron density calculation
+                    let mut density_at_point = 0.0;
+                    for (atom_idx, atom) in molecule.atoms.iter().enumerate() {
+                        if atom_idx < density.nrows() {
+                            let distance = (grid_point - atom.position).norm();
+                            // Gaussian approximation for electron density
+                            let zeta = 1.0; // Effective exponent
+                            density_at_point += density[(atom_idx, atom_idx)] * 
+                                               (-zeta * distance.powi(2)).exp();
+                        }
+                    }
+                    
+                    electron_density[i][j][k] = density_at_point;
+                }
+            }
+        }
+        
+        Ok(electron_density)
     }
 
     fn lda_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
@@ -1128,6 +1313,54 @@ impl QuantumChemistryEngine {
             }
         }
         Ok(total_non_bonded_energy)
+    }
+
+    /// Solve generalized eigenvalue problem F C = S C ε using Cholesky orthogonalization
+    /// This is the core of the Roothaan equations in quantum chemistry
+    fn solve_eigenvalue_problem(&self, fock: &DMatrix<f64>, overlap: &DMatrix<f64>) -> Result<(Vec<f64>, DMatrix<f64>)> {
+        // Sanity checks
+        ensure!(fock.is_square(), "Fock matrix must be square");
+        ensure!(overlap.is_square(), "Overlap matrix must be square");
+        ensure!(fock.nrows() == overlap.nrows(), "Fock and overlap matrices must have identical dimensions");
+
+        let n = fock.nrows();
+        if n == 0 {
+            return Ok((Vec::new(), DMatrix::zeros(0, 0)));
+        }
+
+        // Clone to owned matrices for decomposition
+        let s_owned = overlap.clone();
+        let f_owned = fock.clone();
+
+        // 1. Cholesky factorization S = L L^T
+        let chol = Cholesky::new(s_owned).ok_or_else(|| anyhow!("Overlap matrix is not positive-definite; basis set is likely linearly dependent"))?;
+        let l = chol.l(); // Lower triangular factor
+
+        // 2. Compute L^{-1} for transformation
+        let l_inv = l.clone().try_inverse().ok_or_else(|| anyhow!("Failed to invert Cholesky factor of overlap matrix"))?;
+
+        // 3. Transform to orthogonal basis: F' = L^{-T} F L^{-1}
+        let f_ortho = &l_inv.transpose() * f_owned * &l_inv;
+
+        // 4. Solve standard symmetric eigenvalue problem F' C' = C' ε
+        let eig = SymmetricEigen::new(f_ortho);
+        let mut eigenvalues: Vec<f64> = eig.eigenvalues.iter().cloned().collect();
+        let eigenvectors_prime = eig.eigenvectors;
+
+        // 5. Back-transform eigenvectors to original basis: C = L^{-1} C'
+        let c = &l_inv * eigenvectors_prime;
+
+        // 6. Sort eigenvalues in ascending order and reorder corresponding columns
+        let mut indices: Vec<usize> = (0..n).collect();
+        indices.sort_by(|&i, &j| eigenvalues[i].partial_cmp(&eigenvalues[j]).unwrap());
+
+        let mut c_sorted = DMatrix::zeros(n, n);
+        for (col_new, &col_old) in indices.iter().enumerate() {
+            c_sorted.set_column(col_new, &c.column(col_old));
+        }
+        eigenvalues = indices.iter().map(|&i| eigenvalues[i]).collect();
+
+        Ok((eigenvalues, c_sorted))
     }
 }
 

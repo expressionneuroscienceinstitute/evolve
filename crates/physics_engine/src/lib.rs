@@ -27,6 +27,8 @@ pub mod spatial;
 pub mod thermodynamics;
 pub mod utils;
 pub mod validation;
+pub mod types;
+pub mod adaptive_mesh_refinement;
 
 // Temporary compatibility layer for missing QC helpers
 // mod qc_compat;
@@ -1476,25 +1478,99 @@ impl PhysicsEngine {
         }
     }
     
-    /// Recompute energies for all particles (E² = m²c⁴ + p²c²) using multi-core parallelism.
+    /// Recompute relativistic energies for all particles using the Einstein energy-momentum relation
+    /// 
+    /// # Physics
+    /// Implements the fundamental relativistic energy equation:
+    /// **E² = (pc)² + (mc²)²**
+    /// 
+    /// Where:
+    /// - E = total energy (J)
+    /// - p = momentum magnitude (kg⋅m/s)  
+    /// - m = rest mass (kg)
+    /// - c = speed of light = 299,792,458 m/s (exact, CODATA 2022)
+    /// 
+    /// This preserves energy conservation and ensures proper relativistic behavior
+    /// for high-energy particles approaching the speed of light.
+    /// 
+    /// # Performance
+    /// Uses Rayon parallel iterators for multi-core acceleration on large particle sets.
+    /// Validates energy conservation by checking for NaN/infinite values.
+    /// 
+    /// # References
+    /// - Einstein (1905). "Zur Elektrodynamik bewegter Körper"
+    /// - Peskin & Schroeder (1995). "An Introduction to Quantum Field Theory"
+    /// - CODATA 2022 fundamental physical constants
     pub fn update_particle_energies(&mut self) -> Result<()> {
         let start = Instant::now();
+        
+        // Validate inputs and track energy conservation
+        let initial_total_energy: f64 = self.particles.iter()
+            .map(|p| p.energy)
+            .sum();
+        
         log::debug!(
-            "[energy] Recomputing energies for {} particles using {} Rayon threads",
+            "[energy] Recomputing relativistic energies for {} particles using {} Rayon threads",
             self.particles.len(),
             rayon::current_num_threads()
         );
 
+        // Apply relativistic energy-momentum relation in parallel
         self.particles
             .par_iter_mut()
             .for_each(|particle| {
-                particle.energy = (particle.mass.powi(2) + particle.momentum.norm_squared()).sqrt();
+                // Get momentum magnitude |p|
+                let momentum_magnitude = particle.momentum.magnitude();
+                
+                // Relativistic energy: E = sqrt((pc)² + (mc²)²)
+                let momentum_energy_term = momentum_magnitude * SPEED_OF_LIGHT;
+                let rest_energy_term = particle.mass * SPEED_OF_LIGHT * SPEED_OF_LIGHT;
+                
+                particle.energy = (momentum_energy_term.powi(2) + rest_energy_term.powi(2)).sqrt();
+                
+                // Update velocity from momentum: v = pc²/E (relativistic)
+                if particle.energy > 0.0 {
+                    let velocity_magnitude = momentum_magnitude * SPEED_OF_LIGHT.powi(2) / particle.energy;
+                    if momentum_magnitude > 0.0 {
+                        particle.velocity = particle.momentum * (velocity_magnitude / momentum_magnitude);
+                    } else {
+                        particle.velocity = Vector3::zeros();
+                    }
+                } else {
+                    particle.velocity = Vector3::zeros();
+                }
+                
+                // Validate against unphysical values
+                debug_assert!(particle.energy.is_finite(), 
+                    "Non-finite energy for particle type {:?}", particle.particle_type);
+                debug_assert!(particle.energy >= 0.0, 
+                    "Negative energy for particle type {:?}", particle.particle_type);
+                debug_assert!(particle.velocity.magnitude() <= SPEED_OF_LIGHT * 1.001, 
+                    "Superluminal velocity for particle type {:?}: {:.3e} m/s", 
+                    particle.particle_type, particle.velocity.magnitude());
             });
 
+        // Verify energy conservation (should be exactly preserved in absence of interactions)
+        let final_total_energy: f64 = self.particles.iter()
+            .map(|p| p.energy)
+            .sum();
+        
+        let energy_change = (final_total_energy - initial_total_energy).abs();
+        let relative_change = energy_change / initial_total_energy.max(1e-100);
+        
+        if relative_change > 1e-12 {
+            log::warn!(
+                "[energy] Unexpected energy change during update: ΔE = {:.3e} J (relative: {:.3e})",
+                energy_change, relative_change
+            );
+        }
+
         log::debug!(
-            "[energy] Finished energy recomputation in {:.3?}",
-            start.elapsed()
+            "[energy] Finished relativistic energy recomputation in {:.3?} (total energy: {:.6e} J)",
+            start.elapsed(),
+            final_total_energy
         );
+        
         Ok(())
     }
 
@@ -3454,375 +3530,8 @@ pub mod general_relativity {
     }
 }
 
-/// Adaptive Mesh Refinement (AMR) system for multi-scale modeling
-/// Implements the PDF recommendation for dynamic spatial resolution
-pub mod adaptive_mesh_refinement {
-    use super::*;
-    
-    /// AMR grid cell with hierarchical refinement capability
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct AmrCell {
-        pub id: usize,
-        pub level: u32,
-        pub position: Vector3<f64>,
-        pub size: f64,
-        pub mass_density: f64,
-        pub energy_density: f64,
-        pub field_gradient: f64,
-        pub particle_count: usize,
-        pub refinement_criterion: f64,
-        pub parent_id: Option<usize>,
-        pub children_ids: Vec<usize>,
-        pub is_leaf: bool,
-        pub requires_refinement: bool,
-        pub requires_coarsening: bool,
-        pub boundary_conditions: BoundaryConditions,
-    }
-    
-    /// Adaptive mesh refinement manager
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct AmrManager {
-        pub cells: Vec<AmrCell>,
-        pub max_refinement_level: u32,
-        pub min_refinement_level: u32,
-        pub refinement_threshold: f64,
-        pub coarsening_threshold: f64,
-        pub base_grid_size: f64,
-        pub domain_size: Vector3<f64>,
-        pub total_cells: usize,
-        pub refinement_history: Vec<RefinementEvent>,
-    }
-    
-    /// Event tracking for refinement analysis
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct RefinementEvent {
-        pub timestamp: f64,
-        pub cell_id: usize,
-        pub event_type: RefinementEventType,
-        pub old_level: u32,
-        pub new_level: u32,
-        pub trigger_value: f64,
-    }
-    
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub enum RefinementEventType {
-        Refinement,
-        Coarsening,
-        Creation,
-        Deletion,
-    }
-    
-    impl AmrManager {
-        /// Create new AMR manager with base grid
-        pub fn new(
-            domain_size: Vector3<f64>,
-            base_grid_size: f64,
-            max_level: u32,
-            refinement_threshold: f64,
-        ) -> Self {
-            let mut manager = Self {
-                cells: Vec::new(),
-                max_refinement_level: max_level,
-                min_refinement_level: 0,
-                refinement_threshold,
-                coarsening_threshold: refinement_threshold * 0.25,
-                base_grid_size,
-                domain_size,
-                total_cells: 0,
-                refinement_history: Vec::new(),
-            };
-            
-            // Initialize base grid
-            manager.initialize_base_grid();
-            manager
-        }
-        
-        /// Initialize the coarsest level grid
-        fn initialize_base_grid(&mut self) {
-            let cells_per_dimension = (self.domain_size.x / self.base_grid_size).ceil() as usize;
-            
-            for i in 0..cells_per_dimension {
-                for j in 0..cells_per_dimension {
-                    for k in 0..cells_per_dimension {
-                        let position = Vector3::new(
-                            i as f64 * self.base_grid_size,
-                            j as f64 * self.base_grid_size,
-                            k as f64 * self.base_grid_size,
-                        );
-                        
-                        let cell = AmrCell {
-                            id: self.total_cells,
-                            level: 0,
-                            position,
-                            size: self.base_grid_size,
-                            mass_density: 0.0,
-                            energy_density: 0.0,
-                            field_gradient: 0.0,
-                            particle_count: 0,
-                            refinement_criterion: 0.0,
-                            parent_id: None,
-                            children_ids: Vec::new(),
-                            is_leaf: true,
-                            requires_refinement: false,
-                            requires_coarsening: false,
-                            boundary_conditions: BoundaryConditions::Periodic,
-                        };
-                        
-                        self.cells.push(cell);
-                        self.total_cells += 1;
-                    }
-                }
-            }
-        }
-        
-        /// Update AMR grid based on physical conditions
-        pub fn update_mesh(&mut self, particles: &[FundamentalParticle], current_time: f64) -> Result<()> {
-            // Step 1: Update cell properties from particle data
-            self.update_cell_properties(particles)?;
-            
-            // Step 2: Calculate refinement criteria
-            self.calculate_refinement_criteria()?;
-            
-            // Step 3: Perform refinement
-            self.perform_refinement(current_time)?;
-            
-            // Step 4: Perform coarsening
-            self.perform_coarsening(current_time)?;
-            
-            Ok(())
-        }
-        
-        /// Update cell properties based on particle distribution
-        fn update_cell_properties(&mut self, particles: &[FundamentalParticle]) -> Result<()> {
-            // Clear existing counts
-            for cell in &mut self.cells {
-                cell.mass_density = 0.0;
-                cell.energy_density = 0.0;
-                cell.particle_count = 0;
-            }
-            
-            // Accumulate particle properties in cells
-            for particle in particles {
-                if let Some(cell_id) = self.find_containing_cell(&particle.position) {
-                    let cell = &mut self.cells[cell_id];
-                    cell.mass_density += particle.mass;
-                    cell.energy_density += particle.energy;
-                    cell.particle_count += 1;
-                }
-            }
-            
-            // Normalize by cell volume
-            for cell in &mut self.cells {
-                let volume = cell.size * cell.size * cell.size;
-                cell.mass_density /= volume;
-                cell.energy_density /= volume;
-            }
-            
-            Ok(())
-        }
-        
-        /// Calculate refinement criteria based on gradients and density
-        fn calculate_refinement_criteria(&mut self) -> Result<()> {
-            for i in 0..self.cells.len() {
-                let cell = &self.cells[i];
-                
-                // Calculate spatial gradients
-                let gradient = self.calculate_spatial_gradient(i)?;
-                
-                // Refinement criterion based on PDF recommendations:
-                // Refine where density gradients are high or particle density is high
-                let density_criterion = cell.mass_density / 1e-15; // Normalize by atomic density
-                let gradient_criterion = gradient / cell.mass_density.max(1e-30);
-                let particle_criterion = cell.particle_count as f64 / 1000.0; // Normalize by target particles per cell
-                
-                self.cells[i].refinement_criterion = 
-                    density_criterion + gradient_criterion + particle_criterion;
-                
-                // Set refinement flags
-                self.cells[i].requires_refinement = 
-                    self.cells[i].refinement_criterion > self.refinement_threshold && 
-                    self.cells[i].level < self.max_refinement_level;
-                
-                self.cells[i].requires_coarsening = 
-                    self.cells[i].refinement_criterion < self.coarsening_threshold && 
-                    self.cells[i].level > self.min_refinement_level;
-            }
-            
-            Ok(())
-        }
-        
-        /// Calculate spatial gradient for refinement criterion
-        fn calculate_spatial_gradient(&self, cell_id: usize) -> Result<f64> {
-            let cell = &self.cells[cell_id];
-            let mut gradient = 0.0;
-            let mut neighbor_count = 0;
-            
-            // Find neighboring cells and calculate gradient
-            for other_cell in &self.cells {
-                let distance = (other_cell.position - cell.position).magnitude();
-                if distance > 0.0 && distance < 2.0 * cell.size {
-                    let density_diff = (other_cell.mass_density - cell.mass_density).abs();
-                    gradient += density_diff / distance;
-                    neighbor_count += 1;
-                }
-            }
-            
-            if neighbor_count > 0 {
-                gradient /= neighbor_count as f64;
-            }
-            
-            Ok(gradient)
-        }
-        
-        /// Perform mesh refinement
-        fn perform_refinement(&mut self, current_time: f64) -> Result<()> {
-            let mut cells_to_refine = Vec::new();
-            
-            // Collect cells that need refinement
-            for (i, cell) in self.cells.iter().enumerate() {
-                if cell.requires_refinement && cell.is_leaf {
-                    cells_to_refine.push(i);
-                }
-            }
-            
-            // Refine cells (in reverse order to avoid index issues)
-            for &cell_id in cells_to_refine.iter().rev() {
-                self.refine_cell(cell_id, current_time)?;
-            }
-            
-            Ok(())
-        }
-        
-        /// Refine a single cell into 8 children (octree)
-        fn refine_cell(&mut self, cell_id: usize, current_time: f64) -> Result<()> {
-            let parent_cell = self.cells[cell_id].clone();
-            let child_size = parent_cell.size / 2.0;
-            let child_level = parent_cell.level + 1;
-            
-            // Create 8 children
-            let mut child_ids = Vec::new();
-            for i in 0..2 {
-                for j in 0..2 {
-                    for k in 0..2 {
-                        let child_position = Vector3::new(
-                            parent_cell.position.x + i as f64 * child_size,
-                            parent_cell.position.y + j as f64 * child_size,
-                            parent_cell.position.z + k as f64 * child_size,
-                        );
-                        
-                        let child = AmrCell {
-                            id: self.total_cells,
-                            level: child_level,
-                            position: child_position,
-                            size: child_size,
-                            mass_density: parent_cell.mass_density,
-                            energy_density: parent_cell.energy_density,
-                            field_gradient: parent_cell.field_gradient,
-                            particle_count: parent_cell.particle_count / 8,
-                            refinement_criterion: 0.0,
-                            parent_id: Some(cell_id),
-                            children_ids: Vec::new(),
-                            is_leaf: true,
-                            requires_refinement: false,
-                            requires_coarsening: false,
-                            boundary_conditions: parent_cell.boundary_conditions,
-                        };
-                        
-                        child_ids.push(self.total_cells);
-                        self.cells.push(child);
-                        self.total_cells += 1;
-                    }
-                }
-            }
-            
-            // Update parent cell
-            self.cells[cell_id].children_ids = child_ids;
-            self.cells[cell_id].is_leaf = false;
-            self.cells[cell_id].requires_refinement = false;
-            
-            // Record refinement event
-            let event = RefinementEvent {
-                timestamp: current_time,
-                cell_id,
-                event_type: RefinementEventType::Refinement,
-                old_level: parent_cell.level,
-                new_level: child_level,
-                trigger_value: parent_cell.refinement_criterion,
-            };
-            self.refinement_history.push(event);
-            
-            Ok(())
-        }
-        
-        /// Perform mesh coarsening
-        fn perform_coarsening(&mut self, current_time: f64) -> Result<()> {
-            // Coarsening is more complex and would require careful handling
-            // of sibling cells and data conservation
-            // Implementation would check if all children of a parent cell
-            // meet coarsening criteria, then merge them back
-            
-            // For now, we'll leave this as a placeholder
-            // Real implementation would need to:
-            // 1. Group children by parent
-            // 2. Check if all siblings meet coarsening criteria
-            // 3. Merge data from children back to parent
-            // 4. Remove children from cell list
-            // 5. Update parent to be leaf again
-            
-            Ok(())
-        }
-        
-        /// Find which cell contains a given position
-        fn find_containing_cell(&self, position: &Vector3<f64>) -> Option<usize> {
-            for (i, cell) in self.cells.iter().enumerate() {
-                if cell.is_leaf {
-                    let min_bound = cell.position;
-                    let max_bound = cell.position + Vector3::new(cell.size, cell.size, cell.size);
-                    
-                    if position.x >= min_bound.x && position.x < max_bound.x &&
-                       position.y >= min_bound.y && position.y < max_bound.y &&
-                       position.z >= min_bound.z && position.z < max_bound.z {
-                        return Some(i);
-                    }
-                }
-            }
-            None
-        }
-        
-        /// Get statistics about the AMR grid
-        pub fn get_statistics(&self) -> AmrStatistics {
-            let mut level_counts = HashMap::new();
-            let mut total_leaves = 0;
-            let mut total_refined = 0;
-            
-            for cell in &self.cells {
-                *level_counts.entry(cell.level).or_insert(0) += 1;
-                if cell.is_leaf { total_leaves += 1; }
-                if !cell.children_ids.is_empty() { total_refined += 1; }
-            }
-            
-            AmrStatistics {
-                total_cells: self.cells.len(),
-                total_leaves,
-                total_refined,
-                max_level: level_counts.keys().max().copied().unwrap_or(0),
-                level_distribution: level_counts,
-                refinement_events: self.refinement_history.len(),
-            }
-        }
-    }
-    
-    /// Statistics about AMR grid
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub struct AmrStatistics {
-        pub total_cells: usize,
-        pub total_leaves: usize,
-        pub total_refined: usize,
-        pub max_level: u32,
-        pub level_distribution: HashMap<u32, usize>,
-        pub refinement_events: usize,
-    }
-}
+// Re-export AMR types for backward compatibility
+pub use adaptive_mesh_refinement::*;
 
 /// GADGET-style N-body gravity solver
 /// Based on PDF recommendation to use proven cosmological simulation algorithms

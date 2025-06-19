@@ -222,6 +222,12 @@ pub struct EvolutionEngine {
     pub lineage_tracker: LineageTracker,
 }
 
+impl Default for EvolutionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EvolutionEngine {
     pub fn new() -> Self {
         Self {
@@ -250,7 +256,7 @@ impl EvolutionEngine {
             // Execute the action in the world
             // Note: In a real implementation, world_state would need to be mutable
             // For now, we'll simulate the outcome
-            let outcome = self.simulate_action_outcome(&agent, &action)?;
+            let outcome = self.simulate_action_outcome(agent, &action)?;
             
             // Agent learns from the outcome
             let energy = agent.energy;
@@ -270,7 +276,7 @@ impl EvolutionEngine {
                     id: Uuid::new_v4(),
                     timestamp: current_tick,
                     decision_type: action.action_type.into(),
-                    context: DecisionContext::from_agent(&agent, world_state),
+                    context: DecisionContext::from_agent(agent, world_state),
                     outcome: DecisionOutcome::from_action_outcome(&outcome),
                     energy_cost: action.action_type.energy_cost(),
                     success_probability: agent.ai_core.decision_confidence,
@@ -278,7 +284,7 @@ impl EvolutionEngine {
                     learning_feedback: outcome.learning_value,
                 },
                 outcome: DecisionOutcome::from_action_outcome(&outcome),
-                learning_update: LearningUpdate::default(),
+                learning_update: LearningUpdate,
                 fitness_change: outcome.fitness_change,
             };
             
@@ -545,6 +551,12 @@ pub struct ReproductionResults {
 }
 
 // Update the existing EvolutionEngine methods to work with the new system
+impl Default for MutationEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MutationEngine {
     pub fn new() -> Self { Self }
     pub fn apply_mutations(&mut self, agents: &mut Vec<AutonomousAgent>, _tick: u64) -> Result<MutationResults> {
@@ -564,6 +576,12 @@ impl MutationEngine {
             harmful_mutations: mutation_count / 4,
             neutral_mutations: mutation_count / 4,
         })
+    }
+}
+
+impl Default for SelectionEngine {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -593,6 +611,12 @@ impl SelectionEngine {
     }
 }
 
+impl Default for InnovationEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InnovationEngine {
     pub fn new() -> Self { Self }
     pub fn process_innovations(
@@ -615,6 +639,12 @@ impl InnovationEngine {
             incremental_improvements: innovation_count * 3,
             average_tech_level: total_tech_progress / agents.len() as f64,
         })
+    }
+}
+
+impl Default for ConsciousnessTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -733,8 +763,20 @@ pub struct InnovationEngine;
 pub struct ConsciousnessTracker;
 pub struct DecisionAnalyzer;
 
+impl Default for DecisionAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DecisionAnalyzer {
     pub fn new() -> Self { Self }
+}
+
+impl Default for LineageTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LineageTracker {
@@ -1629,7 +1671,7 @@ impl AutonomousAgent {
     fn select_feasible_action(&self, priorities: &[(f64, ActionType)], world_state: &dyn WorldState) -> Result<ActionType> {
         for (priority, action_type) in priorities {
             if *priority > 0.1 && self.is_action_feasible(action_type, world_state) {
-                return Ok(action_type.clone());
+                return Ok(*action_type);
             }
         }
         

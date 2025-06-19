@@ -4,23 +4,24 @@
 //! with autonomous AI agents evolving toward immortality.
 
 use anyhow::{Result, anyhow};
-use diagnostics::{AllocationType, DiagnosticsSystem};
-use md5;
+use diagnostics::DiagnosticsSystem;
 use nalgebra::Vector3;
 use physics_engine::{
-    nuclear_physics::{process_neutron_capture, NeutronCaptureProcess, Nucleus},
-    PhysicsEngine, PhysicsState,
-    ParticleType,
+    PhysicsEngine,
     FundamentalParticle,
     QuantumState,
 };
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Instant;
-use tracing::info;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
-// use bevy_ecs::prelude::*; // Bevy ECS removed from core simulation logic
+use serde::{Serialize, Deserialize};
+use std::collections::VecDeque;
+use serde_json::{json, Value};
+use crate::config::Config;
+use crate::storage::{Storage, AgentLineage, CelestialBody, CelestialBodyType};
+use crate::cosmic_era::{UniverseState, PhysicalTransition, TransitionType};
+use agent_evolution::AgentConfig;
 
 pub mod config;
 pub mod cosmic_era;
@@ -30,19 +31,14 @@ pub mod storage;
 pub mod world;
 
 pub use physics_engine;
-pub use storage::{AgentLineage, CelestialBody, CelestialBodyType, PlanetClass, StellarEvolution, StellarPhase, Store, ParticleStore};
+pub use storage::{CelestialBodyType, PlanetClass, StellarEvolution, StellarPhase, Store, ParticleStore};
 
 /// Calculate relativistic total energy from momentum and mass
 /// E = sqrt((pc)^2 + (mc^2)^2) where c = speed of light
+#[allow(dead_code)]
 fn calculate_relativistic_energy(momentum: &Vector3<f64>, mass: f64) -> f64 {
-    const C: f64 = 299_792_458.0; // Speed of light in m/s
-    
-    let momentum_magnitude = momentum.magnitude();
-    let rest_energy = mass * C * C;
-    let momentum_energy = momentum_magnitude * C;
-    
-    // Total relativistic energy
-    (momentum_energy * momentum_energy + rest_energy * rest_energy).sqrt()
+    // Use utility function from physics_engine
+    physics_engine::utils::math::calculate_relativistic_energy(momentum, mass)
 }
 
 /// Core universe simulation structure
@@ -61,6 +57,57 @@ pub struct UniverseSimulation {
     pub config: config::SimulationConfig,      // Configuration
     pub diagnostics: DiagnosticsSystem,        // Performance monitoring
     pub physical_transitions: Vec<cosmic_era::PhysicalTransition>, // Record of major transitions
+    /// Historical simulation statistics recorded each tick (limited length)
+    pub stats_history: VecDeque<SimulationStats>,
+    pub performance_stats: PerformanceStats,
+}
+
+/// Maximum number of historical statistics points to keep in memory
+const MAX_STATS_HISTORY: usize = 10_000;
+
+/// Performance tracking for simulation steps
+#[derive(Debug, Default)]
+pub struct PerformanceStats {
+    step_times: VecDeque<Duration>,
+    max_history: usize,
+}
+
+impl PerformanceStats {
+    pub fn new() -> Self {
+        Self {
+            step_times: VecDeque::new(),
+            max_history: 1000,
+        }
+    }
+    
+    pub fn add_step_time(&mut self, duration: Duration) {
+        self.step_times.push_back(duration);
+        if self.step_times.len() > self.max_history {
+            self.step_times.pop_front();
+        }
+    }
+    
+    pub fn average_step_time(&self) -> Duration {
+        if self.step_times.is_empty() {
+            Duration::from_secs(0)
+        } else {
+            let total: Duration = self.step_times.iter().sum();
+            total / self.step_times.len() as u32
+        }
+    }
+}
+
+/// Cosmological parameters for universe expansion
+#[derive(Debug, Clone)]
+pub struct CosmologicalParameters {
+    pub hubble_constant: f64,      // H₀ in km/s/Mpc
+    pub omega_matter: f64,         // Ωₘ
+    pub omega_lambda: f64,         // ΩΛ
+    pub omega_baryon: f64,         // Ωᵦ
+    pub scale_factor: f64,         // a(t)
+    pub redshift: f64,             // z
+    pub age_of_universe: f64,      // t in Gyr
+    pub enable_expansion: bool,
 }
 
 impl UniverseSimulation {
@@ -81,6 +128,8 @@ impl UniverseSimulation {
             config,
             diagnostics: DiagnosticsSystem::new(),
             physical_transitions: Vec::new(),
+            stats_history: VecDeque::new(),
+            performance_stats: PerformanceStats::default(),
         })
     }
 
@@ -182,29 +231,37 @@ impl UniverseSimulation {
     }
 
     /// Main simulation tick
-    pub fn tick(&mut self) -> Result<()> {
-        let tick_start = Instant::now();
+    pub fn step(&mut self, dt: f64) -> Result<()> {
+        // Increment tick counter
         self.current_tick += 1;
-
-        // 1. Update universe physical state (age, temperature, density)
+        
+        // Track performance
+        let start_time = std::time::Instant::now();
+        
+        // Run physics simulation step
+        self.physics_engine.step(dt)?;
+        
+        // Update cosmic state from simulation results
         self.update_universe_state()?;
-
-        // 2. Update physics simulation (interactions, gravity, etc.)
-        self.update_physics()?;
-
-        // 3. Update cosmic-scale processes (star formation, etc.)
-        self.update_cosmic_processes()?;
-
-        // 4. Update agent evolution
-        self.update_agent_evolution()?;
-
-        // 5. Victory conditions check
-        self.check_victory_conditions()?;
-
-        // Record diagnostics
-        self.diagnostics
-            .record_universe_tick(tick_start.elapsed());
-
+        
+        // Process stellar evolution
+        self.process_stellar_evolution(dt)?;
+        
+        // Process agent evolution on habitable worlds
+        self.process_agent_evolution(dt)?;
+        
+        // Apply cosmological expansion effects to universe-scale properties
+        self.apply_cosmological_effects(dt)?;
+        
+        // Update persistence layer
+        if self.current_tick % self.config.save_interval == 0 {
+            self.save_state()?;
+        }
+        
+        // Track performance
+        let step_duration = start_time.elapsed();
+        self.performance_stats.add_step_time(step_duration);
+        
         Ok(())
     }
 
@@ -262,8 +319,8 @@ impl UniverseSimulation {
     }
 
     /// Process stellar evolution based on nuclear burning
-    fn process_stellar_evolution(&mut self) -> Result<()> {
-        let dt_years = self.tick_span_years;
+    fn process_stellar_evolution(&mut self, dt: f64) -> Result<()> {
+        let dt_years = dt;
 
         // Iterate over all stellar evolution records.
         let mut death_events: Vec<usize> = Vec::new();
@@ -317,8 +374,8 @@ impl UniverseSimulation {
 
     /// Update stellar composition based on nuclear burning products (placeholder)
     fn update_stellar_composition(
-        body: &mut CelestialBody,
-        evolution: &StellarEvolution,
+        _body: &mut CelestialBody,
+        _evolution: &StellarEvolution,
     ) {
         // For the current lightweight implementation we do not attempt to
         // propagate the detailed isotopic yields to the outer layers. A full
@@ -330,9 +387,9 @@ impl UniverseSimulation {
     /// Handle the death of a star
     fn process_stellar_death(
         &mut self,
-        entity_id: usize,
-        body: &CelestialBody,
-        evolution: &StellarEvolution,
+        _entity_id: usize,
+        _body: &CelestialBody,
+        _evolution: &StellarEvolution,
     ) -> Result<()> {
         // At this resolution we simply note that a stellar death occurred
         // and update global counters. Detailed remnant creation and gas
@@ -341,21 +398,24 @@ impl UniverseSimulation {
     }
 
     /// Handle nucleosynthesis in supernova explosions
+    #[allow(dead_code)]
     fn process_supernova_nucleosynthesis(&mut self) -> Result<()> {
         Ok(())
     }
 
     /// Create enriched gas clouds from stellar death events
+    #[allow(dead_code)]
     fn create_enriched_gas_cloud(
         &mut self,
-        star: &CelestialBody,
-        evolution: &StellarEvolution,
+        _star: &CelestialBody,
+        _evolution: &StellarEvolution,
     ) -> Result<()> {
         Ok(())
     }
 
     /// Handle r-process nucleosynthesis in neutron star mergers
-    fn process_r_process_nucleosynthesis(&self, star: &CelestialBody) -> Result<()> {
+    #[allow(dead_code)]
+    fn process_r_process_nucleosynthesis(&self, _star: &CelestialBody) -> Result<()> {
         Ok(())
     }
 
@@ -442,6 +502,7 @@ impl UniverseSimulation {
     }
 
     /// Find a suitable site for star formation
+    #[allow(dead_code)]
     fn find_star_formation_site<R: Rng>(&self, rng: &mut R) -> Result<Vector3<f64>> {
         // Uniform sampling within a sphere of radius equal to the current
         // universe radius (converted to metres). This is obviously not
@@ -468,49 +529,26 @@ impl UniverseSimulation {
     /// Calculate stellar radius from mass (simplified)
     fn calculate_stellar_radius(mass: f64) -> f64 {
         const M_SUN: f64 = 1.989e30;
-        const R_SUN: f64 = 6.957e8;
-        let m_msun = mass / M_SUN;
-
-        let r_msun = if m_msun <= 1.0 {
-            m_msun.powf(0.8)
-        } else {
-            m_msun.powf(0.57)
-        };
-
-        r_msun * R_SUN
+        let mass_solar = mass / M_SUN;
+        physics_engine::utils::stellar::calculate_stellar_radius(mass_solar)
     }
 
     /// Calculate stellar luminosity from mass (simplified)
     fn calculate_stellar_luminosity(mass: f64) -> f64 {
         const M_SUN: f64 = 1.989e30;
-        const L_SUN: f64 = 3.828e26;
-        let m_msun = mass / M_SUN;
-
-        let l_msun = if m_msun < 0.43 {
-            0.23 * m_msun.powf(2.3)
-        } else if m_msun < 2.0 {
-            m_msun.powf(4.0)
-        } else if m_msun < 20.0 {
-            1.5 * m_msun.powf(3.5)
-        } else {
-            3200.0 * m_msun
-        };
-
-        l_msun * L_SUN
+        let mass_solar = mass / M_SUN;
+        physics_engine::utils::stellar::calculate_stellar_luminosity(mass_solar)
     }
 
     /// Calculate stellar surface temperature from mass (simplified)
     fn calculate_stellar_temperature(mass: f64) -> f64 {
-        // Use Stefan–Boltzmann law with radius and luminosity computed above.
-        const SIGMA: f64 = 5.670_374_419e-8; // W·m⁻²·K⁻⁴
-
-        let radius = Self::calculate_stellar_radius(mass);
-        let luminosity = Self::calculate_stellar_luminosity(mass);
-
-        (luminosity / (4.0 * std::f64::consts::PI * radius * radius) / SIGMA).powf(0.25)
+        const M_SUN: f64 = 1.989e30;
+        let mass_solar = mass / M_SUN;
+        physics_engine::utils::stellar::calculate_stellar_temperature(mass_solar)
     }
 
     /// Form planets around existing stars
+    #[allow(dead_code)]
     fn process_planet_formation(&mut self) -> Result<()> {
         use physics_engine::{ElementTable, MaterialType, EnvironmentProfile, StratumLayer};
 
@@ -666,6 +704,7 @@ impl UniverseSimulation {
     }
 
     /// Handle the emergence of life on habitable planets
+    #[allow(dead_code)]
     fn process_life_emergence(&mut self) -> Result<()> {
         use rand::Rng;
         let mut rng = rand::thread_rng();
@@ -777,7 +816,7 @@ impl UniverseSimulation {
             average_temperature: energy_stats.average_temperature,
             energy_density: energy_stats.density,
             
-            // Chemical composition
+            // Chemical composition (by mass fraction)
             hydrogen_fraction: chemical_stats.hydrogen,
             helium_fraction: chemical_stats.helium,
             carbon_fraction: chemical_stats.carbon,
@@ -834,6 +873,7 @@ impl UniverseSimulation {
         Ok(json!({ "density_grid": grid }))
     }
 
+    #[allow(dead_code)]
     fn sync_store_to_physics_engine_particles(&mut self) -> Result<()> {
         // Sync store particles into physics engine particle list
         self.physics_engine.particles.clear();
@@ -872,6 +912,7 @@ impl UniverseSimulation {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn calculate_spatial_bounds(&self) -> Result<(Vector3<f64>, Vector3<f64>)> {
         let positions = &self.store.particles.position;
         if positions.is_empty() {
@@ -1471,22 +1512,7 @@ impl UniverseSimulation {
         const G: f64 = 6.67430e-11; // Gravitational constant (m³ kg⁻¹ s⁻²)
         const KM_PER_MPC: f64 = 3.0857e19; // Kilometers per Megaparsec
 
-        #[cfg(feature = "gadget")]
-        let (hubble_constant, omega_matter, omega_lambda) =
-            if let Some(gadget) = &self.physics_engine.gadget_engine {
-                let params = &gadget.cosmological_parameters;
-                (params.hubble_constant, params.omega_matter, params.omega_lambda)
-            } else {
-                // Fallback if gadget feature is on but engine not initialized
-                (70.0, 0.3, 0.7) 
-            };
-        
-        #[cfg(not(feature = "gadget"))]
-        let (hubble_constant, omega_matter, omega_lambda) = {
-            // Use simplified defaults or derive from config if not using GADGET
-            // For now, using standard ΛCDM model parameters as placeholders.
-            (70.0, 0.3, 0.7) // H₀ in km/s/Mpc, Ωm, ΩΛ
-        };
+        let (hubble_constant, omega_matter, omega_lambda) = (70.0, 0.3, 0.7);
         
         // Critical density: ρ_c = 3H₀² / (8πG)
         let h_si = hubble_constant * 1000.0 / KM_PER_MPC; // Convert H₀ to s⁻¹
@@ -1589,9 +1615,151 @@ impl UniverseSimulation {
     pub fn get_physics_engine(&self) -> &PhysicsEngine {
         &self.physics_engine
     }
+
+    /// Record current simulation statistics into rolling history for trend analysis.
+    fn record_stats(&mut self) -> Result<()> {
+        // Gather statistics using existing helper
+        let stats_snapshot = self.get_stats()?;
+        if self.stats_history.len() >= MAX_STATS_HISTORY {
+            self.stats_history.pop_front();
+        }
+        self.stats_history.push_back(stats_snapshot);
+        Ok(())
+    }
+
+    /// Export historical statistics as JSON array for RPC transmission.
+    pub fn get_stats_history_json(&self) -> Result<serde_json::Value> {
+        use serde_json::json;
+        let history_json: Vec<_> = self
+            .stats_history
+            .iter()
+            .map(|s| {
+                json!({
+                    "tick": s.current_tick,
+                    "age_gyr": s.universe_age_gyr,
+                    "star_count": s.star_count,
+                    "planet_count": s.planet_count,
+                    "total_particles": s.particle_count,
+                    "average_temperature": s.average_temperature,
+                })
+            })
+            .collect();
+        Ok(json!(history_json))
+    }
+
+    /// Apply cosmological expansion effects to universe-scale properties
+    fn apply_cosmological_effects(&mut self, dt: f64) -> Result<()> {
+        // Get current cosmological parameters from physics engine
+        if let Some(ref params) = self.get_cosmological_parameters() {
+            // Update universe state with cosmological expansion
+            let age_gyr = params.age_of_universe;
+            let hubble_constant = params.hubble_constant;
+            let scale_factor = params.scale_factor;
+            let redshift = params.redshift;
+            
+            // Apply scale factor evolution to stored celestial bodies
+            for body in &mut self.store.celestial_bodies {
+                // Scale distances by cosmic expansion
+                body.position = body.position * scale_factor;
+                
+                // Apply cosmic time dilation effects to stellar evolution
+                if matches!(body.body_type, crate::storage::CelestialBodyType::Star) {
+                    // Stellar time scales with cosmic time
+                    body.age *= (1.0 + redshift).recip();
+                }
+                
+                // Update cosmic microwave background temperature
+                // T_CMB = T_0 * (1 + z) where T_0 = 2.7 K today
+                let cmb_temperature = 2.725 * (1.0 + redshift);
+                
+                // For planets, add CMB contribution to background temperature
+                if matches!(body.body_type, crate::storage::CelestialBodyType::Planet) {
+                    // Don't let CMB dominate for young universe scenarios
+                    body.temperature = body.temperature.max(cmb_temperature * 0.1);
+                }
+            }
+            
+            // Update agent lineages with cosmological time effects
+            for lineage in &mut self.store.agent_lineages {
+                // Biological evolution rates affected by cosmic environment
+                let cosmic_acceleration_factor = if age_gyr < 1.0 { 
+                    0.1 // Early universe is harsh for life
+                } else if age_gyr > 10.0 {
+                    1.2 // Mature universe favors complexity
+                } else {
+                    1.0 // Standard evolution rate
+                };
+                
+                lineage.tech_level *= cosmic_acceleration_factor.powf(dt / 1e9); // Scale by Gyr
+                lineage.sentience_level *= cosmic_acceleration_factor.powf(dt / 1e9);
+            }
+            
+            // Update universe-wide statistics
+            self.universe_state.hubble_constant = hubble_constant;
+            self.universe_state.age_gyr = age_gyr;
+            
+            log::debug!(
+                "Applied cosmological effects: age={:.2} Gyr, H={:.1} km/s/Mpc, a={:.6}, z={:.3}",
+                age_gyr, hubble_constant, scale_factor, redshift
+            );
+        }
+        
+        Ok(())
+    }
+    
+    /// Get cosmological parameters from physics engine
+    fn get_cosmological_parameters(&self) -> Option<CosmologicalParameters> {
+        // Extract cosmological parameters from GADGET gravity solver if available
+        #[cfg(feature = "gadget")]
+        if let Some(ref gadget_engine) = self.physics_engine.gadget_engine {
+            return Some(gadget_engine.get_cosmological_parameters().clone());
+        }
+        
+        // Fallback: create parameters from current universe state
+        Some(CosmologicalParameters {
+            hubble_constant: self.universe_state.hubble_constant,
+            omega_matter: 0.315,
+            omega_lambda: 0.685,
+            omega_baryon: 0.049,
+            scale_factor: 1.0, // Default to present day
+            redshift: 0.0,
+            age_of_universe: self.universe_state.age_gyr,
+            enable_expansion: true,
+        })
+    }
+    
+    /// Process agent evolution with cosmic context
+    fn process_agent_evolution(&mut self, dt: f64) -> Result<()> {
+        let dt_years = dt;
+        
+        for lineage in &mut self.store.agent_lineages {
+            // Apply natural selection pressure
+            agent_evolution::natural_selection::apply_selection_pressure(
+                lineage,
+                dt_years,
+                &self.config.agent_config,
+            )?;
+            
+            // Update AI consciousness development
+            agent_evolution::consciousness::update_consciousness_level(
+                lineage,
+                dt_years,
+                &self.universe_state,
+            )?;
+            
+            // Process technological development
+            agent_evolution::genetics::process_genetic_drift(
+                lineage,
+                dt_years,
+            )?;
+        }
+        
+        Ok(())
+    }
 }
 
 /// Simulation statistics
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SimulationStats {
     // Basic simulation metrics
     pub current_tick: u64,
@@ -1661,6 +1829,7 @@ pub struct SimulationStats {
 
 #[derive(Debug, Default)]
 struct StellarStatistics {
+    #[allow(dead_code)]
     count: usize,
     formation_rate: f64,
     average_mass: f64,
@@ -1704,9 +1873,12 @@ struct PlanetaryStatistics {
 
 #[derive(Debug, Default)]
 struct EvolutionStatistics {
+    #[allow(dead_code)]
     total_ever: usize,
     extinct: usize,
+    #[allow(dead_code)]
     average_fitness: f64,
+    #[allow(dead_code)]
     average_sentience: f64,
     average_tech: f64,
     immortal_count: usize,

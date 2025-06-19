@@ -81,7 +81,7 @@ pub enum CelestialBodyType {
     BrownDwarf,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StellarClass {
     O, B, A, F, G, K, M,  // Main sequence
     WD,  // White dwarf
@@ -392,7 +392,7 @@ impl World {
     /// Generate composition for a new star
     fn generate_stellar_composition(&self, mass: f64) -> ElementTable {
         // Higher mass stars form from slightly more metal-rich gas due to galactic evolution
-        let metallicity_factor = (mass / 10.0).min(2.0).max(0.5); // 0.5x to 2x solar metallicity
+        let metallicity_factor = (mass / 10.0).clamp(0.5, 2.0); // 0.5x to 2x solar metallicity
         
         let mut composition = ElementTable::new();
         composition.set_abundance(1, 730_000);  // 73% H (constant)
@@ -772,5 +772,63 @@ mod tests {
         // Test gas giant classification
         let class = world.classify_planet(5.0e11, 100.0 * 5.972e24, 3.828e26).unwrap();
         assert!(matches!(class, PlanetClass::G));
+    }
+    
+    #[test]
+    fn test_stellar_properties_benchmarks() {
+        // Reference solar constants (CODATA 2022)
+        const SOLAR_RADIUS: f64 = 6.957e8;  // meters
+        const SOLAR_LUMINOSITY: f64 = 3.828e26; // Watts
+
+        let world = World::new(10, 10, 1e15);
+
+        // (stellar mass in M☉, expected Harvard class, acceptable T range (K), lum ratio tolerance)
+        let test_cases = [
+            (0.30, StellarClass::M, 2400.0, 3800.0), // Red dwarf
+            (1.00, StellarClass::G, 5200.0, 6000.0), // Sun-like
+            (2.50, StellarClass::B, 10000.0, 30000.0), // Early-type
+            (15.0, StellarClass::O, 30000.0, 50000.0), // Massive blue
+        ];
+
+        for (mass_solar, expected_class, t_min, t_max) in test_cases.iter() {
+            let m = *mass_solar;
+            // Stellar classification check
+            let class = world.classify_star_by_mass(m);
+            assert_eq!(&class, expected_class, "Stellar class mismatch for M={} M☉", m);
+
+            // Radius scaling (mass-radius power-law)
+            let radius = world.calculate_stellar_radius(m);
+            let radius_ratio = radius / SOLAR_RADIUS;
+            let expected_ratio = if m > 1.0 {
+                m.powf(0.8)
+            } else {
+                m.powf(0.9)
+            };
+            let rel_err = (radius_ratio - expected_ratio).abs() / expected_ratio;
+            assert!(rel_err < 0.05, "Radius scaling off by >5% for M={} M☉", m);
+
+            // Temperature within expected astrophysical range
+            let temperature = world.calculate_stellar_temperature(m);
+            assert!(temperature >= *t_min && temperature <= *t_max,
+                "Temperature {} K out of expected range [{}, {}] K for M={} M☉", temperature, t_min, t_max, m);
+
+            // Luminosity power-law (mass-luminosity relation)
+            let luminosity = world.calculate_stellar_luminosity(m);
+            let lum_ratio = luminosity / SOLAR_LUMINOSITY;
+            let expected_lum_ratio = if m > 0.43 {
+                if m > 1.5 {
+                    m.powf(3.5)
+                } else {
+                    m.powf(4.0)
+                }
+            } else {
+                m.powf(2.3)
+            };
+            let rel_err_l = (lum_ratio - expected_lum_ratio).abs() / expected_lum_ratio;
+            assert!(rel_err_l < 0.05, "Luminosity scaling off by >5% for M={} M☉", m);
+
+            // Verify luminosity is physically positive
+            assert!(luminosity > 0.0, "Luminosity should be positive for any main-sequence star");
+        }
     }
 }

@@ -122,8 +122,11 @@ pub static CKM_MATRIX: [[f64; 3]; 3] = [
     [0.0081,  0.041,  0.99910],
 ];
 
+/// Type alias for branching ratio data structure
+type BranchingRatioMap = HashMap<crate::ParticleType, Vec<(Vec<crate::ParticleType>, f64)>>;
+
 /// Dominant branching ratios for selected unstable particles (<channel list>, BR)
-pub static BRANCHING_RATIOS: Lazy<HashMap<crate::ParticleType, Vec<(Vec<crate::ParticleType>, f64)>>> = Lazy::new(|| {
+pub static BRANCHING_RATIOS: Lazy<BranchingRatioMap> = Lazy::new(|| {
     use crate::ParticleType::*;
     let mut h = HashMap::new();
 

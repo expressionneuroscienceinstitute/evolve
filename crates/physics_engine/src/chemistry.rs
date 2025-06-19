@@ -28,7 +28,14 @@ pub struct ChemistrySolver {
     pub gas_constant: f64,
 }
 
+impl Default for ChemistrySolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChemistrySolver {
+    /// Create a new chemistry solver with default parameters
     pub fn new() -> Self {
         let mut solver = Self {
             reactions: Vec::new(),

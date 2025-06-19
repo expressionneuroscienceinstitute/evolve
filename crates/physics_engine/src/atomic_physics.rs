@@ -290,7 +290,7 @@ pub fn compute_atomic_properties(atom: &Atom) -> Result<()> {
     println!("  Shells: {}", atom.shells.len());
     println!("  Charge: {}", atom.charge());
     
-    for (_i, shell) in atom.shells.iter().enumerate() {
+    for shell in atom.shells.iter() {
         println!("    Shell n={}: {} electrons (capacity {}), energy level: {:.2} eV", 
                  shell.quantum_number, shell.electrons.len(), shell.capacity(), shell.energy_level);
     }

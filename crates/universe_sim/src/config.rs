@@ -203,11 +203,7 @@ impl SimulationConfig {
 
     /// Get simulation duration in real time (approximate)
     pub fn estimated_duration_hours(&self) -> Option<f64> {
-        if let Some(max_ticks) = self.max_ticks {
-            Some(max_ticks as f64 / (self.target_ups * 3600.0))
-        } else {
-            None // Infinite simulation
-        }
+        self.max_ticks.map(|max_ticks| max_ticks as f64 / (self.target_ups * 3600.0))
     }
 
     /// Check if configuration is suitable for current system

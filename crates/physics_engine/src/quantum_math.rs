@@ -35,6 +35,7 @@ static BOYS_TABLE: Lazy<Vec<Vec<f64>>> = Lazy::new(|| {
     
     let mut table = vec![vec![0.0; MAX_T_INDEX + 1]; MAX_N + 1];
     
+    #[allow(clippy::needless_range_loop)]
     for n in 0..=MAX_N {
         for t_index in 0..=MAX_T_INDEX {
             let t = t_index as f64 * DT;
@@ -154,12 +155,14 @@ pub fn boys_function_batch(max_n: usize, t_values: &[f64]) -> Vec<Vec<f64>> {
         
         // Use downward recursion: F_n(t) = ((2n-1) F_{n-1}(t) - exp(-t)) / (2t)
         if t.abs() > 1e-10 {
+            #[allow(clippy::needless_range_loop)]
             for n in 1..=max_n {
                 let n_f = n as f64;
                 results[n] = ((2.0 * n_f - 1.0) * results[n - 1] - (-t).exp()) / (2.0 * t);
             }
         } else {
             // Use Taylor series for small t
+            #[allow(clippy::needless_range_loop)]
             for n in 1..=max_n {
                 results[n] = 1.0 / ((2 * n + 1) as f64);
             }
@@ -398,6 +401,7 @@ pub fn overlap_integral_obara_saika(
 }
 
 /// Recursive implementation of overlap integral using Obara-Saika method
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
 fn overlap_integral_recursive(
     alpha_a: f64,
     center_a: Vector3<f64>,
@@ -405,7 +409,7 @@ fn overlap_integral_recursive(
     alpha_b: f64,
     center_b: Vector3<f64>,
     ang_b: (u32, u32, u32),
-    aux_idx: u32,
+    _aux_idx: u32,
     workspace: &mut ObSaWorkspace,
 ) -> f64 {
     let (la, ma, na) = ang_a;
@@ -428,7 +432,7 @@ fn overlap_integral_recursive(
         let term1 = pa.x * overlap_integral_recursive(
             alpha_a, center_a, ang_a_reduced,
             alpha_b, center_b, ang_b,
-            aux_idx, workspace
+            0, workspace
         );
         
         let mut term2 = 0.0;
@@ -437,7 +441,7 @@ fn overlap_integral_recursive(
             term2 += ((la - 1) as f64) / (2.0 * gamma) * overlap_integral_recursive(
                 alpha_a, center_a, ang_a_reduced2,
                 alpha_b, center_b, ang_b,
-                aux_idx, workspace
+                0, workspace
             );
         }
         
@@ -446,7 +450,7 @@ fn overlap_integral_recursive(
             term2 += (lb as f64) / (2.0 * gamma) * overlap_integral_recursive(
                 alpha_a, center_a, ang_a_reduced,
                 alpha_b, center_b, ang_b_reduced,
-                aux_idx, workspace
+                0, workspace
             );
         }
         
@@ -582,6 +586,7 @@ impl TwoElectronIntegrals {
     }
     
     /// Compute a two-electron integral (foundation for future implementation)
+    #[allow(clippy::too_many_arguments)]
     pub fn compute_integral(
         &mut self,
         alpha_p: f64, center_p: Vector3<f64>, ang_p: (u32, u32, u32),

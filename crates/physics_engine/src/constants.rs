@@ -62,13 +62,13 @@ impl Default for PhysicsConstants {
             r: 8.314_462_618,
             
             // Electromagnetic constants
-            epsilon_0: 8.854_187_8128e-12,
+            epsilon_0: 8.854_187_812_8e-12,
             mu_0: 1.256_637_062_12e-6,  // Vacuum permeability (μ₀) is fixed by definition since 2019 SI redefinition
             e: 1.602_176_634e-19,
-            alpha: 7.297_352_5693e-3,
+            alpha: 7.297_352_569_3e-3,
             
             // Particle masses
-            m_e: 9.109_383_7015e-31,
+            m_e: 9.109_383_701_5e-31,
             m_p: 1.672_621_923_69e-27,
             m_n: 1.674_927_498_04e-27,
             u: 1.660_539_066_60e-27,  // Atomic mass unit (CODATA 2022 value)
@@ -162,21 +162,27 @@ pub const REDUCED_PLANCK_CONSTANT: f64 = 1.054_571_817e-34; // J⋅s
 pub const GRAVITATIONAL_CONSTANT: f64 = 6.674_30e-11;   // m³⋅kg⁻¹⋅s⁻²
 pub const BOLTZMANN: f64 = 1.380_649e-23;               // J/K
 pub const ELEMENTARY_CHARGE: f64 = 1.602_176_634e-19;   // C
-pub const FINE_STRUCTURE_CONSTANT: f64 = 7.297_352_5693e-3;
-pub const VACUUM_PERMITTIVITY: f64 = 8.854_187_8128e-12; // F/m
+pub const FINE_STRUCTURE_CONSTANT: f64 = 7.297_352_569_3e-3;
+pub const VACUUM_PERMITTIVITY: f64 = 8.854_187_812_8e-12; // F/m
 
-pub const ELECTRON_MASS: f64 = 9.109_383_7015e-31;      // kg
+pub const ELECTRON_MASS: f64 = 9.109_383_701_5e-31;      // kg
+pub const MUON_MASS: f64 = 1.883_531_627e-28;           // kg (CODATA 2018)
+pub const TAU_MASS: f64 = 3.167_54e-27;                 // kg (CODATA 2018)
 pub const PROTON_MASS: f64 = 1.672_621_923_69e-27;      // kg
 pub const NEUTRON_MASS: f64 = 1.674_927_498_04e-27;     // kg
 
+/// Speed of light squared for energy calculations
+pub const C_SQUARED: f64 = SPEED_OF_LIGHT * SPEED_OF_LIGHT;
+
 /// Rydberg constant in m⁻¹ (CODATA-2023)
-pub const RYDBERG_CONSTANT: f64 = 1.097_373_156_8160e7;
+pub const RYDBERG_CONSTANT: f64 = 1.097_373_156_816_0e7;
 
 /// Rydberg energy in eV (13.605693122994 eV)
 pub const RYDBERG_ENERGY: f64 = 13.605693122994;
 
-/// Stefan–Boltzmann constant σ = 2π⁵k⁴/(15h³c²) (matches NIST to <10⁻⁸)
-/// Used for blackbody temperature calculations.
+/// Hartree energy (2 Rydbergs) in Joules (4.3597447222071e-18 J)
+/// This is the atomic unit of energy used in quantum chemistry
+pub const HARTREE_TO_JOULE: f64 = 4.3597447222071e-18;
 
 /// The unified atomic mass unit (u), in kilograms.
 /// Also known as the Dalton (Da).

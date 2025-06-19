@@ -529,6 +529,12 @@ pub struct AICore {
     pub performance_history: Vec<f64>,
 }
 
+impl Default for AICore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AICore {
     /// Creates a new AI core with a sophisticated neural architecture
     pub fn new() -> Self {

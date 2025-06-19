@@ -14,7 +14,6 @@ use tracing::{error, info, warn};
 use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
 use std::collections::HashMap;
 use universe_sim::{CelestialBodyType};
-use native_renderer;
 
 mod rpc;
 
@@ -161,6 +160,8 @@ enum InspectTarget {
     Lineage { id: String },
     Universe,
     Physics,
+    /// Historical trend analysis of universe statistics
+    UniverseHistory,
 }
 
 #[derive(Subcommand)]
@@ -496,7 +497,7 @@ async fn cmd_start(
             }
             let checkpoint_file = save_path.join(format!("snapshot_{}.bin", sim_guard.current_tick));
             info!("Auto-saving checkpoint to {:?}", checkpoint_file);
-            if let Err(e) = persistence::save_checkpoint(&mut *sim_guard, &checkpoint_file) {
+            if let Err(e) = persistence::save_checkpoint(&mut sim_guard, &checkpoint_file) {
                 error!("Failed to save checkpoint: {}", e);
             } else {
                 // Update last save time on successful save
@@ -518,7 +519,7 @@ async fn cmd_start(
         // Send WebSocket updates every 10 ticks or so for better responsiveness
         if stats.current_tick % 10 == 0 {
             // Get a fresh lock on the simulation to get more detailed data
-            let mut sim_guard = sim.lock().unwrap();
+            let sim_guard = sim.lock().unwrap();
             
             // Get physics engine reference (extract data we need before borrowing mutably)
             let physics_data = {
@@ -1517,6 +1518,32 @@ async fn cmd_inspect(target: InspectTarget) -> Result<()> {
                 }
             }
         }
+        InspectTarget::UniverseHistory => {
+            println!("Inspecting historical trends of universe statistics...\n");
+            
+            let req_body = json!({
+                "jsonrpc": "2.0",
+                "method": "universe_stats_history",
+                "params": {},
+                "id": 11
+            });
+
+            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
+                Ok(res) if res.status().is_success() => {
+                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
+                        if let Some(history_data) = rpc_res.result {
+                            render_universe_history(&history_data)?;
+                        } else if let Some(error) = rpc_res.error {
+                            println!("RPC Error: {} (code: {})", error.message, error.code);
+                        }
+                    }
+                }
+                _ => {
+                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
+                    render_sample_universe_history();
+                }
+            }
+        }
     }
     
     Ok(())
@@ -2392,8 +2419,21 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
                         }
                         println!("✅ Physics inspection completed.");
                     },
+                    "universe_history" => {
+                        println!("🔄 Inspecting historical trends of universe statistics...");
+                        match rpc::call_rpc("universe_stats_history", json!({})).await {
+                            Ok(response) => {
+                                render_universe_history(&response)?;
+                            },
+                            Err(e) => {
+                                println!("⚠️  Could not connect to simulation: {}", e);
+                                render_sample_universe_history();
+                            }
+                        }
+                        println!("✅ Universe history inspection completed.");
+                    },
                     _ => {
-                        println!("❌ Invalid inspect type. Use: inspect <planet|lineage|universe|physics> [id]");
+                        println!("❌ Invalid inspect type. Use: inspect <planet|lineage|universe|physics|universe_history> [id]");
                     }
                 }
             } else if parts.len() == 2 {
@@ -2424,8 +2464,21 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
                         }
                         println!("✅ Physics inspection completed.");
                     },
+                    "universe_history" => {
+                        println!("🔄 Inspecting historical trends of universe statistics...");
+                        match rpc::call_rpc("universe_stats_history", json!({})).await {
+                            Ok(response) => {
+                                render_universe_history(&response)?;
+                            },
+                            Err(e) => {
+                                println!("⚠️  Could not connect to simulation: {}", e);
+                                render_sample_universe_history();
+                            }
+                        }
+                        println!("✅ Universe history inspection completed.");
+                    },
                     _ => {
-                        println!("❌ Usage: inspect <planet|lineage> <id> OR inspect <universe|physics>");
+                        println!("❌ Usage: inspect <planet|lineage> <id> OR inspect <universe|physics|universe_history>");
                     }
                 }
             } else {
@@ -2540,7 +2593,7 @@ async fn handle_rpc_request(
                 Ok(params) => {
                     let stats = {
                         let mut sim_guard = shared_state.sim.lock().unwrap();
-                        match persistence::save_checkpoint(&mut *sim_guard, &params.path) {
+                        match persistence::save_checkpoint(&mut sim_guard, &params.path) {
                             Ok(_) => sim_guard.get_stats().unwrap(),
                             Err(e) => {
                                 let error = rpc::RpcError {
@@ -2794,7 +2847,7 @@ async fn handle_rpc_request(
                 let mut sim_guard = shared_state.sim.lock().unwrap();
                 let final_checkpoint = format!("final_checkpoint_{}.bin", sim_guard.current_tick);
                 
-                let save_success = match persistence::save_checkpoint(&mut *sim_guard, &PathBuf::from(&final_checkpoint)) {
+                let save_success = match persistence::save_checkpoint(&mut sim_guard, &PathBuf::from(&final_checkpoint)) {
                     Ok(_) => {
                         info!("Final checkpoint saved to {}", final_checkpoint);
                         true
@@ -3242,6 +3295,20 @@ async fn handle_rpc_request(
             }
         }
 
+        "universe_stats_history" => {
+            let sim_guard = shared_state.sim.lock().unwrap();
+            let history_json = sim_guard.get_stats_history_json().unwrap_or_else(|_| serde_json::json!([]));
+
+            let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: Some(history_json),
+                error: None,
+                id: response_id,
+            };
+
+            Ok(warp::reply::json(&rpc_response))
+        }
+
         _ => {
             let error = rpc::RpcError {
                 code: rpc::METHOD_NOT_FOUND,
@@ -3275,4 +3342,41 @@ fn with_state(
     state: Arc<Mutex<SharedState>>,
 ) -> impl Filter<Extract = (Arc<Mutex<SharedState>>,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || state.clone())
-} 
+}
+
+/// Render historical universe statistics in a simple ASCII table.
+fn render_universe_history(history_data: &serde_json::Value) -> Result<()> {
+    println!("=== UNIVERSE STATISTICS HISTORY ===");
+
+    if let Some(array) = history_data.as_array() {
+        println!(
+            "{:>8} {:>8} {:>8} {:>8} {:>14} {:>10}",
+            "Tick", "Age(Gyr)", "Stars", "Planets", "Particles", "Temp(K)"
+        );
+        for entry in array.iter().take(100) {
+            let tick = entry.get("tick").and_then(|v| v.as_u64()).unwrap_or(0);
+            let age = entry.get("age_gyr").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let stars = entry.get("star_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let planets = entry.get("planet_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let particles = entry.get("total_particles").and_then(|v| v.as_u64()).unwrap_or(0);
+            let temp = entry.get("average_temperature").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+            println!(
+                "{:>8} {:>8.2} {:>8} {:>8} {:>14} {:>10.1}",
+                tick, age, stars, planets, particles, temp
+            );
+        }
+    } else {
+        println!("No historical data available.");
+    }
+    Ok(())
+}
+
+fn render_sample_universe_history() {
+    println!("=== UNIVERSE STATISTICS HISTORY (SAMPLE) ===");
+    println!("Tick  Age(Gyr) Stars Planets   Particles     Temp");
+    for i in 0..10 {
+        println!("{:>4}   {:>6.2}  {:>5}   {:>6}  {:>11}   {:>6.1}", i * 100, 0.5 + i as f64 * 0.1, 2000 + i * 50, 5000 + i * 70, 1_000_000 + i * 10_000, 3.0 + i as f64);
+    }
+    println!("\nNote: Connect to a running simulation for real data.");
+}

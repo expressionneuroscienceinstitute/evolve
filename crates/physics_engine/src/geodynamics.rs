@@ -41,6 +41,12 @@ pub struct GeodynamicsSolver {
     pub reference_temperature: f64,     // K
 }
 
+impl Default for GeodynamicsSolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GeodynamicsSolver {
     pub fn new() -> Self {
         Self {
@@ -139,7 +145,7 @@ impl GeodynamicsSolver {
             
             // Simple convection velocity update
             let buoyancy_velocity = acceleration * dt / cell.viscosity * 1e15; // Scaling factor
-            cell.velocity.z += buoyancy_velocity.min(1e-8).max(-1e-8); // Limit to reasonable values
+            cell.velocity.z += buoyancy_velocity.clamp(-1e-8, 1e-8); // Limit to reasonable values
             
             // Temperature advection (very simplified)
             if cell.velocity.z > 0.0 {

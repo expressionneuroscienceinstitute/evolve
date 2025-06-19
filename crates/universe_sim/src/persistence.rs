@@ -5,8 +5,8 @@
 use crate::{
     config::SimulationConfig,
     cosmic_era::{PhysicalTransition, UniverseState},
-    physics_engine::{PhysicsEngine, PhysicsState},
-    storage::{AgentLineage, CelestialBody, PlanetaryEnvironment, Store},
+    physics_engine::PhysicsEngine,
+    storage::Store,
     UniverseSimulation,
 };
 use anyhow::Result;
@@ -69,6 +69,7 @@ pub fn load_checkpoint(path: &Path) -> Result<UniverseSimulation> {
         physical_transitions: serializable_universe.physical_transitions,
         config: serializable_universe.config,
         diagnostics: crate::DiagnosticsSystem::new(),
+        stats_history: std::collections::VecDeque::new(),
     };
 
     Ok(sim)

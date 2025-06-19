@@ -74,7 +74,7 @@ impl DecisionAnalyzer {
     pub fn summarize_agent_decisions(&self, agent_id: &Uuid, decisions: &[&Decision]) -> String {
         let total_decisions = decisions.len();
         let successful_outcomes = decisions.iter()
-            .filter(|d| d.outcome.as_ref().map_or(false, |o| o.contains("success")))
+            .filter(|d| d.outcome.as_ref().is_some_and(|o| o.contains("success")))
             .count();
 
         if total_decisions == 0 {
@@ -138,7 +138,7 @@ impl DecisionLog {
         for agent_id in distinct_agents {
             let agent_decisions = self.get_decisions_for_agent(&agent_id);
             agent_summaries.push_str(&self.analyzer.summarize_agent_decisions(&agent_id, &agent_decisions));
-            agent_summaries.push_str("\n");
+            agent_summaries.push('\n');
         }
         agent_summaries
     }

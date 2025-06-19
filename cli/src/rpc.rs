@@ -91,6 +91,7 @@ impl RpcClient {
         }
     }
 
+    #[allow(dead_code)]
     async fn send_request(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
         let req_body = json!({
             "jsonrpc": "2.0",
@@ -114,58 +115,72 @@ impl RpcClient {
         rpc_res.result.ok_or_else(|| anyhow::anyhow!("No result in RPC response"))
     }
 
+    #[allow(dead_code)]
     pub async fn status(&self) -> Result<serde_json::Value> {
         self.send_request("status", json!({})).await
     }
 
+    #[allow(dead_code)]
     pub async fn stop(&self) -> Result<serde_json::Value> {
         self.send_request("stop", json!({})).await
     }
 
+    #[allow(dead_code)]
     pub async fn map(&self, zoom: f64, layer: &str) -> Result<serde_json::Value> {
         self.send_request("map", json!({ "zoom": zoom, "layer": layer })).await
     }
 
+    #[allow(dead_code)]
     pub async fn list_planets(&self, class: Option<String>, habitable: bool) -> Result<serde_json::Value> {
         self.send_request("list_planets", json!({ "class_filter": class, "habitable_only": habitable })).await
     }
 
+    #[allow(dead_code)]
     pub async fn inspect_planet(&self, planet_id: String) -> Result<serde_json::Value> {
         self.send_request("inspect_planet", json!({ "planet_id": planet_id })).await
     }
     
+    #[allow(dead_code)]
     pub async fn inspect_lineage(&self, lineage_id: String) -> Result<serde_json::Value> {
         self.send_request("inspect_lineage", json!({ "lineage_id": lineage_id })).await
     }
     
+    #[allow(dead_code)]
     pub async fn inspect_universe(&self) -> Result<serde_json::Value> {
         self.send_request("inspect_universe", json!({})).await
     }
     
+    #[allow(dead_code)]
     pub async fn inspect_physics(&self) -> Result<serde_json::Value> {
         self.send_request("inspect_physics", json!({})).await
     }
 
+    #[allow(dead_code)]
     pub async fn universe_stats(&self) -> Result<serde_json::Value> {
         self.send_request("universe_stats", json!({})).await
     }
 
+    #[allow(dead_code)]
     pub async fn physics_diagnostics(&self) -> Result<serde_json::Value> {
         self.send_request("physics_diagnostics", json!({})).await
     }
 
+    #[allow(dead_code)]
     pub async fn snapshot(&self, file: String) -> Result<serde_json::Value> {
         self.send_request("snapshot", json!({ "path": file })).await
     }
 
+    #[allow(dead_code)]
     pub async fn speed(&self, factor: f64) -> Result<serde_json::Value> {
         self.send_request("speed", json!({ "factor": factor })).await
     }
 
+    #[allow(dead_code)]
     pub async fn rewind(&self, ticks: u64) -> Result<serde_json::Value> {
         self.send_request("rewind", json!({ "ticks": ticks })).await
     }
 
+    #[allow(dead_code)]
     pub async fn godmode_create_body(&self, mass: f64, body_type: String, pos: [f64; 3]) -> Result<serde_json::Value> {
         self.send_request("godmode_create_body", json!({
             "mass": mass,
@@ -174,22 +189,27 @@ impl RpcClient {
         })).await
     }
     
+    #[allow(dead_code)]
     pub async fn godmode_delete_body(&self, id: String) -> Result<serde_json::Value> {
         self.send_request("godmode_delete_body", json!({ "id": id })).await
     }
     
+    #[allow(dead_code)]
     pub async fn godmode_set_constant(&self, name: String, value: f64) -> Result<serde_json::Value> {
         self.send_request("godmode_set_constant", json!({ "name": name, "value": value })).await
     }
 
+    #[allow(dead_code)]
     pub async fn godmode_spawn_lineage(&self, code_hash: String, planet_id: String) -> Result<serde_json::Value> {
         self.send_request("godmode_spawn_lineage", json!({ "code_hash": code_hash, "planet_id": planet_id })).await
     }
 
+    #[allow(dead_code)]
     pub async fn godmode_create_agent(&self, planet_id: String) -> Result<serde_json::Value> {
         self.send_request("godmode_create_agent", json!({ "planet_id": planet_id })).await
     }
     
+    #[allow(dead_code)]
     pub async fn godmode_miracle(&self, planet_id: String, miracle_type: String, duration: Option<u64>, intensity: Option<f64>) -> Result<serde_json::Value> {
         self.send_request("godmode_miracle", json!({ 
             "planet_id": planet_id,

@@ -83,6 +83,12 @@ pub struct Genome {
     pub genes: Vec<Gene>,
 }
 
+impl Default for Genome {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Genome {
     /// Creates a new empty genome.
     pub fn new() -> Self {

@@ -226,6 +226,12 @@ pub struct SystemLoad {
     pub timestamp: f64,
 }
 
+impl Default for DiagnosticsSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DiagnosticsSystem {
     /// Create a new diagnostics system
     pub fn new() -> Self {

@@ -25,6 +25,7 @@ pub mod quantum;
 pub mod quantum_fields;
 pub mod spatial;
 pub mod thermodynamics;
+pub mod utils;
 pub mod validation;
 
 // Temporary compatibility layer for missing QC helpers

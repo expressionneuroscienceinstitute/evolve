@@ -35,14 +35,8 @@ pub use storage::{AgentLineage, CelestialBody, CelestialBodyType, PlanetClass, S
 /// Calculate relativistic total energy from momentum and mass
 /// E = sqrt((pc)^2 + (mc^2)^2) where c = speed of light
 fn calculate_relativistic_energy(momentum: &Vector3<f64>, mass: f64) -> f64 {
-    const C: f64 = 299_792_458.0; // Speed of light in m/s
-    
-    let momentum_magnitude = momentum.magnitude();
-    let rest_energy = mass * C * C;
-    let momentum_energy = momentum_magnitude * C;
-    
-    // Total relativistic energy
-    (momentum_energy * momentum_energy + rest_energy * rest_energy).sqrt()
+    // Use utility function from physics_engine
+    physics_engine::utils::math::calculate_relativistic_energy(momentum, mass)
 }
 
 /// Core universe simulation structure
@@ -468,46 +462,22 @@ impl UniverseSimulation {
     /// Calculate stellar radius from mass (simplified)
     fn calculate_stellar_radius(mass: f64) -> f64 {
         const M_SUN: f64 = 1.989e30;
-        const R_SUN: f64 = 6.957e8;
-        let m_msun = mass / M_SUN;
-
-        let r_msun = if m_msun <= 1.0 {
-            m_msun.powf(0.8)
-        } else {
-            m_msun.powf(0.57)
-        };
-
-        r_msun * R_SUN
+        let mass_solar = mass / M_SUN;
+        physics_engine::utils::stellar::calculate_stellar_radius(mass_solar)
     }
 
     /// Calculate stellar luminosity from mass (simplified)
     fn calculate_stellar_luminosity(mass: f64) -> f64 {
         const M_SUN: f64 = 1.989e30;
-        const L_SUN: f64 = 3.828e26;
-        let m_msun = mass / M_SUN;
-
-        let l_msun = if m_msun < 0.43 {
-            0.23 * m_msun.powf(2.3)
-        } else if m_msun < 2.0 {
-            m_msun.powf(4.0)
-        } else if m_msun < 20.0 {
-            1.5 * m_msun.powf(3.5)
-        } else {
-            3200.0 * m_msun
-        };
-
-        l_msun * L_SUN
+        let mass_solar = mass / M_SUN;
+        physics_engine::utils::stellar::calculate_stellar_luminosity(mass_solar)
     }
 
     /// Calculate stellar surface temperature from mass (simplified)
     fn calculate_stellar_temperature(mass: f64) -> f64 {
-        // Use Stefan–Boltzmann law with radius and luminosity computed above.
-        const SIGMA: f64 = 5.670_374_419e-8; // W·m⁻²·K⁻⁴
-
-        let radius = Self::calculate_stellar_radius(mass);
-        let luminosity = Self::calculate_stellar_luminosity(mass);
-
-        (luminosity / (4.0 * std::f64::consts::PI * radius * radius) / SIGMA).powf(0.25)
+        const M_SUN: f64 = 1.989e30;
+        let mass_solar = mass / M_SUN;
+        physics_engine::utils::stellar::calculate_stellar_temperature(mass_solar)
     }
 
     /// Form planets around existing stars

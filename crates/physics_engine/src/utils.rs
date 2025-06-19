@@ -9,7 +9,7 @@ use crate::{ParticleType, FundamentalParticle, constants::*};
 use std::f64::consts::PI;
 
 // Coulomb constant K_e = 1/(4πε₀)
-const K_E: f64 = 1.0 / (4.0 * PI * VACUUM_PERMITTIVITY);
+pub const K_E: f64 = 1.0 / (4.0 * PI * VACUUM_PERMITTIVITY);
 
 /// Mathematical and conversion utilities
 pub mod math {

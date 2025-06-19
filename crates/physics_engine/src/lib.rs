@@ -44,7 +44,7 @@ pub mod octree;
 
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
-use anyhow::{Result, Context, bail};
+use anyhow::Result;
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
 use rand::distributions::Distribution;
@@ -61,58 +61,20 @@ use physics_types as shared_types;
 pub use constants::*;
 
 // Add missing imports for constants and types
-use crate::constants::{SPEED_OF_LIGHT, GRAVITATIONAL_CONSTANT, ELECTRON_MASS, MUON_MASS, TAU_MASS, C_SQUARED};
+use crate::utils::K_E;
 use crate::general_relativity::{C, G, schwarzschild_radius};
-use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType};
-use crate::interaction_events::FusionReaction as FusionReactionEvent;
+use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType, MeasurementBasis, BoundaryConditions, MolecularOrbital, VibrationalMode, PotentialEnergySurface, ReactionCoordinate, NuclearShellState, ElectronicState};
+use crate::interaction_events::DecayChannel;
+use crate::particle_types::GluonField;
+use crate::interactions::InteractionMatrix;
+use crate::spatial::SpacetimeGrid;
+use crate::quantum::{QuantumVacuum, RunningCouplings, SymmetryBreaking};
+use crate::quantum_fields::FieldEquations;
+use crate::particles::ParticleAccelerator;
+use physics_types::ColorCharge;
 
-/// Fundamental particle types in the Standard Model
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ParticleType {
-    // Quarks
-    Up, Down, Charm, Strange, Top, Bottom,
-    
-    // Leptons
-    Electron, ElectronNeutrino, ElectronAntiNeutrino, 
-    Muon, MuonNeutrino, MuonAntiNeutrino,
-    Tau, TauNeutrino, TauAntiNeutrino,
-    
-    // Antiparticles
-    Positron,
-    
-    // Gauge bosons
-    Photon, WBoson, WBosonMinus, ZBoson, Gluon,
-    
-    // Scalar bosons
-    Higgs,
-    
-    // Composite particles
-    Proton, Neutron, 
-    
-    // Light mesons (π, K, η)
-    PionPlus, PionMinus, PionZero,
-    KaonPlus, KaonMinus, KaonZero,
-    Eta,
-    
-    // Baryons (Λ, Σ, Ξ, Ω)
-    Lambda, SigmaPlus, SigmaMinus, SigmaZero,
-    XiMinus, XiZero, OmegaMinus,
-    
-    // Heavy quarkonium states
-    JPsi, Upsilon,
-    
-    // Atomic nuclei (by mass number)
-    Hydrogen, Helium, Lithium, Carbon, Nitrogen, Oxygen, Fluorine, Silicon, Phosphorus, Sulfur, Chlorine, Bromine, Iodine, Iron, // ... etc
-    
-    // Atoms
-    HydrogenAtom, HeliumAtom, CarbonAtom, OxygenAtom, IronAtom,
-    
-    // Molecules
-    H2, H2O, CO2, CH4, NH3, // ... complex molecules
-    
-    // Dark matter candidate
-    DarkMatter,
-}
+// Re-export canonical ParticleType from shared physics_types crate
+pub use physics_types::ParticleType;
 
 /// Individual fundamental particle
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,14 +128,6 @@ impl QuantumState {
             occupation_probability: 1.0,
         }
     }
-}
-
-/// Color charge for strong force
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum ColorCharge {
-    Red, Green, Blue,
-    AntiRed, AntiGreen, AntiBlue,
-    ColorSinglet,
 }
 
 /// Quantum field representation
@@ -3688,7 +3642,7 @@ fn map_particle_type_to_shared(pt: ParticleType) -> shared_types::ParticleType {
         // Fallback simple mapping
         ParticleType::Electron => S::Electron,
         ParticleType::Positron => S::Positron,
-        _ => S::Other(pt as u32),
+        _ => S::Other,
     }
 }
 
@@ -3715,3 +3669,32 @@ fn map_interaction_type(it: shared_types::InteractionType) -> InteractionType {
         _ => InteractionType::ElectromagneticScattering,
     }
 }
+
+impl QuantumField {
+    /// Create a new quantum field on a basic cubic lattice. This is a lightweight placeholder that
+    /// fulfils type requirements without incurring heavy allocations.
+    pub fn new(field_type: FieldType, _grid: &crate::spatial::SpacetimeGrid) -> anyhow::Result<Self> {
+        use nalgebra::{Vector3, Complex};
+        use std::collections::HashMap;
+
+        // Very small 8³ lattice to keep memory footprint reasonable.
+        const GRID: usize = 8;
+        let field_values = vec![vec![vec![Complex::new(0.0, 0.0); GRID]; GRID]; GRID];
+        let field_derivatives = vec![vec![vec![Vector3::zeros(); GRID]; GRID]; GRID];
+
+        Ok(Self {
+            field_type,
+            field_values,
+            field_derivatives,
+            vacuum_expectation_value: Complex::new(0.0, 0.0),
+            coupling_constants: HashMap::new(),
+            lattice_spacing: 1e-15,
+            boundary_conditions: crate::types::BoundaryConditions::Periodic,
+        })
+    }
+}
+
+// Backward-compatibility re-exports. These items lived at the crate root in
+// earlier versions; downstream crates still expect them to be available here.
+// Re-exporting avoids a sweeping refactor across the workspace.
+pub use types::{ElementTable, MaterialType, EnvironmentProfile, StratumLayer};

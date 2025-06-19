@@ -386,6 +386,26 @@ fn subdivide_node(node: &mut OctreeNode, particles: &[FundamentalParticle]) {
     node.children = Some(new_children);
 }
 
+// -----------------------------------------------------------------------------
+// Simple spacetime grid placeholder (3D lattice + uniform time step)
+// -----------------------------------------------------------------------------
+#[derive(Debug, Clone)]
+pub struct SpacetimeGrid {
+    pub spatial_dimensions: (usize, usize, usize),
+    pub spacing: f64,     // Lattice spacing (m)
+    pub time_step: f64,   // Temporal resolution (s)
+}
+
+impl Default for SpacetimeGrid {
+    fn default() -> Self {
+        Self {
+            spatial_dimensions: (16, 16, 16),
+            spacing: 1e-15,  // 1 femtometer spacing
+            time_step: 1e-23, // Attosecond-scale time step
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

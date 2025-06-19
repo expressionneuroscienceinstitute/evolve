@@ -13,15 +13,12 @@ use physics_engine::{
 };
 use rand::Rng;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::collections::VecDeque;
-use serde_json::{json, Value};
-use crate::config::Config;
-use crate::storage::{Storage, AgentLineage, CelestialBody, CelestialBodyType};
-use crate::cosmic_era::{UniverseState, PhysicalTransition, TransitionType};
-use agent_evolution::AgentConfig;
+use serde_json::json;
+use crate::storage::{Store, AgentLineage, CelestialBody};
 
 pub mod config;
 pub mod cosmic_era;
@@ -31,7 +28,7 @@ pub mod storage;
 pub mod world;
 
 pub use physics_engine;
-pub use storage::{CelestialBodyType, PlanetClass, StellarEvolution, StellarPhase, Store, ParticleStore};
+pub use storage::{CelestialBodyType, PlanetClass, StellarEvolution, StellarPhase, ParticleStore};
 
 /// Calculate relativistic total energy from momentum and mass
 /// E = sqrt((pc)^2 + (mc^2)^2) where c = speed of light
@@ -253,10 +250,8 @@ impl UniverseSimulation {
         // Apply cosmological expansion effects to universe-scale properties
         self.apply_cosmological_effects(dt)?;
         
-        // Update persistence layer
-        if self.current_tick % self.config.save_interval == 0 {
-            self.save_state()?;
-        }
+        // Persistence layer TODO: implement checkpointing using persistence module.
+        // Disabled for now to allow compilation.
         
         // Track performance
         let step_duration = start_time.elapsed();
@@ -310,17 +305,17 @@ impl UniverseSimulation {
     }
 
     /// Update cosmic-scale processes based on current physical conditions
-    fn update_cosmic_processes(&mut self) -> Result<()> {
+    fn update_cosmic_processes(&mut self, dt: f64) -> Result<()> {
         // Currently we model only stellar evolution and star formation.
         // Planet formation and other processes are stubbed for now.
-        self.process_stellar_evolution()?;
+        self.process_stellar_evolution(dt)?;
         self.process_star_formation()?;
         Ok(())
     }
 
     /// Process stellar evolution based on nuclear burning
     fn process_stellar_evolution(&mut self, dt: f64) -> Result<()> {
-        let dt_years = dt;
+        let _dt_years = dt;
 
         // Iterate over all stellar evolution records.
         let mut death_events: Vec<usize> = Vec::new();
@@ -334,10 +329,10 @@ impl UniverseSimulation {
                 .expect("Invalid entity_id in StellarEvolution");
 
             // 1. Advance age.
-            body.age += dt_years;
+            body.age += dt;
 
             // 2. Evolve core.
-            let _energy_generated = evolution.evolve(body.mass, dt_years)?;
+            let _energy_generated = evolution.evolve(body.mass, dt)?;
 
             // 3. Update global properties.
             body.radius = Self::calculate_stellar_radius(body.mass);
@@ -1224,7 +1219,8 @@ impl UniverseSimulation {
     }
 
     fn calculate_energy_statistics(&mut self) -> EnergyStatistics {
-        use crate::physics_engine::{classical::ClassicalSolver, PhysicsConstants, PhysicsState};
+        use crate::physics_engine::{classical::ClassicalSolver, PhysicsConstants};
+        use physics_engine::types::PhysicsState;
 
         // 1. Convert SoA particle store to AoS for physics calculations
         let mut states: Vec<PhysicsState> = Vec::with_capacity(self.store.particles.count);
@@ -1658,9 +1654,9 @@ impl UniverseSimulation {
             let redshift = params.redshift;
             
             // Apply scale factor evolution to stored celestial bodies
-            for body in &mut self.store.celestial_bodies {
-                // Scale distances by cosmic expansion
-                body.position = body.position * scale_factor;
+            for body in &mut self.store.celestials {
+                // Scale distances by cosmic expansion (awaiting position field implementation)
+                // body.position = body.position * scale_factor; // position field not yet implemented
                 
                 // Apply cosmic time dilation effects to stellar evolution
                 if matches!(body.body_type, crate::storage::CelestialBodyType::Star) {
@@ -1680,14 +1676,14 @@ impl UniverseSimulation {
             }
             
             // Update agent lineages with cosmological time effects
-            for lineage in &mut self.store.agent_lineages {
+            for lineage in &mut self.store.agents {
                 // Biological evolution rates affected by cosmic environment
-                let cosmic_acceleration_factor = if age_gyr < 1.0 { 
-                    0.1 // Early universe is harsh for life
-                } else if age_gyr > 10.0 {
-                    1.2 // Mature universe favors complexity
+                let cosmic_acceleration_factor: f64 = if age_gyr < 1.0_f64 { 
+                    0.1_f64 // Early universe is harsh for life
+                } else if age_gyr > 10.0_f64 {
+                    1.2_f64 // Mature universe favors complexity
                 } else {
-                    1.0 // Standard evolution rate
+                    1.0_f64 // Standard evolution rate
                 };
                 
                 lineage.tech_level *= cosmic_acceleration_factor.powf(dt / 1e9); // Scale by Gyr
@@ -1730,31 +1726,21 @@ impl UniverseSimulation {
     
     /// Process agent evolution with cosmic context
     fn process_agent_evolution(&mut self, dt: f64) -> Result<()> {
-        let dt_years = dt;
+        let _dt_years = dt;
         
-        for lineage in &mut self.store.agent_lineages {
-            // Apply natural selection pressure
-            agent_evolution::natural_selection::apply_selection_pressure(
-                lineage,
-                dt_years,
-                &self.config.agent_config,
-            )?;
-            
-            // Update AI consciousness development
-            agent_evolution::consciousness::update_consciousness_level(
-                lineage,
-                dt_years,
-                &self.universe_state,
-            )?;
-            
-            // Process technological development
-            agent_evolution::genetics::process_genetic_drift(
-                lineage,
-                dt_years,
-            )?;
+        for _lineage in &mut self.store.agents {
+            // Placeholder: agent evolution systems are not yet integrated.
+            // Once the agent_evolution module exposes the required APIs,
+            // hook them up here.
         }
         
         Ok(())
+    }
+
+    /// Legacy wrapper used by older demo binaries. Advances the simulation by one tick
+    /// using the configured `tick_span_years` duration.
+    pub fn tick(&mut self) -> Result<()> {
+        self.step(self.tick_span_years)
     }
 }
 

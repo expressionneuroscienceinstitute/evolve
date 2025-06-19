@@ -45,6 +45,10 @@ pub enum ParticleType {
     WMinus,
     Z,
     Gluon,
+    // Legacy aliases for compatibility with physics_engine
+    WBoson,
+    WBosonMinus,
+    ZBoson,
 
     // Scalar bosons
     Higgs,
@@ -52,6 +56,19 @@ pub enum ParticleType {
     // Composite particles
     Proton,
     Neutron,
+    Hydrogen,
+    Helium,
+    Carbon,
+    Nitrogen,
+    Oxygen,
+    Fluorine,
+    Silicon,
+    Phosphorus,
+    Sulfur,
+    Chlorine,
+    Bromine,
+    Iodine,
+    Iron,
 
     // Light mesons (π, K, η)
     PionPlus,
@@ -102,7 +119,7 @@ pub enum ParticleType {
     // Dark matter candidate
     DarkMatter,
     
-    Other(u32),
+    Other,
 }
 
 /// Individual fundamental particle

@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 physics_engine = { path = "../physics_engine" }
 diagnostics = { path = "../diagnostics" }
+agent_evolution = { path = "../agent_evolution" }
+log = "0.4"
 bevy_ecs = { workspace = true }
 rkyv = { workspace = true }
 serde = { workspace = true }

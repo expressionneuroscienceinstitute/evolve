@@ -6,9 +6,10 @@
 use physics_types::{FundamentalParticle, ParticleType, InteractionEvent, InteractionType, QuantumState};
 use anyhow::{Result, anyhow};
 use std::ffi::CString;
-use std::os::raw::{c_char, c_double, c_int, c_void};
+use std::os::raw::{c_int};
 use std::ptr;
 use nalgebra::Vector3;
+
 
 // If the `geant4` feature is enabled we rely on the automatically generated
 // bindings created by build.rs (OUT_DIR/geant4_bindings.rs). This avoids
@@ -18,7 +19,7 @@ use nalgebra::Vector3;
 #[cfg(feature = "geant4")]
 #[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 mod ffi {
-    use super::*; // re-export common imports so type names resolve
+
     include!(concat!(env!("OUT_DIR"), "/geant4_bindings.rs"));
 }
 
@@ -587,3 +588,8 @@ fn extract_secondary_particles(_data: &G4InteractionData) -> Vec<FundamentalPart
 // the `ffi` module above.
 // (The deleted hand-written structs were unconditional; with this cfg-gated
 // approach we avoid symbol collisions.) 
+
+#[cfg(feature = "geant4")]
+pub mod real_impl {
+    // ... existing code ...
+} 

@@ -50,7 +50,7 @@ use rand::distributions::Distribution;
 use rayon::prelude::*;
 use std::time::Instant;
 
-use self::nuclear_physics::StellarNucleosynthesis;
+use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
 // use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT, VACUUM_PERMITTIVITY};
 use physics_types as shared_types;
@@ -2896,8 +2896,7 @@ impl PhysicsEngine {
     }
     
     /// Simple local density estimator used by step-length heuristic.
-    #[cfg(FALSE)]
-    fn calculate_local_density(&self, _position: &Vector3<f64>) -> f64 {
+    fn calculate_local_density_legacy(&self, _position: &Vector3<f64>) -> f64 {
         // Placeholder: uniform density estimate to unblock compilation.
         if self.volume > 0.0 {
             self.particles.len() as f64 * self.get_particle_mass(ParticleType::Proton) / self.volume
@@ -2906,8 +2905,7 @@ impl PhysicsEngine {
         }
     }
 
-    #[cfg(FALSE)]
-    fn calculate_mm_region_energy(&self, atoms: &[crate::Atom]) -> Result<f64> {
+    fn calculate_mm_region_energy_legacy(&self, atoms: &[crate::Atom]) -> Result<f64> {
         // Estimate total quantum energy of the QM region.
         // --------------------------------------------------------------------
         // We combine two main energetic contributions that are readily
@@ -3801,20 +3799,10 @@ impl Drop for PhysicsEngine {
     }
 }
 
-#[cfg(any())]
-impl Default for ForceFieldParameters {
-    fn default() -> Self {
-        Self {
-            bond_parameters: HashMap::new(),
-            angle_parameters: HashMap::new(),
-            dihedral_parameters: HashMap::new(),
-            van_der_waals_parameters: HashMap::new(),
-        }
-    }
-}
+// NOTE: ForceFieldParameters::default() is now implemented in quantum_chemistry.rs
+// This duplicate implementation has been removed to avoid conflicts.
 
 /// Stopping power data for particles in materials
-#[cfg(any())]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoppingPowerTable {
     pub energies_mev: Vec<f64>,
@@ -3824,7 +3812,6 @@ pub struct StoppingPowerTable {
 }
 
 /// Nuclear decay data
-#[cfg(any())]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecayData {
     pub half_life_seconds: f64,
@@ -3834,7 +3821,6 @@ pub struct DecayData {
 }
 
 /// Material properties for particle interactions
-#[cfg(any())]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MaterialProperties {
     pub name: String,
@@ -3845,16 +3831,8 @@ pub struct MaterialProperties {
     pub nuclear_interaction_length_cm: f64,
 }
 
-#[cfg(FALSE)]
-impl crate::quantum_chemistry::BasisSet {
-    /// Return a minimal placeholder STO-3G basis set.
-    pub fn sto_3g() -> Self {
-        Self {
-            name: "STO-3G".to_string(),
-            atomic_number_to_shells: HashMap::new(),
-        }
-    }
-}
+// NOTE: BasisSet::sto_3g() is now implemented in quantum_chemistry.rs
+// This duplicate implementation has been removed to avoid conflicts.
 
 //-----------------------------------------------------------------------------//
 // Type conversions between internal representations and shared physics types  //

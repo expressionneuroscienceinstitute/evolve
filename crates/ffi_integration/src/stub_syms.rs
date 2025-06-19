@@ -5,7 +5,7 @@
 
 #![allow(non_camel_case_types)]
 
-use std::os::raw::{c_char, c_int, c_void};
+use std::os::raw::{c_int, c_void};
 
 // ---------------- ENDF ----------------
 #[no_mangle]

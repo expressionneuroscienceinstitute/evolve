@@ -5,17 +5,22 @@
 
 use anyhow::{Result, anyhow};
 use std::ffi::CString;
-use std::os::raw::{c_char, c_double, c_int};
+use std::os::raw::{c_int};
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
 // Include generated bindings when feature is enabled
 #[cfg(feature = "endf")]
 include!(concat!(env!("OUT_DIR"), "/endf_bindings.rs"));
 
 /// Safe Rust wrapper around ENDF functionality
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndfEngine {
-    data_loaded: bool,
-    available_isotopes: Vec<u32>,
+    pub cross_section_data: HashMap<(u32, u32), Vec<f64>>,
+    pub energy_grid: Vec<f64>,
+    pub data_loaded: bool,
+    pub available_isotopes: Vec<u32>,
+    #[allow(dead_code)]
     temperature_points: Vec<f64>,
 }
 
@@ -30,6 +35,8 @@ impl EndfEngine {
         }
         
         Ok(Self {
+            cross_section_data: HashMap::new(),
+            energy_grid: Vec::new(),
             data_loaded: false,
             available_isotopes: Vec::new(),
             temperature_points: Vec::new(),
@@ -270,13 +277,16 @@ pub struct ResonanceParameter {
 // ENDF MT reaction numbers (commonly used)
 const ENDF_MT_TOTAL: c_int = 1;
 const ENDF_MT_ELASTIC_SCATTERING: c_int = 2;
+#[allow(dead_code)]
 const ENDF_MT_NONELASTIC: c_int = 3;
 const ENDF_MT_FISSION: c_int = 18;
 const ENDF_MT_NEUTRON_ABSORPTION: c_int = 27;
 const ENDF_MT_NEUTRON_CAPTURE: c_int = 102;
+#[allow(dead_code)]
 const ENDF_MT_PROTON_CAPTURE: c_int = 103;
 
 // Physical constants
+#[allow(dead_code)]
 const BOLTZMANN_EV: f64 = 8.617333e-5; // Boltzmann constant in eV/K
 
 /// Check if ENDF library is available
@@ -320,6 +330,7 @@ pub fn cleanup() -> Result<()> {
 
 // Stub implementations when the native ENDF library is not linked
 #[cfg(not(feature = "endf"))]
+#[allow(dead_code)]
 unsafe fn endf_version() -> c_int { 0 }
 #[cfg(not(feature = "endf"))]
 unsafe fn endf_init() {}

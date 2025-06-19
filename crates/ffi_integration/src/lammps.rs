@@ -77,7 +77,7 @@ impl LammpsEngine {
             lammps_command(self.lammps_handle, atom_style_cmd.as_ptr());
             
             // Create atoms
-            for (_i, (pos, _vel, _mass, atom_type)) in atoms.iter().enumerate() {
+            for (pos, _vel, _mass, atom_type) in atoms.iter() {
                 let create_atom_cmd = CString::new(format!(
                     "create_atoms {} single {} {} {}",
                     atom_type, pos.x, pos.y, pos.z
@@ -148,9 +148,9 @@ impl LammpsEngine {
             
             // Extract trajectory data
             let mut states = Vec::new();
-            let positions = lammps_extract_atom(self.lammps_handle, "x\0".as_ptr() as *const c_char);
-            let velocities = lammps_extract_atom(self.lammps_handle, "v\0".as_ptr() as *const c_char);
-            let forces = lammps_extract_atom(self.lammps_handle, "f\0".as_ptr() as *const c_char);
+            let positions = lammps_extract_atom(self.lammps_handle, c"x".as_ptr());
+            let velocities = lammps_extract_atom(self.lammps_handle, c"v".as_ptr());
+            let forces = lammps_extract_atom(self.lammps_handle, c"f".as_ptr());
             
             if !positions.is_null() && !velocities.is_null() && !forces.is_null() {
                 let pos_array = positions as *const [f64; 3];
@@ -183,10 +183,10 @@ impl LammpsEngine {
         }
         
         unsafe {
-            let temp = lammps_extract_global(self.lammps_handle, "temp\0".as_ptr() as *const c_char);
-            let press = lammps_extract_global(self.lammps_handle, "press\0".as_ptr() as *const c_char);
-            let pe = lammps_extract_global(self.lammps_handle, "pe\0".as_ptr() as *const c_char);
-            let ke = lammps_extract_global(self.lammps_handle, "ke\0".as_ptr() as *const c_char);
+            let temp = lammps_extract_global(self.lammps_handle, c"temp".as_ptr());
+            let press = lammps_extract_global(self.lammps_handle, c"press".as_ptr());
+            let pe = lammps_extract_global(self.lammps_handle, c"pe".as_ptr());
+            let ke = lammps_extract_global(self.lammps_handle, c"ke".as_ptr());
             
             Ok(ThermodynamicState {
                 temperature: if !temp.is_null() { *(temp as *const f64) } else { 0.0 },
@@ -238,11 +238,9 @@ impl LammpsEngine {
         if self.lammps_handle.is_null() {
             return Err(anyhow!("LAMMPS not initialized"));
         }
-        unsafe {
-            // In real FFI we would call appropriate deletion commands.
-            // For stub we simply reset natoms counter.
-            self.natoms = 0;
-        }
+        // In real FFI we would call appropriate deletion commands.
+        // For stub we simply reset natoms counter.
+        self.natoms = 0;
         Ok(())
     }
 
@@ -284,9 +282,9 @@ impl LammpsEngine {
         }
         let mut states = Vec::new();
         unsafe {
-            let positions = lammps_extract_atom(self.lammps_handle, "x\0".as_ptr() as *const c_char);
-            let velocities = lammps_extract_atom(self.lammps_handle, "v\0".as_ptr() as *const c_char);
-            let forces = lammps_extract_atom(self.lammps_handle, "f\0".as_ptr() as *const c_char);
+            let positions = lammps_extract_atom(self.lammps_handle, c"x".as_ptr());
+            let velocities = lammps_extract_atom(self.lammps_handle, c"v".as_ptr());
+            let forces = lammps_extract_atom(self.lammps_handle, c"f".as_ptr());
             if !positions.is_null() && !velocities.is_null() && !forces.is_null() {
                 let pos_array = positions as *const [f64; 3];
                 let vel_array = velocities as *const [f64; 3];

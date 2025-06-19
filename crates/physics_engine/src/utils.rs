@@ -486,13 +486,16 @@ pub mod performance {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use nalgebra::Vector3;
+    use crate::{SPEED_OF_LIGHT, ELEMENTARY_CHARGE};
     
     #[test]
     fn test_relativistic_energy() {
         let momentum = Vector3::new(1e-21, 0.0, 0.0); // kg⋅m/s
         let mass = 9.109e-31; // electron mass in kg
         
-        let energy = math::calculate_relativistic_energy(&momentum, mass);
+        let energy = super::math::calculate_relativistic_energy(&momentum, mass);
         
         // Should be greater than rest mass energy
         let rest_energy = mass * SPEED_OF_LIGHT * SPEED_OF_LIGHT;
@@ -506,7 +509,7 @@ mod tests {
         let charge2 = -ELEMENTARY_CHARGE; // electron
         let distance = 5.29e-11; // Bohr radius
         
-        let force = physics::coulomb_force(charge1, charge2, distance);
+        let force = super::physics::coulomb_force(charge1, charge2, distance);
         
         // Should be negative (attractive) and reasonable magnitude
         assert!(force < 0.0);
@@ -518,22 +521,22 @@ mod tests {
     fn test_stellar_calculations() {
         let solar_mass = 1.0;
         
-        let radius = stellar::calculate_stellar_radius(solar_mass);
-        let luminosity = stellar::calculate_stellar_luminosity(solar_mass);
-        let temperature = stellar::calculate_stellar_temperature(solar_mass);
+        let radius = super::stellar::calculate_stellar_radius(solar_mass);
+        let luminosity = super::stellar::calculate_stellar_luminosity(solar_mass);
+        let temperature = super::stellar::calculate_stellar_temperature(solar_mass);
         
         // Solar values should be close to known constants
         assert!((radius / 6.96e8 - 1.0).abs() < 0.1); // Within 10% of solar radius
         assert!((temperature - 5778.0).abs() < 1000.0); // Within 1000K of solar temperature
         assert!(luminosity > 0.0);
         
-        let stellar_type = stellar::classify_stellar_type(temperature);
+        let stellar_type = super::stellar::classify_stellar_type(temperature);
         assert_eq!(stellar_type, "G"); // Sun is G-type
     }
     
     #[test]
     fn test_validation() {
-        use validation::*;
+        use super::validation::*;
         
         // Valid inputs should pass
         assert!(validate_positive_finite(1.0, "test").is_ok());
@@ -549,7 +552,7 @@ mod tests {
     
     #[test]
     fn test_unit_conversions() {
-        use math::*;
+        use super::math::*;
         
         // Temperature conversions
         assert!((celsius_to_kelvin(0.0) - 273.15).abs() < 1e-10);

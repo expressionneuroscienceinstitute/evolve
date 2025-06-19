@@ -16,6 +16,7 @@ pub mod emergent_properties;
 pub mod endf_data;
 // pub mod ffi; // TODO: Create this module
 pub mod geodynamics;
+pub mod general_relativity; // Externalised GR implementation
 pub mod interactions;
 pub mod molecular_dynamics;
 pub mod nuclear_physics;
@@ -2552,45 +2553,57 @@ impl PhysicsEngine {
     }
     #[allow(dead_code)]
     fn update_running_couplings(&mut self, _states: &mut [PhysicsState]) -> Result<()> {
-        // Leading–order QCD running of the strong coupling constant α_s(μ) and
-        // simple placeholder for electroweak couplings.
-        // ------------------------------------------------------------------
-        // We estimate a characteristic momentum-transfer scale μ from the
-        // average particle energy present in the simulation volume.  The
-        // conversion J→GeV uses the exact CODATA 2022 factor.
-        const J_PER_GEV: f64 = 1.602_176_634e-10;
+        // -------------------------------------------------------------------
+        // 1. Renormalisation scale Q taken as average thermal energy k_B T.
+        // -------------------------------------------------------------------
+        const J_PER_GEV: f64 = 1.602_176_634e-10; // exact CODATA 2022 factor
+        let q_gev = (BOLTZMANN * self.temperature / J_PER_GEV).max(1.0e-3); // ≥1 MeV
+        self.running_couplings.scale_gev = q_gev;
 
-        let avg_energy_j = if !self.particles.is_empty() {
-            self.particles.iter().map(|p| p.energy).sum::<f64>()
-                / self.particles.len() as f64
+        // -------------------------------------------------------------------
+        // 2. QED: one-loop running of α.
+        // -------------------------------------------------------------------
+        let alpha0 = FINE_STRUCTURE_CONSTANT;
+        let gev_per_kg = SPEED_OF_LIGHT * SPEED_OF_LIGHT / J_PER_GEV; // E=mc²
+        let lepton_masses_gev = [ELECTRON_MASS, MUON_MASS, TAU_MASS].map(|m| m * gev_per_kg);
+
+        let mut delta_alpha = 0.0;
+        for m in lepton_masses_gev {
+            if q_gev > m {
+                delta_alpha += (q_gev * q_gev / (m * m)).ln();
+            }
+        }
+
+        self.running_couplings.alpha_em = if delta_alpha > 0.0 {
+            let correction = (alpha0 / (3.0 * std::f64::consts::PI)) * delta_alpha;
+            alpha0 / (1.0 - correction)
         } else {
-            1.0 * J_PER_GEV // 1 GeV fallback when no particles are present
+            alpha0
         };
+        self.interaction_matrix
+            .set_electromagnetic_coupling(self.running_couplings.alpha_em);
 
-        let mu_gev = (avg_energy_j / J_PER_GEV).max(0.001); // avoid log(0)
+        // -------------------------------------------------------------------
+        // 3. QCD: one-loop running of αₛ.
+        // -------------------------------------------------------------------
+        const LAMBDA_QCD: f64 = 0.2; // GeV (MS-bar)
+        let n_f = if q_gev < 1.27 {
+            3.0 // u, d, s
+        } else if q_gev < 4.18 {
+            4.0 // + c
+        } else if q_gev < 173.0 {
+            5.0 // + b
+        } else {
+            6.0 // + t
+        };
+        let beta0 = 11.0 - (2.0 / 3.0) * n_f;
+        if q_gev > LAMBDA_QCD {
+            self.running_couplings.alpha_s =
+                4.0 * std::f64::consts::PI / (beta0 * (q_gev * q_gev / (LAMBDA_QCD * LAMBDA_QCD)).ln());
+        }
+        self.interaction_matrix
+            .set_strong_coupling(self.running_couplings.alpha_s);
 
-        // Determine number of active quark flavours at scale μ.
-        // PDG thresholds: c≈1.3 GeV, b≈4.2 GeV, t≈172 GeV.
-        let n_f = if mu_gev < 1.3 { 3.0 }
-        else if mu_gev < 4.2 { 4.0 }
-        else if mu_gev < 172.0 { 5.0 }
-        else { 6.0 };
-
-        // 1-loop β₀ coefficient   β₀ = (33 − 2n_f)/(12π)
-        let beta0 = (33.0 - 2.0 * n_f) / (12.0 * std::f64::consts::PI);
-
-        // Reference value α_s(M_Z) with M_Z = 91.1876 GeV (PDG 2022).
-        let alpha_s_mz = 0.1181;
-        let m_z = 91.1876; // GeV
-
-        // α_s(μ) = α_s(M_Z) / (1 + α_s(M_Z) β₀ ln(μ/M_Z))
-        let alpha_s = alpha_s_mz
-            / (1.0 + alpha_s_mz * beta0 * (mu_gev / m_z).ln()).max(1.0e-12);
-
-        // Update the interaction matrix so that downstream calculations pick
-        // up the running coupling.  Electromagnetic and weak couplings are
-        // held fixed at low-energy values for now.
-        self.interaction_matrix.set_strong_coupling(alpha_s);
         Ok(())
     }
     #[allow(dead_code)]
@@ -3172,10 +3185,27 @@ impl ParticleAccelerator {
     pub fn new() -> Self { Self }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct RunningCouplings;
+/// Energy-dependent coupling constants (one-loop running)
+///
+/// * `scale_gev`  – Renormalisation scale Q in GeV.
+/// * `alpha_em`   – Electromagnetic fine-structure constant α(Q).
+/// * `alpha_s`    – Strong coupling αₛ(Q) in the MS-bar scheme (one loop).
+#[derive(Debug, Clone, Copy)]
+pub struct RunningCouplings {
+    pub scale_gev: f64,
+    pub alpha_em: f64,
+    pub alpha_s: f64,
+}
+
 impl RunningCouplings {
-    pub fn new() -> Self { Self }
+    /// Initialise couplings at low energy (Q ≈ 0) using PDG 2024 values.
+    pub fn new() -> Self {
+        Self {
+            scale_gev: 0.0,
+            alpha_em: FINE_STRUCTURE_CONSTANT, // α(0) ≈ 1/137.035999084
+            alpha_s: 0.118,                    // α_s(M_Z) ≈ 0.118 – use as sensible default
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -3416,6 +3446,7 @@ pub enum MaterialType {
 
 /// General Relativity corrections for strong gravitational fields
 /// Based on PDF recommendation for hybrid gravity approach
+#[cfg(any())]
 pub mod general_relativity {
     
     

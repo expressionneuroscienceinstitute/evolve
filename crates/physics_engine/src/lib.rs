@@ -369,7 +369,7 @@ impl PhysicsEngine {
             nuclei: Vec::new(),
             atoms: Vec::new(),
             molecules: Vec::new(),
-            quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new()?,
+            quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new(),
             interaction_matrix: InteractionMatrix::new(),
             spacetime_grid: SpacetimeGrid::new(1000, 1e-15), // Femtometer scale
             quantum_vacuum: QuantumVacuum::new(),
@@ -393,7 +393,7 @@ impl PhysicsEngine {
             neutron_decay_count: 0,
             fusion_count: 0,
             fission_count: 0,
-            ffi_available: ffi_integration::LibraryStatus::detect(),
+            ffi_available: ffi_integration::check_library_status(),
             geant4_engine: None,
             lammps_engine: None,
             gadget_engine: None,
@@ -820,20 +820,22 @@ impl PhysicsEngine {
 
         // 3. Query for interactions
         for i in 0..self.particles.len() {
-            let p1 = &self.particles[i];
+            let p1_pos = self.particles[i].position;
+            let p1_type = self.particles[i].particle_type;
             // This should be based on the largest possible interaction range
             let interaction_range = 1e-14; 
-            let query_aabb = AABB::new(p1.position, Vector3::new(interaction_range, interaction_range, interaction_range));
+            let query_aabb = AABB::new(p1_pos, Vector3::new(interaction_range, interaction_range, interaction_range));
             
             let potential_neighbors = self.octree.query_range(&query_aabb);
 
             for &j in &potential_neighbors {
                 if i >= j { continue; }
 
-                let p2 = &self.particles[j];
-                let distance = (p1.position - p2.position).norm();
+                let p2_pos = self.particles[j].position;
+                let p2_type = self.particles[j].particle_type;
+                let distance = (p1_pos - p2_pos).norm();
                 
-                if distance < self.calculate_interaction_range(p1.particle_type, p2.particle_type) {
+                if distance < self.calculate_interaction_range(p1_type, p2_type) {
                     self.process_particle_pair_interaction(i, j, distance)?;
                 }
             }

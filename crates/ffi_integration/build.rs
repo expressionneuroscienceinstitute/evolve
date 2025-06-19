@@ -102,7 +102,7 @@ fn build_geant4_bindings() {
     cc::Build::new()
         .file("src/geant4_stubs.c")
         .flag("-std=c11")
-        .compile("geant4_stub");
+        .compile("geant4_wrapper");
     println!("cargo:warning=Using Geant4 stubs - build the real library with 'make' in the ffi_integration directory");
 }
 

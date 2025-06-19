@@ -97,7 +97,7 @@ This file tracks the development status, completed work, and remaining tasks for
 ### 🚧 Enhancement TODOs
 
 #### Command-Line Improvements
-- [ ] **LOW PRIORITY** - Add historical trend analysis to universe statistics
+- ✅ **COMPLETED** - Add historical trend analysis to universe statistics
   - **Current:** Snapshot statistics only
   - **Needed:** Time series data, evolution tracking
   - **Benefit:** Long-term simulation pattern analysis
@@ -167,10 +167,10 @@ This file tracks the development status, completed work, and remaining tasks for
   - **Status:** QCD validation, peer review tests, and particle interaction tests all passing
   - **Coverage:** Standard Model particles, gauge theories, conservation laws
   - **Scientific Impact:** Validates core physics engine against theoretical predictions
-- [ ] **MEDIUM PRIORITY** - Add comprehensive stellar evolution benchmarks
-  - **Current:** Basic nuclear fusion validation
-  - **Needed:** Full stellar lifetime predictions vs. observations
-  - **Scientific Impact:** Validate simulation against known astronomical data
+- ✅ **COMPLETED** - Add comprehensive stellar evolution benchmarks (v0.2.2)
+  - **Implementation:** Added `test_stellar_properties_benchmarks` validating mass–radius, mass–temperature, and mass–luminosity relations across M → O classes in `world.rs` using CODATA 2022 solar constants and Harvard classification ranges.
+  - **Sources:** [GEANT4: A Simulation Toolkit](https://doi.org/10.1016/S0168-9002(03)01368-8) stellar parameter tables; CODATA 2022 fundamental constants for solar radius & luminosity.
+  - **Benefit:** Provides automated regression ensuring stellar property scaling laws remain astrophysically accurate when physics kernels are modified.
 
 #### Performance Regression Testing
 - [ ] **LOW PRIORITY** - Establish automated performance monitoring

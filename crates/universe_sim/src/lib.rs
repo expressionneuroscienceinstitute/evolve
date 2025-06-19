@@ -15,6 +15,8 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::time::Instant;
 use uuid::Uuid;
+use serde::{Serialize, Deserialize};
+use std::collections::VecDeque;
 // use bevy_ecs::prelude::*; // Bevy ECS removed from core simulation logic
 
 pub mod config;
@@ -51,7 +53,12 @@ pub struct UniverseSimulation {
     pub config: config::SimulationConfig,      // Configuration
     pub diagnostics: DiagnosticsSystem,        // Performance monitoring
     pub physical_transitions: Vec<cosmic_era::PhysicalTransition>, // Record of major transitions
+    /// Historical simulation statistics recorded each tick (limited length)
+    pub stats_history: VecDeque<SimulationStats>,
 }
+
+/// Maximum number of historical statistics points to keep in memory
+const MAX_STATS_HISTORY: usize = 10_000;
 
 impl UniverseSimulation {
     /// Create a new universe simulation
@@ -71,6 +78,7 @@ impl UniverseSimulation {
             config,
             diagnostics: DiagnosticsSystem::new(),
             physical_transitions: Vec::new(),
+            stats_history: VecDeque::new(),
         })
     }
 
@@ -194,6 +202,9 @@ impl UniverseSimulation {
         // Record diagnostics
         self.diagnostics
             .record_universe_tick(tick_start.elapsed());
+
+        // Record high-level statistics for historical trend analysis
+        self.record_stats()?;
 
         Ok(())
     }
@@ -749,7 +760,7 @@ impl UniverseSimulation {
             average_temperature: energy_stats.average_temperature,
             energy_density: energy_stats.density,
             
-            // Chemical composition
+            // Chemical composition (by mass fraction)
             hydrogen_fraction: chemical_stats.hydrogen,
             helium_fraction: chemical_stats.helium,
             carbon_fraction: chemical_stats.carbon,
@@ -1445,22 +1456,7 @@ impl UniverseSimulation {
         const G: f64 = 6.67430e-11; // Gravitational constant (m³ kg⁻¹ s⁻²)
         const KM_PER_MPC: f64 = 3.0857e19; // Kilometers per Megaparsec
 
-        #[cfg(feature = "gadget")]
-        let (hubble_constant, omega_matter, omega_lambda) =
-            if let Some(gadget) = &self.physics_engine.gadget_engine {
-                let params = &gadget.cosmological_parameters;
-                (params.hubble_constant, params.omega_matter, params.omega_lambda)
-            } else {
-                // Fallback if gadget feature is on but engine not initialized
-                (70.0, 0.3, 0.7) 
-            };
-        
-        #[cfg(not(feature = "gadget"))]
-        let (hubble_constant, omega_matter, omega_lambda) = {
-            // Use simplified defaults or derive from config if not using GADGET
-            // For now, using standard ΛCDM model parameters as placeholders.
-            (70.0, 0.3, 0.7) // H₀ in km/s/Mpc, Ωm, ΩΛ
-        };
+        let (hubble_constant, omega_matter, omega_lambda) = (70.0, 0.3, 0.7);
         
         // Critical density: ρ_c = 3H₀² / (8πG)
         let h_si = hubble_constant * 1000.0 / KM_PER_MPC; // Convert H₀ to s⁻¹
@@ -1563,9 +1559,41 @@ impl UniverseSimulation {
     pub fn get_physics_engine(&self) -> &PhysicsEngine {
         &self.physics_engine
     }
+
+    /// Record current simulation statistics into rolling history for trend analysis.
+    fn record_stats(&mut self) -> Result<()> {
+        // Gather statistics using existing helper
+        let stats_snapshot = self.get_stats()?;
+        if self.stats_history.len() >= MAX_STATS_HISTORY {
+            self.stats_history.pop_front();
+        }
+        self.stats_history.push_back(stats_snapshot);
+        Ok(())
+    }
+
+    /// Export historical statistics as JSON array for RPC transmission.
+    pub fn get_stats_history_json(&self) -> Result<serde_json::Value> {
+        use serde_json::json;
+        let history_json: Vec<_> = self
+            .stats_history
+            .iter()
+            .map(|s| {
+                json!({
+                    "tick": s.current_tick,
+                    "age_gyr": s.universe_age_gyr,
+                    "star_count": s.star_count,
+                    "planet_count": s.planet_count,
+                    "total_particles": s.particle_count,
+                    "average_temperature": s.average_temperature,
+                })
+            })
+            .collect();
+        Ok(json!(history_json))
+    }
 }
 
 /// Simulation statistics
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SimulationStats {
     // Basic simulation metrics
     pub current_tick: u64,

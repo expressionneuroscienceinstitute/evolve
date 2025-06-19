@@ -69,6 +69,7 @@ pub fn load_checkpoint(path: &Path) -> Result<UniverseSimulation> {
         physical_transitions: serializable_universe.physical_transitions,
         config: serializable_universe.config,
         diagnostics: crate::DiagnosticsSystem::new(),
+        stats_history: std::collections::VecDeque::new(),
     };
 
     Ok(sim)

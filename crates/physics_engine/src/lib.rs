@@ -61,7 +61,7 @@ use physics_types as shared_types;
 pub use constants::*;
 
 // Add missing imports for constants and types
-use crate::constants::{SPEED_OF_LIGHT, GRAVITATIONAL_CONSTANT, ELECTRON_MASS, MUON_MASS, TAU_MASS};
+use crate::constants::{SPEED_OF_LIGHT, GRAVITATIONAL_CONSTANT, ELECTRON_MASS, MUON_MASS, TAU_MASS, C_SQUARED};
 use crate::general_relativity::{C, G, schwarzschild_radius};
 use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType};
 use crate::interaction_events::FusionReaction as FusionReactionEvent;
@@ -395,15 +395,15 @@ impl PhysicsEngine {
             atoms: Vec::new(),
             molecules: Vec::new(),
             quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new(),
-            interaction_matrix: interactions::InteractionMatrix::new(),
-            spacetime_grid: spatial::SpacetimeGrid::new(1000, 1e-15), // Femtometer scale
-            quantum_vacuum: quantum::QuantumVacuum::new(),
-            field_equations: quantum_fields::FieldEquations::new(),
-            particle_accelerator: particles::ParticleAccelerator::new(),
+            interaction_matrix: interactions::InteractionMatrix::default(),
+            spacetime_grid: spatial::SpacetimeGrid::default(),
+            quantum_vacuum: quantum::QuantumVacuum::default(),
+            field_equations: quantum_fields::FieldEquations::default(),
+            particle_accelerator: particles::ParticleAccelerator::default(),
             decay_channels: HashMap::new(),
             cross_sections: HashMap::new(),
-            running_couplings: quantum::RunningCouplings::new(),
-            symmetry_breaking: quantum::SymmetryBreaking::new(),
+            running_couplings: quantum::RunningCouplings::default(),
+            symmetry_breaking: quantum::SymmetryBreaking::default(),
             stellar_nucleosynthesis: StellarNucleosynthesis::new(),
             time_step: 1e-18, // default time step
             current_time: 0.0,
@@ -3181,110 +3181,129 @@ impl PhysicsEngine {
         Ok(total_energy_j)
     }
 
-    /// Apply cosmological expansion effects to fundamental particles
+    /// Apply comprehensive cosmological expansion effects following ΛCDM model with full Friedmann equations
     fn apply_cosmological_expansion_to_particles(&mut self, dt: f64) -> Result<()> {
         use crate::constants::{GRAVITATIONAL_CONSTANT, SPEED_OF_LIGHT};
-        use universe_sim::cosmic_era::cosmology::CosmologicalParameters;
+        use crate::gadget_gravity::CosmologicalParameters;
         
         // Create default cosmological parameters (Planck 2018 values)
         let params = CosmologicalParameters::default();
         
-        // For now, assume a fixed scale factor evolution for demonstration
-        // In a full implementation, this would be integrated from initial conditions
-        let current_age = self.current_time / (365.25 * 24.0 * 3600.0 * 1e9); // Convert to Gyr
-        let a = if current_age < 13.8 {
-            (current_age / 13.8).powf(2.0/3.0).max(0.001) // Matter-dominated approximation
-        } else {
-            1.0 // Present day
-        };
+        // Calculate current cosmic age and scale factor using proper ΛCDM evolution
+        let current_age_seconds = self.current_time;
+        let current_age_gyr = current_age_seconds / (365.25 * 24.0 * 3600.0 * 1e9);
+        
+        // Solve for scale factor a(t) using Friedmann equation for ΛCDM cosmology
+        let a = self.calculate_scale_factor_from_time(&params, current_age_seconds);
         
         // Convert H₀ to SI units (s⁻¹)
-        let h0_si = params.h0 * 1000.0 / 3.086e22;
+        let h0_si = params.hubble_constant * 1000.0 / 3.086e22;
         
-                 // Calculate Hubble parameter H(a) = H₀ * sqrt(Ωₘ/a³ + ΩΛ)
-         let omega_r = 9.24e-5; // Radiation density parameter
-         let hubble_parameter_si = h0_si * (
-             omega_r / a.powi(4) + 
-             params.omega_m / a.powi(3) + 
-             params.omega_lambda
-         ).sqrt();
-         
-         // Scale factor evolution: da/dt = H(a) * a
-         let daddt = hubble_parameter_si * a;
-         let expansion_rate = daddt / a; // H(t) in SI units
-         
-         // Apply Hubble flow and cosmological redshift to particles
-         for particle in &mut self.particles {
-             // Hubble flow: v_hubble = H * r
-             let hubble_velocity = particle.position * expansion_rate;
-             
-             // Add Hubble flow to particle velocity
-             particle.velocity += hubble_velocity * dt;
-             
-             // Apply cosmological redshift effects
-             match particle.particle_type {
-                 ParticleType::Photon => {
-                     // Photon energy redshift: E ∝ 1/a
-                     let energy_loss_rate = expansion_rate;
-                     particle.energy *= (1.0 - energy_loss_rate * dt).max(1e-100);
-                     
-                     // Update momentum to maintain E = pc for photons
-                     let p_magnitude = particle.energy / SPEED_OF_LIGHT;
-                     if particle.momentum.magnitude() > 1e-100 {
-                         particle.momentum = particle.momentum.normalize() * p_magnitude;
-                     }
-                 }
-                 
-                 // For massive particles: momentum redshift p ∝ 1/a
-                 _ => {
-                     // Momentum redshift
-                     particle.momentum *= (1.0 - expansion_rate * dt).max(0.01);
-                     
-                     // Update velocity and energy consistently
-                     let p_magnitude = particle.momentum.magnitude();
-                     if p_magnitude > 1e-100 && particle.mass > 1e-100 {
-                         // Relativistic energy-momentum relation
-                         let rest_energy = particle.mass * SPEED_OF_LIGHT * SPEED_OF_LIGHT;
-                         let total_energy = (rest_energy.powi(2) + (p_magnitude * SPEED_OF_LIGHT).powi(2)).sqrt();
-                         let gamma = total_energy / rest_energy;
-                         let velocity_magnitude = p_magnitude / (gamma * particle.mass);
-                         
-                         if particle.momentum.magnitude() > 1e-100 {
-                             particle.velocity = particle.momentum.normalize() * velocity_magnitude;
-                         }
-                         
-                         particle.energy = total_energy;
-                     }
-                 }
-             }
-         }
-         
-         // Update global physics parameters
-         self.volume *= (1.0 + expansion_rate * dt).powi(3); // V ∝ a³
-         self.temperature *= 1.0 - expansion_rate * dt; // T ∝ 1/a (adiabatic expansion)
-         
-         // Calculate and update energy density
-         let critical_density = 3.0 * hubble_parameter_si.powi(2) / (8.0 * std::f64::consts::PI * GRAVITATIONAL_CONSTANT);
-         
-         // Energy density components
-         let matter_density_scale = (1.0 - expansion_rate * dt).powi(3);
-         let radiation_density_scale = (1.0 - expansion_rate * dt).powi(4);
-         
-         let matter_energy_density = params.omega_m * critical_density * matter_density_scale;
-         let radiation_energy_density = omega_r * critical_density * radiation_density_scale;
-         let dark_energy_density = params.omega_lambda * critical_density; // Constant
-         
-         self.energy_density = matter_energy_density + radiation_energy_density + dark_energy_density;
-         
-         if self.current_time.rem_euclid(1e9) < dt {
-             log::debug!(
-                 "Cosmological expansion: age={:.2} Gyr, a={:.6}, H={:.2e} s⁻¹, T={:.1} K, ρ={:.2e} J/m³",
-                 current_age, a, hubble_parameter_si, self.temperature, self.energy_density
-             );
-         }
-         
-         Ok(())
-     }
+        // Calculate Hubble parameter H(a) = H₀ * E(a) where E(a) = sqrt(Ωᵣ/a⁴ + Ωₘ/a³ + Ωₖ/a² + ΩΛ)
+        let omega_r = 9.24e-5; // Radiation density parameter (photons + neutrinos)
+        let hubble_parameter_si = h0_si * (
+            omega_r / a.powi(4) + 
+            params.omega_matter / a.powi(3) + 
+            params.omega_lambda
+        ).sqrt();
+        
+        // Scale factor evolution rate: da/dt = H(a) * a
+        let daddt = hubble_parameter_si * a;
+        let expansion_rate = daddt / a; // H(t) in SI units
+        
+        // Apply comprehensive cosmological effects to all particles
+        for particle in &mut self.particles {
+            // Apply Hubble flow: v_hubble = H(t) * r
+            let hubble_velocity = particle.position * expansion_rate;
+            particle.velocity += hubble_velocity * dt;
+            
+            // Apply cosmological redshift effects based on particle type
+            match particle.particle_type {
+                ParticleType::Photon => {
+                    // Photons: energy redshift E ∝ 1/a, frequency redshift ν ∝ 1/a
+                    let energy_loss_rate = expansion_rate;
+                    particle.energy *= (1.0f64 - energy_loss_rate * dt).max(1e-100);
+                    
+                    // Maintain E = pc for massless photons
+                    let p_magnitude = particle.energy / SPEED_OF_LIGHT;
+                    if particle.momentum.magnitude() > 1e-100 {
+                        particle.momentum = particle.momentum.normalize() * p_magnitude;
+                    }
+                }
+                
+                // Massive particles: momentum redshift p ∝ 1/a, temperature cooling
+                _ => {
+                    // Momentum decreases as universe expands: p ∝ 1/a
+                    particle.momentum *= (1.0f64 - expansion_rate * dt).max(0.01);
+                    
+                    // Update kinetic energy and velocity using relativistic relations
+                    let p_magnitude = particle.momentum.magnitude();
+                    if p_magnitude > 1e-100 && particle.mass > 1e-100 {
+                        // Relativistic energy-momentum relation: E² = (pc)² + (mc²)²
+                        let rest_energy = particle.mass * C_SQUARED;
+                        let total_energy = (rest_energy.powi(2) + (p_magnitude * SPEED_OF_LIGHT).powi(2)).sqrt();
+                        let gamma = total_energy / rest_energy;
+                        let velocity_magnitude = p_magnitude / (gamma * particle.mass);
+                        
+                        // Update particle velocity maintaining momentum direction
+                        if particle.momentum.magnitude() > 1e-100 {
+                            particle.velocity = particle.momentum.normalize() * velocity_magnitude;
+                        }
+                        
+                        particle.energy = total_energy;
+                    }
+                }
+            }
+        }
+        
+        // Update global thermodynamic properties
+        self.volume *= (1.0f64 + expansion_rate * dt).powi(3); // Volume scales as a³
+        self.temperature *= 1.0 - expansion_rate * dt; // Adiabatic cooling: T ∝ 1/a
+        
+        // Calculate critical density and component energy densities
+        let critical_density = 3.0 * hubble_parameter_si.powi(2) / (8.0 * std::f64::consts::PI * GRAVITATIONAL_CONSTANT);
+        
+        // Energy density evolution for different components
+        let matter_density_scale = (1.0f64 - expansion_rate * dt).powi(3);     // ρₘ ∝ a⁻³
+        let radiation_density_scale = (1.0f64 - expansion_rate * dt).powi(4);   // ρᵣ ∝ a⁻⁴
+        
+        let matter_energy_density = params.omega_matter * critical_density * matter_density_scale;
+        let radiation_energy_density = omega_r * critical_density * radiation_density_scale;
+        let dark_energy_density = params.omega_lambda * critical_density; // Constant ρΛ
+        
+        self.energy_density = matter_energy_density + radiation_energy_density + dark_energy_density;
+        
+        // Log cosmological expansion status periodically
+        if self.current_time.rem_euclid(1e9) < dt {
+            log::debug!(
+                "Cosmological expansion: age={:.2} Gyr, a={:.6}, H={:.2e} s⁻¹, T={:.1} K, ρ={:.2e} J/m³",
+                current_age_gyr, a, hubble_parameter_si, self.temperature, self.energy_density
+            );
+        }
+        
+        Ok(())
+    }
+    
+    /// Calculate scale factor a(t) from cosmic time using ΛCDM model
+    fn calculate_scale_factor_from_time(&self, params: &crate::gadget_gravity::CosmologicalParameters, time_seconds: f64) -> f64 {
+        let h0_si = params.hubble_constant * 1000.0 / 3.086e22; // Convert to SI units
+        
+        if params.omega_lambda.abs() < 1e-6 {
+            // Matter-dominated universe: a(t) ∝ t^(2/3)
+            let t0 = 2.0 / (3.0 * h0_si); // Age at a=1
+            (time_seconds / t0).powf(2.0/3.0).max(0.001)
+        } else {
+            // ΛCDM universe with dark energy
+            let omega_m_over_lambda = params.omega_matter / params.omega_lambda;
+            let h_lambda = h0_si * params.omega_lambda.sqrt();
+            
+            // Parametric solution: t = (2/(3H_Λ)) * sinh⁻¹(√(Ω_Λ/Ω_m) * a^(3/2))
+            let x = 1.5 * h_lambda * time_seconds;
+            let y = x.sinh();
+            let a_cubed_half = y / omega_m_over_lambda.sqrt();
+            a_cubed_half.powf(2.0/3.0).max(0.001)
+        }
+    }
 }
     
     /// Check if object should use relativistic treatment
@@ -3374,6 +3393,21 @@ pub mod gadget_gravity {
         pub redshift: f64,             // z
         pub age_of_universe: f64,      // t in Gyr
         pub enable_expansion: bool,
+    }
+    
+    impl Default for CosmologicalParameters {
+        fn default() -> Self {
+            Self {
+                hubble_constant: 67.4,      // Planck 2018 value
+                omega_matter: 0.315,        // Matter density parameter
+                omega_lambda: 0.685,        // Dark energy density parameter
+                omega_baryon: 0.049,        // Baryon density parameter
+                scale_factor: 1.0,          // Present day
+                redshift: 0.0,              // Present day
+                age_of_universe: 13.8,      // Gyr
+                enable_expansion: true,
+            }
+        }
     }
     
     impl GadgetGravitySolver {

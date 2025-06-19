@@ -10,6 +10,7 @@ lammps = []
 gadget = []
 endf = []
 max-fidelity = ["geant4", "lammps", "gadget", "endf"]
+demo = []
 
 [dependencies]
 anyhow = { workspace = true }

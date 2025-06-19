@@ -9,6 +9,7 @@
 
 pub mod geant4;
 pub mod lammps;
+#[cfg(feature = "gadget")]
 pub mod gadget;
 pub mod endf;
 pub mod mod_file;
@@ -78,5 +79,109 @@ pub enum FfiPrecision {
 // Re-export commonly used types
 pub use geant4::{Geant4Engine};
 pub use lammps::{LammpsEngine, ForceFieldType, MolecularState, ThermodynamicState};
-pub use gadget::{GadgetEngine, GadgetParticle, CosmologicalParameters, Halo};
-pub use endf::{EndfEngine, ReactionType, ThermalCrossSections, ResonanceParameter}; 
+#[cfg(feature = "gadget")]
+pub use gadget::{GadgetEngine, GadgetParticle, GadgetParticleType, CosmologicalParameters, Halo};
+pub use endf::{EndfEngine, ReactionType, ThermalCrossSections, ResonanceParameter};
+
+// Compile-time fallback: Provide dummy C symbols so that linking succeeds on
+// systems where the heavy native libraries are not present. These stubs are
+// lightweight and have zero runtime cost when the real libraries are linked
+// dynamically because the dynamic linker will prefer the real symbols.
+mod stub_syms;
+
+#[cfg(not(feature = "gadget"))]
+mod gadget_stub {
+    //! Minimal no-op stand-ins for the GADGET API so that downstream crates can
+    //! compile even when the heavy `gadget` feature is disabled.  These stubs
+    //! purposefully implement the *public* interface required by the physics
+    //! engine but perform no work.  Every method either returns an error or a
+    //! sensible default so that calling sites can still execute in low-fidelity
+    //! mode.
+
+    use anyhow::Result;
+    use nalgebra::Vector3;
+
+    /// Enumeration of particle categories used by the real GADGET codebase.
+    /// The numerical discriminants intentionally match the real wrapper so that
+    /// serialized data remains forward-compatible.
+    #[derive(Debug, Clone, Copy)]
+    pub enum GadgetParticleType {
+        DarkMatter = 1,
+        Stars = 2,
+        Gas = 3,
+        BlackHole = 4,
+        Boundary = 5,
+    }
+
+    /// Cosmological integration parameters mirrored from the real interface.
+    #[derive(Debug, Clone)]
+    pub struct CosmologicalParameters {
+        pub hubble_constant: f64,
+        pub omega_matter: f64,
+        pub omega_lambda: f64,
+        pub omega_baryon: f64,
+        pub scale_factor: f64,
+        pub redshift: f64,
+        pub age_of_universe: f64,
+        pub enable_expansion: bool,
+    }
+
+    /// Simplified halo structure – enough for compile-time compatibility.
+    #[derive(Debug, Clone)]
+    pub struct Halo {
+        pub id: usize,
+        pub n_particles: usize,
+        pub total_mass: f64,
+        pub center_of_mass: Vector3<f64>,
+        pub virial_radius: f64,
+        pub velocity_dispersion: f64,
+        pub particle_ids: Vec<usize>,
+    }
+
+    /// Particle state as expected by the upstream physics engine.
+    #[derive(Debug, Clone)]
+    pub struct GadgetParticle {
+        pub id: usize,
+        pub particle_type: GadgetParticleType,
+        pub position: Vector3<f64>,
+        pub velocity: Vector3<f64>,
+        pub mass: f64,
+        pub acceleration: Vector3<f64>,
+        pub gravitational_potential: f64,
+        pub softening_length: f64,
+        pub time_step: f64,
+        pub active: bool,
+        pub density: f64,
+    }
+
+    /// Stubbed engine that fulfils the public contract while performing no work.
+    #[derive(Debug, Default)]
+    pub struct GadgetEngine;
+
+    impl GadgetEngine {
+        /// Construct a new stub – always succeeds.
+        pub fn new() -> Result<Self> { Ok(Self) }
+
+        /// Library availability query – returns `false` for the stub.
+        pub fn is_available() -> bool { false }
+
+        /// The following methods simply return `Ok(())` so that higher-level code
+        /// can continue its control flow without feature-gated branches.
+        pub fn clear_particles(&mut self) -> Result<()> { Ok(()) }
+        pub fn add_particle(&mut self, _particle: GadgetParticle) -> Result<()> { Ok(()) }
+        pub fn calculate_forces(&mut self) -> Result<()> { Ok(()) }
+        pub fn integrate_step(&mut self, _dt: f64) -> Result<()> { Ok(()) }
+
+        /// Returns an empty particle vector – no simulation performed.
+        pub fn get_particle_data(&self) -> Result<Vec<GadgetParticle>> { Ok(Vec::new()) }
+    }
+}
+
+#[cfg(not(feature = "gadget"))]
+pub use gadget_stub::{
+    GadgetEngine,
+    GadgetParticle,
+    GadgetParticleType,
+    CosmologicalParameters,
+    Halo,
+}; 

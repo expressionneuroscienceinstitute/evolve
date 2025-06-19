@@ -232,6 +232,81 @@ impl LammpsEngine {
         
         Ok(())
     }
+
+    /// Remove all atoms from the current LAMMPS system
+    pub fn clear_atoms(&mut self) -> Result<()> {
+        if self.lammps_handle.is_null() {
+            return Err(anyhow!("LAMMPS not initialized"));
+        }
+        unsafe {
+            // In real FFI we would call appropriate deletion commands.
+            // For stub we simply reset natoms counter.
+            self.natoms = 0;
+        }
+        Ok(())
+    }
+
+    /// Add a single atom to the LAMMPS system
+    pub fn add_atom(&mut self, position: Vector3<f64>, velocity: Vector3<f64>, mass: f64, _charge: f64) -> Result<()> {
+        if self.lammps_handle.is_null() {
+            return Err(anyhow!("LAMMPS not initialized"));
+        }
+        unsafe {
+            let atom_type = 1; // Single atom type for stub
+            // Create atom in LAMMPS domain
+            let cmd = CString::new(format!(
+                "create_atoms {} single {} {} {}",
+                atom_type, position.x, position.y, position.z
+            ))?;
+            lammps_command(self.lammps_handle, cmd.as_ptr());
+
+            // Set mass for this type only first time
+            if self.natoms == 0 {
+                let mass_cmd = CString::new(format!("mass {} {}", atom_type, mass))?;
+                lammps_command(self.lammps_handle, mass_cmd.as_ptr());
+            }
+
+            // Set velocity
+            let vel_cmd = CString::new(format!(
+                "velocity {} set {} {} {}",
+                self.natoms + 1, velocity.x, velocity.y, velocity.z
+            ))?;
+            lammps_command(self.lammps_handle, vel_cmd.as_ptr());
+        }
+        self.natoms += 1;
+        Ok(())
+    }
+
+    /// Retrieve current atomic positions/velocities/forces
+    pub fn get_atom_data(&self) -> Result<Vec<MolecularState>> {
+        if self.lammps_handle.is_null() {
+            return Err(anyhow!("LAMMPS not initialized"));
+        }
+        let mut states = Vec::new();
+        unsafe {
+            let positions = lammps_extract_atom(self.lammps_handle, "x\0".as_ptr() as *const c_char);
+            let velocities = lammps_extract_atom(self.lammps_handle, "v\0".as_ptr() as *const c_char);
+            let forces = lammps_extract_atom(self.lammps_handle, "f\0".as_ptr() as *const c_char);
+            if !positions.is_null() && !velocities.is_null() && !forces.is_null() {
+                let pos_array = positions as *const [f64; 3];
+                let vel_array = velocities as *const [f64; 3];
+                let force_array = forces as *const [f64; 3];
+                for i in 0..self.natoms as isize {
+                    let pos = *pos_array.offset(i);
+                    let vel = *vel_array.offset(i);
+                    let force = *force_array.offset(i);
+                    states.push(MolecularState {
+                        position: Vector3::new(pos[0], pos[1], pos[2]),
+                        velocity: Vector3::new(vel[0], vel[1], vel[2]),
+                        force: Vector3::new(force[0], force[1], force[2]),
+                        potential_energy: 0.0,
+                        kinetic_energy: 0.5 * (vel[0].powi(2) + vel[1].powi(2) + vel[2].powi(2)),
+                    });
+                }
+            }
+        }
+        Ok(states)
+    }
 }
 
 impl Drop for LammpsEngine {

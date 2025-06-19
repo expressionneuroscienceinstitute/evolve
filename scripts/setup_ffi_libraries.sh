@@ -9,6 +9,12 @@ INSTALL_PREFIX="/usr/local"
 BUILD_DIR="/tmp/evolve_ffi_build"
 THREADS=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
 
+# Desired library versions for version checks
+DESIRED_G4_VERSION="11.2.0"
+
+# Array to hold selected engines; if empty, install all
+SELECTED_ENGINES=()
+
 # Color output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -126,6 +132,15 @@ setup_build_env() {
     export FC=gfortran
     export CMAKE_BUILD_TYPE=Release
     export OMP_NUM_THREADS=$THREADS
+
+    # Append Homebrew include/lib paths if present
+    if command -v brew >/dev/null 2>&1; then
+        BREW_PREFIX=$(brew --prefix)
+        export CXXFLAGS="-I$BREW_PREFIX/include ${CXXFLAGS:-}"
+        export CFLAGS="-I$BREW_PREFIX/include ${CFLAGS:-}"
+        export LDFLAGS="-L$BREW_PREFIX/lib ${LDFLAGS:-}"
+        export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    fi
     
     log_success "Build environment ready"
 }
@@ -133,7 +148,20 @@ setup_build_env() {
 # Install Geant4
 install_geant4() {
     log_info "Installing Geant4..."
-    
+
+    # Detect existing Geant4 installation
+    if command -v geant4-config &> /dev/null; then
+        EXISTING_G4_VERSION=$(geant4-config --version)
+        log_success "Found existing Geant4 version $EXISTING_G4_VERSION"
+        # Compare with desired version
+        if [ "$(printf '%s\n' "$DESIRED_G4_VERSION" "$EXISTING_G4_VERSION" | sort -V | head -1)" = "$DESIRED_G4_VERSION" ]; then
+            log_info "Existing Geant4 >= required version, skipping build"
+            return 0
+        else
+            log_warning "Existing Geant4 version $EXISTING_G4_VERSION < required $DESIRED_G4_VERSION, proceeding to rebuild"
+        fi
+    fi
+
     cd "$BUILD_DIR"
     
     # Download Geant4
@@ -176,7 +204,18 @@ install_geant4() {
 # Install LAMMPS
 install_lammps() {
     log_info "Installing LAMMPS..."
-    
+
+    # Detect existing LAMMPS installation
+    if [ -n "$LAMMPS_DIR" ] && [ -d "$LAMMPS_DIR" ]; then
+        if compgen -G "$LAMMPS_DIR/bin/lmp*" > /dev/null; then
+            BINARY=$(ls "$LAMMPS_DIR"/bin/lmp* | head -n1)
+            EXISTING_LAMMPS_VERSION=$($BINARY -h | head -n1 | sed -E 's/.*\((.*)\).*/\1/')
+            log_success "Found existing LAMMPS version $EXISTING_LAMMPS_VERSION"
+            log_info "Skipping LAMMPS build"
+            return 0
+        fi
+    fi
+
     cd "$BUILD_DIR"
     
     # Clone LAMMPS
@@ -222,7 +261,14 @@ install_lammps() {
 # Install GADGET (Note: Requires manual download due to licensing)
 install_gadget() {
     log_info "Setting up GADGET..."
-    
+
+    # Detect existing GADGET installation
+    if [ -n "$GADGET_SRC" ] && [ -d "$GADGET_SRC" ]; then
+        log_success "Found existing GADGET at $GADGET_SRC"
+        log_info "Skipping GADGET installation"
+        return 0
+    fi
+
     GADGET_URL="https://www.h-its.org/2018/02/22/gadget-code/"
     
     log_warning "GADGET requires manual download due to licensing requirements"
@@ -247,53 +293,223 @@ install_gadget() {
         
         cd "$GADGET_DIR"
         
-        # Create FFI-compatible Makefile
-        if [ -f "Makefile.template" ]; then
-            cp Makefile.template Makefile
-            
-            # Configure for FFI usage
-            sed -i 's/^SYSTYPE=.*/SYSTYPE="Generic-gcc"/' Makefile
-            sed -i 's/^#DOUBLEPRECISION/DOUBLEPRECISION/' Makefile
-            echo "GADGET_FFI" >> Makefile
-            
-            # Build library version
-            make -j$THREADS
-            
-            # Install manually
+        # --- Ensure 'python' executable exists *before* any configure scripts ---
+        if ! command -v python >/dev/null 2>&1; then
+            if command -v python3 >/dev/null 2>&1; then
+                PY3=$(which python3)
+                ln -sf "$PY3" "$BUILD_DIR/gadget4/python"
+                export PATH="$BUILD_DIR/gadget4:$PATH"
+                log_info "Created temporary python symlink for buildsystem"
+            fi
+        fi
+
+        # --- Generate a clean Config.sh with Homebrew paths resolved ---
+        if command -v brew >/dev/null 2>&1; then
+            BREW_PREFIX=$(brew --prefix)
+        else
+            BREW_PREFIX="/usr/local"
+        fi
+
+        # Patch Makefile.gen.libs to use Homebrew paths
+        GEN_LIBS_FILE="buildsystem/Makefile.gen.libs"
+        if [ -f "$GEN_LIBS_FILE" ]; then
+            log_info "Patching $GEN_LIBS_FILE for Homebrew paths"
+            if sed --version >/dev/null 2>&1; then SEDI="sed -i"; else SEDI="sed -i ''"; fi
+            $SEDI "s|\$(LIB_DIR)/gsl/build/include|${BREW_PREFIX}/include|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/gsl/build/lib|${BREW_PREFIX}/lib|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/fftw3/build/include|${BREW_PREFIX}/include|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/fftw3/build/lib|${BREW_PREFIX}/lib|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/hdf5/build/include|${BREW_PREFIX}/include|g" $GEN_LIBS_FILE
+            $SEDI "s|\$(LIB_DIR)/hdf5/build/lib|${BREW_PREFIX}/lib|g" $GEN_LIBS_FILE
+        fi
+
+        cat > Config.sh <<EOF
+# Minimal Config.sh – compile-time macros only (no shell vars)
+# External libraries assumed to live in Homebrew prefix resolved during make
+
+SELFGRAVITY
+TREEPM_NOTIMESPLIT
+PERIODIC
+PMGRID=512
+DOUBLEPRECISION=1
+NTYPES=6
+EOF
+
+        log_info "Wrote Config.sh with Homebrew paths (${BREW_PREFIX})"
+
+        # Build with Homebrew env vars and Generic-gcc systype
+        log_info "Building GADGET-4 with Homebrew toolchain..."
+
+        env \
+            PYTHON=$(which python3) \
+            SYSTYPE="Generic-gcc" \
+            CPPFLAGS="-I${BREW_PREFIX}/include" \
+            CFLAGS="-I${BREW_PREFIX}/include" \
+            CXXFLAGS="-I${BREW_PREFIX}/include" \
+            LDFLAGS="-L${BREW_PREFIX}/lib" \
+            GSL_INCL="-I${BREW_PREFIX}/include" \
+            GSL_LIBS="-L${BREW_PREFIX}/lib -lgsl -lgslcblas" \
+            HDF5_INCL="-I${BREW_PREFIX}/include" \
+            HDF5_LIBS="-L${BREW_PREFIX}/lib -lhdf5 -lhdf5_cpp" \
+            FFTW_INCL="-I${BREW_PREFIX}/include" \
+            FFTW_LIBS="-L${BREW_PREFIX}/lib -lfftw3" \
+            make build -j$THREADS || { log_error "GADGET-4 build failed"; return 1; }
+        
+        # Install manually
+        $SUDO mkdir -p "$INSTALL_PREFIX/gadget"
+        $SUDO cp -r . "$INSTALL_PREFIX/gadget/"
+        
+        # Set environment variables
+        echo "export GADGET_SRC=$INSTALL_PREFIX/gadget" | $SUDO tee -a /etc/environment
+        export GADGET_SRC="$INSTALL_PREFIX/gadget"
+        
+        log_success "GADGET installed successfully"
+    else
+        log_info "GADGET tarball not found; cloning public repository instead..."
+        cd "$BUILD_DIR"
+        if [ ! -d "gadget4" ]; then
+            if git clone --depth 1 http://gitlab.mpcdf.mpg.de/vrs/gadget4.git gadget4; then
+                GADGET_DIR="gadget4"
+            else
+                log_warning "Failed to clone GADGET-4 repository. Skipping installation."
+                return 1
+            fi
+        else
+            GADGET_DIR="gadget4"
+            log_info "Found existing gadget4 directory; using it."
+        fi
+
+        cd "$GADGET_DIR"
+
+        # Generate default Config.sh and Makefile.systype if not present
+        if [ ! -f "Config.sh" ] && [ -f "Template-Config.sh" ]; then
+            cp Template-Config.sh Config.sh
+        fi
+        if [ ! -f "Makefile.systype" ] && [ -f "Template-Makefile.systype" ]; then
+            cp Template-Makefile.systype Makefile.systype
+            # Use portable sed in-place edit compatible with GNU and BSD
+            if sed --version >/dev/null 2>&1; then
+                sed -i 's/^SYSTYPE=.*/SYSTYPE="Generic-gcc"/' Makefile.systype
+            else
+                sed -i '' 's/^SYSTYPE=.*/SYSTYPE="Generic-gcc"/' Makefile.systype
+            fi
+        fi
+
+        # --------------------------------------------------------------
+        # Patch include/lib placeholders with Homebrew prefix so headers
+        # like gsl/gsl_math.h and hdf5.h are found.
+        # --------------------------------------------------------------
+        if command -v brew >/dev/null 2>&1; then
+            BREW_PREFIX=$(brew --prefix)
+
+            # Replace generic placeholder paths with actual brew include dirs
+            for HDR in hdf5 gsl fftw3; do
+                if [ -d "$BREW_PREFIX/include" ]; then
+                    # BSD/GNU sed compatibility
+                    if sed --version >/dev/null 2>&1; then
+                        sed -i "s|-I$HDR/build/include|-I$BREW_PREFIX/include|g" Makefile.systype
+                    else
+                        sed -i '' "s|-I$HDR\\/build\\/include|-I$BREW_PREFIX/include|g" Makefile.systype
+                    fi
+                fi
+            done
+
+            # Likewise patch library search paths
+            if sed --version >/dev/null 2>&1; then
+                sed -i "s|-L$HDR/build/lib|-L$BREW_PREFIX/lib|g" Makefile.systype
+            else
+                sed -i '' "s|-L$HDR\\/build\\/lib|-L$BREW_PREFIX/lib|g" Makefile.systype
+            fi
+        fi
+
+        # --------------------------------------------------------------
+        # Guarantee 'python' is resolvable during buildsystem/config.py
+        # --------------------------------------------------------------
+        if ! command -v python >/dev/null 2>&1; then
+            if command -v python3 >/dev/null 2>&1; then
+                PY3=$(which python3)
+                ln -sf "$PY3" "$BUILD_DIR/gadget4/python"
+                export PATH="$BUILD_DIR/gadget4:$PATH"
+                log_info "Temporarily symlinked python -> python3 for Gadget4 build"
+            fi
+        fi
+
+        # Ensure SYSTYPE env var so Makefile picks it up
+        export SYSTYPE="Generic-gcc"
+
+        # Attempt to build Gadget4 (single threaded if THREADS unset)
+        if make -j${THREADS:-4}; then
             $SUDO mkdir -p "$INSTALL_PREFIX/gadget"
             $SUDO cp -r . "$INSTALL_PREFIX/gadget/"
-            
-            # Set environment variables
             echo "export GADGET_SRC=$INSTALL_PREFIX/gadget" | $SUDO tee -a /etc/environment
             export GADGET_SRC="$INSTALL_PREFIX/gadget"
-            
-            log_success "GADGET installed successfully"
+            log_success "GADGET-4 installed successfully from git clone"
+            return 0
         else
-            log_error "Could not find Makefile.template in GADGET directory"
+            log_warning "GADGET-4 build failed; skipping installation."
             return 1
         fi
-    else
-        log_warning "GADGET tarball not found - skipping installation"
-        return 1
     fi
 }
 
 # Install ENDF data libraries
 install_endf() {
     log_info "Installing ENDF data libraries..."
-    
+
+    # If the project already contains ENDF data, reuse it to avoid downloads
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+    LOCAL_ENDF_DIR="$PROJECT_ROOT/endf-b-viii.0"
+
+    if [ -d "$LOCAL_ENDF_DIR" ]; then
+        log_info "Found local ENDF dataset at $LOCAL_ENDF_DIR — installing directly."
+        $SUDO mkdir -p "$INSTALL_PREFIX/endf/data"
+        $SUDO rsync -a "$LOCAL_ENDF_DIR/" "$INSTALL_PREFIX/endf/data/"
+
+        # Skip parser build if already installed
+        echo "export ENDF_LIB_DIR=$INSTALL_PREFIX/endf" | $SUDO tee -a /etc/environment
+        export ENDF_LIB_DIR="$INSTALL_PREFIX/endf"
+        log_success "ENDF data installed from local copy"
+        return 0
+    fi
+
     cd "$BUILD_DIR"
     
-    # Download ENDF/B-VIII.0 data
-    if [ ! -f "ENDF-B-VIII.0_neutrons.tar.gz" ]; then
-        log_info "Downloading ENDF/B-VIII.0 neutron data..."
-        wget https://www.nndc.bnl.gov/endf/b8.0/download/ENDF-B-VIII.0_neutrons.tar.gz
+    # Prefer newer GNDS zip of ENDF/B-VIII.1 if available
+    ENDF_ZIP="ENDF-B-VIII.1-GNDS.zip"
+    ENDF_URL="https://www.nndc.bnl.gov/endf-releases/releases/B-VIII.1/${ENDF_ZIP}"
+
+    if [ ! -f "$ENDF_ZIP" ]; then
+        log_info "Attempting to download ENDF/B-VIII.1 GNDS dataset..."
+        if ! curl -L -o "$ENDF_ZIP" "$ENDF_URL"; then
+            log_warning "ENDF/B-VIII.1 download failed. Falling back to ENDF/B-VIII.0 neutron tarball."
+            if [ ! -f "ENDF-B-VIII.0_neutrons.tar.gz" ]; then
+                log_info "Attempting to download ENDF/B-VIII.0 neutron data..."
+                if ! wget https://www.nndc.bnl.gov/endf/b8.0/download/ENDF-B-VIII.0_neutrons.tar.gz; then
+                    log_warning "ENDF data download failed again. Skipping ENDF installation."
+                    return 0
+                fi
+                ENDF_ARCHIVE="ENDF-B-VIII.0_neutrons.tar.gz"
+            else
+                ENDF_ARCHIVE="ENDF-B-VIII.0_neutrons.tar.gz"
+            fi
+        else
+            ENDF_ARCHIVE="$ENDF_ZIP"
+        fi
+    else
+        ENDF_ARCHIVE="$ENDF_ZIP"
     fi
-    
-    # Install data
+
+    # Determine extraction based on archive type
     $SUDO mkdir -p "$INSTALL_PREFIX/endf/data"
     cd "$INSTALL_PREFIX/endf/data"
-    $SUDO tar -xzf "$BUILD_DIR/ENDF-B-VIII.0_neutrons.tar.gz"
+    if [[ "$ENDF_ARCHIVE" == *.zip ]]; then
+        log_info "Extracting ENDF GNDS zip..."
+        $SUDO unzip -o "$BUILD_DIR/$ENDF_ARCHIVE"
+    else
+        log_info "Extracting ENDF neutron tarball..."
+        $SUDO tar -xzf "$BUILD_DIR/$ENDF_ARCHIVE"
+    fi
     
     # Clone and build ENDF parser
     cd "$BUILD_DIR"
@@ -449,7 +665,27 @@ cleanup() {
 # Main execution
 main() {
     log_info "Starting EVOLVE FFI library installation..."
-    log_info "This will install Geant4, LAMMPS, GADGET, and ENDF libraries"
+    # Determine which engines to install
+    if [ ${#SELECTED_ENGINES[@]} -gt 0 ]; then
+        DO_GEANT4=false
+        DO_LAMMPS=false
+        DO_GADGET=false
+        DO_ENDF=false
+        for engine in "${SELECTED_ENGINES[@]}"; do
+            case $engine in
+                geant4) DO_GEANT4=true ;; 
+                lammps) DO_LAMMPS=true ;; 
+                gadget) DO_GADGET=true ;; 
+                endf) DO_ENDF=true ;; 
+            esac
+        done
+    else
+        DO_GEANT4=true
+        DO_LAMMPS=true
+        DO_GADGET=true
+        DO_ENDF=true
+    fi
+
     log_info "Installation prefix: $INSTALL_PREFIX"
     log_info "Build directory: $BUILD_DIR"
     log_info "Using $THREADS threads for compilation"
@@ -457,12 +693,31 @@ main() {
     check_root
     install_dependencies
     setup_build_env
-    
+
     # Install libraries
-    install_geant4
-    install_lammps
-    install_gadget || log_warning "GADGET installation skipped"
-    install_endf
+    if $DO_GEANT4; then
+        install_geant4
+    else
+        log_info "Skipping Geant4 installation"
+    fi
+
+    if $DO_LAMMPS; then
+        install_lammps
+    else
+        log_info "Skipping LAMMPS installation"
+    fi
+
+    if $DO_GADGET; then
+        install_gadget || log_warning "GADGET installation skipped"
+    else
+        log_info "Skipping GADGET installation"
+    fi
+
+    if $DO_ENDF; then
+        install_endf
+    else
+        log_info "Skipping ENDF installation"
+    fi
     
     # Finalize installation
     create_ffi_wrappers
@@ -493,6 +748,22 @@ while [[ $# -gt 0 ]]; do
             THREADS="$2"
             shift 2
             ;;
+        --with-geant4)
+            SELECTED_ENGINES+=("geant4")
+            shift
+            ;;
+        --with-lammps)
+            SELECTED_ENGINES+=("lammps")
+            shift
+            ;;
+        --with-gadget)
+            SELECTED_ENGINES+=("gadget")
+            shift
+            ;;
+        --with-endf)
+            SELECTED_ENGINES+=("endf")
+            shift
+            ;;
         --no-cleanup)
             NO_CLEANUP=true
             shift
@@ -500,10 +771,14 @@ while [[ $# -gt 0 ]]; do
         --help)
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
-            echo "  --prefix DIR     Installation prefix (default: /usr/local)"
-            echo "  --threads N      Number of build threads (default: $(nproc))"
-            echo "  --no-cleanup     Don't remove build directory"
-            echo "  --help           Show this help message"
+            echo "  --prefix DIR         Installation prefix (default: /usr/local)"
+            echo "  --threads N          Number of build threads (default: $(nproc))"
+            echo "  --with-geant4        Install only Geant4"
+            echo "  --with-lammps        Install only LAMMPS"
+            echo "  --with-gadget        Install only GADGET"
+            echo "  --with-endf          Install only ENDF libraries"
+            echo "  --no-cleanup         Don't remove build directory"
+            echo "  --help               Show this help message"
             exit 0
             ;;
         *)

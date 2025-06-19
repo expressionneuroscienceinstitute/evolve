@@ -4,7 +4,6 @@
 //! self-modification capabilities, and natural selection pressures.
 //! Designed to be the most advanced AI evolution simulation ever created.
 
-use bevy_ecs::prelude::*;
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use uuid::Uuid;
@@ -23,7 +22,7 @@ pub mod self_modification;
 use ai_core::{AICore, SensoryInput, ActionType, AgentSensoryData};
 
 /// Main AI agent component with full autonomous decision-making
-#[derive(Debug, Clone, Component, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutonomousAgent {
     pub id: Uuid,
     pub generation: u32,
@@ -167,7 +166,7 @@ pub struct MemoryItem {
 }
 
 /// Natural selection pressure tracking
-#[derive(Debug, Clone, Component, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectionPressures {
     pub environmental_pressures: Vec<EnvironmentalPressure>,
     pub resource_competition: f64,
@@ -188,7 +187,7 @@ pub struct EnvironmentalPressure {
 }
 
 /// Comprehensive lineage tracking
-#[derive(Debug, Clone, Resource, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineageTracker {
     pub lineages: HashMap<Uuid, LineageData>,
     pub family_trees: HashMap<Uuid, FamilyTree>,
@@ -238,13 +237,13 @@ impl EvolutionEngine {
     /// Process agent decisions with full autonomous AI decision-making
     pub fn process_agent_decisions(
         &mut self,
-        agents: &mut Query<&mut AutonomousAgent>,
+        agents: &mut Vec<AutonomousAgent>,
         world_state: &dyn WorldState,
         current_tick: u64,
     ) -> Result<Vec<DecisionReport>> {
         let mut reports = Vec::new();
         
-        for mut agent in agents.iter_mut() {
+        for agent in agents.iter_mut() {
             // Agent makes autonomous decision
             let action = agent.make_decision(world_state, current_tick)?;
             
@@ -336,8 +335,8 @@ impl EvolutionEngine {
     /// Comprehensive evolution step with autonomous agents
     pub fn evolution_step(
         &mut self,
-        agents: &mut Query<&mut AutonomousAgent>,
-        selection_pressures: &Query<&SelectionPressures>,
+        agents: &mut Vec<AutonomousAgent>,
+        selection_pressures: &Vec<SelectionPressures>,
         world_state: &dyn WorldState,
         current_tick: u64,
     ) -> Result<EvolutionReport> {
@@ -386,7 +385,7 @@ impl EvolutionEngine {
     /// Process autonomous reproduction decisions
     fn process_reproduction(
         &self,
-        agents: &mut Query<&mut AutonomousAgent>,
+        agents: &mut Vec<AutonomousAgent>,
         _world_state: &dyn WorldState,
         _current_tick: u64,
     ) -> Result<ReproductionResults> {
@@ -548,10 +547,10 @@ pub struct ReproductionResults {
 // Update the existing EvolutionEngine methods to work with the new system
 impl MutationEngine {
     pub fn new() -> Self { Self }
-    pub fn apply_mutations(&mut self, agents: &mut Query<&mut AutonomousAgent>, _tick: u64) -> Result<MutationResults> {
+    pub fn apply_mutations(&mut self, agents: &mut Vec<AutonomousAgent>, _tick: u64) -> Result<MutationResults> {
         let mut mutation_count = 0;
         
-        for mut agent in agents.iter_mut() {
+        for agent in agents.iter_mut() {
             // Agents autonomously decide to mutate
             if agent.ai_core.neural_network.mutation_rate > thread_rng().gen::<f64>() {
                 agent.mutate();
@@ -572,8 +571,8 @@ impl SelectionEngine {
     pub fn new() -> Self { Self }
     pub fn apply_selection(
         &mut self,
-        agents: &mut Query<&mut AutonomousAgent>,
-        _pressures: &Query<&SelectionPressures>,
+        agents: &mut Vec<AutonomousAgent>,
+        _pressures: &Vec<SelectionPressures>,
         _world: &dyn WorldState,
     ) -> Result<SelectionResults> {
         let mut agent_fitnesses = Vec::new();
@@ -598,7 +597,7 @@ impl InnovationEngine {
     pub fn new() -> Self { Self }
     pub fn process_innovations(
         &mut self,
-        agents: &mut Query<&mut AutonomousAgent>,
+        agents: &mut Vec<AutonomousAgent>,
         _world: &dyn WorldState,
         _tick: u64,
     ) -> Result<InnovationResults> {
@@ -614,17 +613,17 @@ impl InnovationEngine {
             innovation_count,
             breakthrough_innovations: innovation_count / 10, // Major breakthroughs are rare
             incremental_improvements: innovation_count * 3,
-            average_tech_level: total_tech_progress / agents.iter().count() as f64,
+            average_tech_level: total_tech_progress / agents.len() as f64,
         })
     }
 }
 
 impl ConsciousnessTracker {
     pub fn new() -> Self { Self }
-    pub fn update_consciousness_levels(&mut self, agents: &mut Query<&mut AutonomousAgent>, _tick: u64) -> Result<ConsciousnessResults> {
+    pub fn update_consciousness_levels(&mut self, agents: &mut Vec<AutonomousAgent>, _tick: u64) -> Result<ConsciousnessResults> {
         let mut total_sentience = 0.0;
         let mut conscious_agents = 0;
-        let agent_count = agents.iter().count();
+        let agent_count = agents.len();
         
         for agent in agents.iter() {
             total_sentience += agent.sentience_level;
@@ -750,7 +749,7 @@ impl LineageTracker {
         }
     }
     
-    pub fn update_lineages(&mut self, _agents: &mut Query<&mut AutonomousAgent>, _tick: u64) -> Result<()> {
+    pub fn update_lineages(&mut self, _agents: &mut Vec<AutonomousAgent>, _tick: u64) -> Result<()> {
         Ok(())
     }
 }

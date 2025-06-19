@@ -316,33 +316,9 @@ pub fn cleanup() -> Result<()> {
     Ok(())
 }
 
-// Conditional compilation for FFI functions and stubs
-#[cfg(feature = "endf")]
-extern "C" {
-    fn endf_version() -> c_int;
-    fn endf_init();
-    fn endf_cleanup();
-    fn endf_load_library(path: *const c_char) -> c_int;
-    fn endf_get_n_isotopes() -> c_int;
-    fn endf_get_isotope_list(isotopes: *mut u32);
-    fn endf_set_temperature(temperature_k: c_double);
-    fn endf_get_cross_section(target_za: c_int, reaction_mt: c_int, energy_ev: c_double) -> c_double;
-    fn endf_get_q_value(target_za: c_int, reaction_mt: c_int) -> c_double;
-    fn endf_get_half_life(isotope_za: c_int) -> c_double;
-    fn endf_get_n_fission_products(fissile_za: c_int) -> c_int;
-    fn endf_get_fission_yields(
-        fissile_za: c_int, neutron_energy_ev: c_double, 
-        product_za: *mut u32, yields: *mut c_double
-    );
-    fn endf_get_n_resonances(isotope_za: c_int, energy_min_ev: c_double, energy_max_ev: c_double) -> c_int;
-    fn endf_get_resonance_data(
-        isotope_za: c_int, resonance_index: c_int,
-        energy_ev: *mut c_double, gamma_n: *mut c_double, 
-        gamma_gamma: *mut c_double, gamma_f: *mut c_double
-    );
-}
+// All real FFI symbols come from the automatically generated bindings 
 
-// Stub implementations when ENDF is not available
+// Stub implementations when the native ENDF library is not linked
 #[cfg(not(feature = "endf"))]
 unsafe fn endf_version() -> c_int { 0 }
 #[cfg(not(feature = "endf"))]
@@ -366,12 +342,8 @@ unsafe fn endf_get_half_life(_: c_int) -> c_double { 0.0 }
 #[cfg(not(feature = "endf"))]
 unsafe fn endf_get_n_fission_products(_: c_int) -> c_int { 0 }
 #[cfg(not(feature = "endf"))]
-unsafe fn endf_get_fission_yields(
-    _: c_int, _: c_double, _: *mut u32, _: *mut c_double
-) {}
+unsafe fn endf_get_fission_yields(_: c_int, _: c_double, _: *mut u32, _: *mut c_double) {}
 #[cfg(not(feature = "endf"))]
 unsafe fn endf_get_n_resonances(_: c_int, _: c_double, _: c_double) -> c_int { 0 }
 #[cfg(not(feature = "endf"))]
-unsafe fn endf_get_resonance_data(
-    _: c_int, _: c_int, _: *mut c_double, _: *mut c_double, _: *mut c_double, _: *mut c_double
-) {} 
+unsafe fn endf_get_resonance_data(_: c_int, _: c_int, _: *mut c_double, _: *mut c_double, _: *mut c_double, _: *mut c_double) {} 

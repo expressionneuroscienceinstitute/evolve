@@ -508,7 +508,7 @@ async fn cmd_start(
             }
         }
         
-        let stats = sim_guard.get_stats();
+        let stats = sim_guard.get_stats().unwrap();
 
         drop(sim_guard); // Release lock before sleeping
 
@@ -2506,7 +2506,7 @@ async fn handle_rpc_request(
     let response = match request.method.as_str() {
         "status" => {
             let mut sim_guard = shared_state.sim.lock().unwrap();
-            let stats = sim_guard.get_stats();
+            let stats = sim_guard.get_stats().unwrap();
 
             let save_file_age_sec = shared_state.last_save_time
                 .map(|save_time| save_time.elapsed().as_secs());
@@ -2541,7 +2541,7 @@ async fn handle_rpc_request(
                     let stats = {
                         let mut sim_guard = shared_state.sim.lock().unwrap();
                         match persistence::save_checkpoint(&mut *sim_guard, &params.path) {
-                            Ok(_) => sim_guard.get_stats(),
+                            Ok(_) => sim_guard.get_stats().unwrap(),
                             Err(e) => {
                                 let error = rpc::RpcError {
                                     code: rpc::INTERNAL_ERROR,
@@ -2836,7 +2836,7 @@ async fn handle_rpc_request(
 
         "universe_stats" => {
             let mut sim_guard = shared_state.sim.lock().unwrap();
-            let stats = sim_guard.get_stats();
+            let stats = sim_guard.get_stats().unwrap();
             let physics = &sim_guard.physics_engine;
             let average_temperature = physics.temperature;
             let total_energy = physics.energy_density * physics.volume;

@@ -30,6 +30,11 @@ pub mod validation;
 pub mod types;
 pub mod adaptive_mesh_refinement;
 
+// New refactored modules
+pub mod atomic_structures;
+pub mod interaction_events;
+pub mod particle_types;
+
 // Temporary compatibility layer for missing QC helpers
 // mod qc_compat;
 pub mod quantum_chemistry;
@@ -1057,6 +1062,13 @@ impl PhysicsEngine {
         self.particles[j].momentum += impulse_j;
         Ok(())
     }
+
+    /// Process strong interaction between quarks/gluons (fallback for when quantum-chemistry feature is disabled)
+    #[cfg(not(feature = "quantum-chemistry"))]
+    fn process_strong_interaction(&mut self, _i: usize, _j: usize, _distance: f64) -> Result<()> {
+        // No-op implementation when quantum chemistry features are disabled
+        Ok(())
+    }
     
     /// Process weak interaction 
     #[cfg(feature = "quantum-chemistry")]
@@ -1080,6 +1092,13 @@ impl PhysicsEngine {
             }
         }
         
+        Ok(())
+    }
+
+    /// Process weak interaction (fallback for when quantum-chemistry feature is disabled)
+    #[cfg(not(feature = "quantum-chemistry"))]
+    fn process_weak_interaction(&mut self, _i: usize, _j: usize, _distance: f64) -> Result<()> {
+        // No-op implementation when quantum chemistry features are disabled
         Ok(())
     }
     
@@ -2907,46 +2926,6 @@ impl PhysicsEngine {
         Ok(total_energy_j)
     }
 
-    fn calculate_mm_region_energy(&self, atoms: &[crate::Atom]) -> Result<f64> {
-        // Classical molecular-mechanics energy for a set of atoms.
-        // We account for:
-        // • Lennard-Jones 12-6 dispersion/repulsion (universal fallback values)
-        // • Coulomb interaction between partial charges derived from Z − e⁻.
-        //   (This is crude but guarantees charge conservation.)
-        use crate::constants::{ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY};
-        const SIGMA_DEFAULT: f64 = 3.5e-10;          // σ (m) – typical for small molecules
-        const EPSILON_DEFAULT: f64 = 0.2 * 4184.0;   // ε (J) – 0.2 kcal mol⁻¹ in Joules
-        const K_E: f64 = 1.0 / (4.0 * std::f64::consts::PI * VACUUM_PERMITTIVITY);
-
-        let mut total = 0.0_f64;
-
-        for i in 0..atoms.len() {
-            for j in (i + 1)..atoms.len() {
-                let r_vec = atoms[i].position - atoms[j].position;
-                let r = r_vec.norm();
-                if r < 1e-15 {
-                    // Prevent singularities for overlapping atoms – skip pair
-                    continue;
-                }
-
-                // 1) Lennard-Jones dispersion + repulsion
-                let sr6 = (SIGMA_DEFAULT / r).powi(6);
-                total += 4.0 * EPSILON_DEFAULT * (sr6 * sr6 - sr6);
-
-                // 2) Electrostatics using elementary point charges
-                let q_i = (atoms[i].nucleus.atomic_number as f64 - atoms[i].electrons.len() as f64)
-                    * ELEMENTARY_CHARGE;
-                let q_j = (atoms[j].nucleus.atomic_number as f64 - atoms[j].electrons.len() as f64)
-                    * ELEMENTARY_CHARGE;
-                if q_i.abs() > 0.0 && q_j.abs() > 0.0 {
-                    total += K_E * q_i * q_j / r;
-                }
-            }
-        }
-
-        Ok(total)
-    }
-
     fn calculate_qm_mm_interaction(&self, qm: &[crate::Atom], mm: &[crate::Atom]) -> Result<f64> {
         let interaction_energy = 0.0;
         for qm_atom in qm {
@@ -3927,20 +3906,4 @@ fn map_interaction_type(it: shared_types::InteractionType) -> InteractionType {
         shared_types::InteractionType::Annihilation => InteractionType::Annihilation,
         _ => InteractionType::ElectromagneticScattering,
     }
-}
-
-// --------------------------------------------------------------------------------
-// Fallback interaction handlers for builds without the heavy `quantum-chemistry`
-// feature. These NO-OP implementations satisfy unconditional calls made in the
-// interaction loop without pulling in additional dependencies.
-// --------------------------------------------------------------------------------
-#[cfg(not(feature = "quantum-chemistry"))]
-impl PhysicsEngine {
-    fn process_strong_interaction(&mut self, _i: usize, _j: usize, _distance: f64) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    fn process_weak_interaction(&mut self, _i: usize, _j: usize, _distance: f64) -> anyhow::Result<()> {
-            Ok(())
-        }
 }

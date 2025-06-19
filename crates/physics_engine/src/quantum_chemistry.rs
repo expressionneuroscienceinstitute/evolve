@@ -9,7 +9,11 @@ use std::f64::consts::PI;
 use rayon::prelude::*;
 use anyhow::{anyhow, ensure};
 use nalgebra::{Cholesky, SymmetricEigen};
-use crate::quantum_math::{double_factorial, boys_function};
+use crate::quantum_math::{
+    boys_function, gaussian_normalization, 
+    gaussian_product_center,
+    kinetic_integral_obara_saika, ObSaWorkspace
+};
 
 
 // Source: CRC Handbook of Chemistry and Physics, 91st ed.
@@ -707,8 +711,8 @@ impl QuantumChemistryEngine {
             // where T_pq is the integral over primitive gaussians.
             for (c1, &exp1) in bf_i.contraction.coefficients.iter().zip(&bf_i.contraction.exponents) {
                 for (c2, &exp2) in bf_j.contraction.coefficients.iter().zip(&bf_j.contraction.exponents) {
-                    let norm1 = normalization(exp1, &bf_i.angular_momentum);
-                    let norm2 = normalization(exp2, &bf_j.angular_momentum);
+                    let norm1 = gaussian_normalization(exp1, &bf_i.angular_momentum);
+                    let norm2 = gaussian_normalization(exp2, &bf_j.angular_momentum);
                     
                     integral += c1 * c2 * norm1 * norm2 * kinetic_integral(
                         exp1, bf_i.atom_center, &bf_i.angular_momentum,
@@ -788,9 +792,9 @@ impl QuantumChemistryEngine {
                 for (r_a, z_a) in &nuclei {
                     // Sum over primitives of μ and ν
                     for (c_p, &alpha_p) in bf_mu.contraction.coefficients.iter().zip(&bf_mu.contraction.exponents) {
-                        let norm_p = normalization(alpha_p, &(0, 0, 0));
+                        let norm_p = gaussian_normalization(alpha_p, &(0, 0, 0));
                         for (c_q, &alpha_q) in bf_nu.contraction.coefficients.iter().zip(&bf_nu.contraction.exponents) {
-                            let norm_q = normalization(alpha_q, &(0, 0, 0));
+                            let norm_q = gaussian_normalization(alpha_q, &(0, 0, 0));
 
                             let p = alpha_p + alpha_q;
 
@@ -1153,42 +1157,7 @@ impl Default for ForceFieldParameters {
     }
 }
 
-// === Helper Functions (scientifically validated implementations) ===
-
-/// Normalisation constant for a primitive Cartesian Gaussian basis function
-///  G(α,l,m,n,r) = (x-R_x)^l (y-R_y)^m (z-R_z)^n exp(-α|r-R|²).
-///
-/// The derivation follows Eq. (1) in T. Helgaker, P. Jørgensen and J. Olsen,
-/// "Molecular Electronic-Structure Theory", Wiley, 2000, chapter 9.
-///
-/// N = [ (2α/π)^{3/2} · (4α)^{ℓ}  /  ( (2l-1)!! (2m-1)!! (2n-1)!! ) ]^{1/2}
-/// with ℓ = l + m + n.
-#[inline]
-fn normalization(alpha: f64, ang: &(u32, u32, u32)) -> f64 {
-    use std::f64::consts::PI;
-
-    let (l, m, n) = *ang;
-    let l_i = l as i32;
-    let m_i = m as i32;
-    let n_i = n as i32;
-
-    let ell = (l + m + n) as i32;
-
-    // Compute the product of double factorials (2l-1)!! etc.
-    let df_l = double_factorial(2 * l_i - 1);
-    let df_m = double_factorial(2 * m_i - 1);
-    let df_n = double_factorial(2 * n_i - 1);
-
-    // (2α/π)^{3/2}
-    let prefactor = (2.0 * alpha / PI).powf(1.5);
-    // (4α)^ℓ
-    let angular_part = (4.0 * alpha).powi(ell);
-
-    // Complete expression under the square-root
-    let value = prefactor * angular_part / (df_l * df_m * df_n);
-
-    value.sqrt()
-}
+// === Helper Functions (using quantum_math module) ===
 
 /// Analytic integral of the kinetic-energy operator between two primitive
 /// Cartesian Gaussian basis functions.  The operator used is the non-relativistic
@@ -1214,69 +1183,59 @@ fn normalization(alpha: f64, ang: &(u32, u32, u32)) -> f64 {
 fn kinetic_integral(
     alpha1: f64,
     center1: Vector3<f64>,
-    _ang1: &(u32, u32, u32),
+    ang1: &(u32, u32, u32),
     alpha2: f64,
     center2: Vector3<f64>,
-    _ang2: &(u32, u32, u32),
+    ang2: &(u32, u32, u32),
 ) -> f64 {
-    use std::f64::consts::PI;
-
-    // For now we support s-type functions which are required by the current
-    // code-path.  A future enhancement ticket will extend this to arbitrary
-    // angular momentum using Obara–Saika recursion relations.
-
-    let r_ab2 = (center1 - center2).norm_squared();
-    let p = alpha1 + alpha2;
-
-    // Overlap integral S_ab
-    let s = (PI / p).powf(1.5) * (-(alpha1 * alpha2 / p) * r_ab2).exp();
-
-    // Kinetic energy integral for s-type Gaussian primitives
-    let reduced_exp = alpha1 * alpha2 / p;
-    let term = 3.0 - 2.0 * reduced_exp * r_ab2;
-    reduced_exp * term * s
+    // Use the new Obara-Saika implementation from quantum_math
+    let mut workspace = ObSaWorkspace::new(2);
+    kinetic_integral_obara_saika(alpha1, center1, *ang1, alpha2, center2, *ang2, &mut workspace)
 }
 
-#[inline]
-fn gaussian_product_center(
+/// Nuclear attraction integral between two Gaussian basis functions
+/// 
+/// Computes ∫ φᵢ(r) (-Z/|r-R_N|) φⱼ(r) dr where Z is the nuclear charge
+/// and R_N is the nuclear position.
+/// 
+/// Uses the Boys function for the fundamental integrals.
+fn nuclear_attraction_integral(
     alpha1: f64,
     center1: Vector3<f64>,
+    ang1: &(u32, u32, u32),
     alpha2: f64,
     center2: Vector3<f64>,
-) -> Vector3<f64> {
-    // Weighted average of the two centres
-    (alpha1 * center1 + alpha2 * center2) / (alpha1 + alpha2)
+    ang2: &(u32, u32, u32),
+    nuclear_charge: f64,
+    nuclear_center: Vector3<f64>,
+) -> f64 {
+    let (l1, m1, n1) = *ang1;
+    let (l2, m2, n2) = *ang2;
+    
+    // For s-type functions only (current implementation)
+    if l1 == 0 && m1 == 0 && n1 == 0 && l2 == 0 && m2 == 0 && n2 == 0 {
+        let gamma = alpha1 + alpha2;
+        let product_center = gaussian_product_center(alpha1, center1, alpha2, center2);
+        let rpc_squared = (product_center - nuclear_center).norm_squared();
+        
+        let prefactor = -nuclear_charge * 2.0 * PI / gamma;
+        let overlap_factor = (-(alpha1 * alpha2 / gamma) * (center1 - center2).norm_squared()).exp();
+        let boys_arg = gamma * rpc_squared;
+        
+        prefactor * overlap_factor * boys_function(0, boys_arg)
+    } else {
+        // Placeholder for higher angular momentum - would use Obara-Saika recursion
+        0.0
+    }
 }
 
-#[cfg(any())]
-#[inline]
-fn boys_function_0(_t: f64) -> f64 { 1.0 }
+
 
 // ----------------------------- Tests ---------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_double_factorial() {
-        assert_eq!(double_factorial(-1), 1.0); // convention
-        assert_eq!(double_factorial(0), 1.0);
-        assert_eq!(double_factorial(1), 1.0);
-        assert_eq!(double_factorial(2), 2.0);
-        assert_eq!(double_factorial(5), 15.0);
-    }
-
-    #[test]
-    fn test_normalization_s_gaussian() {
-        // For l = m = n = 0 the normalisation simplifies to (2α/π)^{3/4}
-        use std::f64::consts::PI;
-        let alpha = 0.5f64;
-        let expected = (2.0 * alpha / PI).powf(0.75);
-        let computed = normalization(alpha, &(0, 0, 0));
-        let rel_err = ((computed - expected) / expected).abs();
-        assert!(rel_err < 1e-12, "normalisation constant incorrect: rel_err = {}", rel_err);
-    }
 
     #[test]
     fn test_kinetic_integral_identical_centers() {
@@ -1288,5 +1247,27 @@ mod tests {
         let expected = 1.5 * alpha; // 3α/2 in atomic units
         let rel_err = ((t - expected) / expected).abs();
         assert!(rel_err < 1e-12, "kinetic integral incorrect: rel_err = {}", rel_err);
+    }
+    
+    #[test]
+    fn test_nuclear_attraction_integral() {
+        // Test nuclear attraction integral for two s-type Gaussians
+        let alpha1 = 1.0;
+        let center1 = Vector3::new(0.0, 0.0, 0.0);
+        let alpha2 = 1.0;
+        let center2 = Vector3::new(0.0, 0.0, 0.0);
+        let nuclear_charge = 1.0;
+        let nuclear_center = Vector3::new(0.0, 0.0, 0.0);
+        
+        let integral = nuclear_attraction_integral(
+            alpha1, center1, &(0, 0, 0),
+            alpha2, center2, &(0, 0, 0),
+            nuclear_charge, nuclear_center
+        );
+        
+        // For identical s-type Gaussians centered at the nucleus,
+        // the integral should be negative (attractive)
+        assert!(integral < 0.0, "Nuclear attraction integral should be negative");
+        assert!(integral.abs() > 1e-10, "Nuclear attraction integral should be non-zero");
     }
 } 

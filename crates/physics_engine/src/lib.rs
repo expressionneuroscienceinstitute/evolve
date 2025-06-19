@@ -30,6 +30,7 @@ pub mod validation;
 // Temporary compatibility layer for missing QC helpers
 // mod qc_compat;
 pub mod quantum_chemistry;
+pub mod quantum_math;
 
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
@@ -4064,9 +4065,12 @@ impl Drop for PhysicsEngine {
                 log::error!("Error cleaning up LAMMPS: {}", e);
             }
         }
-        if self.ffi_available.gadget_available {
-            if let Err(e) = ffi_integration::gadget::cleanup() {
-                log::error!("Error cleaning up GADGET: {}", e);
+        #[cfg(feature = "gadget")]
+        {
+            if self.ffi_available.gadget_available {
+                if let Err(e) = ffi_integration::gadget::cleanup() {
+                    log::error!("Error cleaning up GADGET: {}", e);
+                }
             }
         }
         if self.ffi_available.endf_available {

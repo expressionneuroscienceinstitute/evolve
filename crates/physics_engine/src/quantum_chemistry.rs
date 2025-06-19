@@ -9,6 +9,7 @@ use std::f64::consts::PI;
 use rayon::prelude::*;
 use anyhow::{anyhow, ensure};
 use nalgebra::{Cholesky, SymmetricEigen};
+use crate::quantum_math::{double_factorial, boys_function};
 
 
 // Source: CRC Handbook of Chemistry and Physics, 91st ed.
@@ -802,7 +803,7 @@ impl QuantumChemistryEngine {
 
                             // Boys function argument t = p |P - R_A|^2
                             let t = p * (p_center - *r_a).norm_squared();
-                            let boys = boys_function_0(t);
+                            let boys = boys_function(0, t);
 
                             let coeff = -z_a * 2.0 * PI / p;
 
@@ -1154,18 +1155,6 @@ impl Default for ForceFieldParameters {
 
 // === Helper Functions (scientifically validated implementations) ===
 
-/// Computes the double factorial n!! for non-negative integers.
-///
-/// By convention (-1)!! and 0!! are defined as 1.  This convention
-/// is required for the analytic formulas of Gaussian normalisation
-/// where (2ℓ-1)!! appears with ℓ = 0.
-fn double_factorial(n: i32) -> f64 {
-    if n <= 0 {
-        return 1.0;
-    }
-    (1..=n).rev().step_by(2).fold(1.0, |acc, v| acc * v as f64)
-}
-
 /// Normalisation constant for a primitive Cartesian Gaussian basis function
 ///  G(α,l,m,n,r) = (x-R_x)^l (y-R_y)^m (z-R_z)^n exp(-α|r-R|²).
 ///
@@ -1259,20 +1248,9 @@ fn gaussian_product_center(
     (alpha1 * center1 + alpha2 * center2) / (alpha1 + alpha2)
 }
 
-/// Boys function of order 0.
-///
-/// F_0(t) = 0.5 * √(π / t) · erf(√t)  for t > 1e-8.
-/// For small arguments the limit F_0(0) = 1 is used to avoid numerical
-/// instabilities.
+#[cfg(any())]
 #[inline]
-fn boys_function_0(t: f64) -> f64 {
-    use std::f64::consts::PI;
-    if t.abs() < 1e-8 {
-        1.0
-    } else {
-        0.5 * (PI / t).sqrt() * libm::erf(t.sqrt())
-    }
-}
+fn boys_function_0(_t: f64) -> f64 { 1.0 }
 
 // ----------------------------- Tests ---------------------------------
 

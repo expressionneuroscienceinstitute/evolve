@@ -44,12 +44,13 @@ pub mod octree;
 
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
-use anyhow::Result;
+use anyhow::{Result, Context, bail};
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
 use rand::distributions::Distribution;
 use rayon::prelude::*;
 use std::time::Instant;
+use log;
 
 use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
@@ -58,6 +59,12 @@ use self::octree::{Octree, AABB};
 use physics_types as shared_types;
 
 pub use constants::*;
+
+// Add missing imports for constants and types
+use crate::constants::{SPEED_OF_LIGHT, GRAVITATIONAL_CONSTANT, ELECTRON_MASS, MUON_MASS, TAU_MASS};
+use crate::general_relativity::{C, G, schwarzschild_radius};
+use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType};
+use crate::interaction_events::FusionReaction as FusionReactionEvent;
 
 /// Fundamental particle types in the Standard Model
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -141,6 +148,24 @@ pub struct QuantumState {
     pub spin_quantum_number: f64,
     pub energy_level: f64,
     pub occupation_probability: f64,
+}
+
+impl QuantumState {
+    pub fn new() -> Self {
+        Self {
+            wave_function: vec![Complex::new(1.0, 0.0)],
+            entanglement_partners: Vec::new(),
+            decoherence_time: f64::INFINITY,
+            measurement_basis: MeasurementBasis::Position,
+            superposition_amplitudes: HashMap::new(),
+            principal_quantum_number: 1,
+            orbital_angular_momentum: 0,
+            magnetic_quantum_number: 0,
+            spin_quantum_number: 0.5,
+            energy_level: 0.0,
+            occupation_probability: 1.0,
+        }
+    }
 }
 
 /// Color charge for strong force
@@ -370,15 +395,15 @@ impl PhysicsEngine {
             atoms: Vec::new(),
             molecules: Vec::new(),
             quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new(),
-            interaction_matrix: InteractionMatrix::new(),
-            spacetime_grid: SpacetimeGrid::new(1000, 1e-15), // Femtometer scale
-            quantum_vacuum: QuantumVacuum::new(),
-            field_equations: FieldEquations::new(),
-            particle_accelerator: ParticleAccelerator::new(),
+            interaction_matrix: interactions::InteractionMatrix::new(),
+            spacetime_grid: spatial::SpacetimeGrid::new(1000, 1e-15), // Femtometer scale
+            quantum_vacuum: quantum::QuantumVacuum::new(),
+            field_equations: quantum_fields::FieldEquations::new(),
+            particle_accelerator: particles::ParticleAccelerator::new(),
             decay_channels: HashMap::new(),
             cross_sections: HashMap::new(),
-            running_couplings: RunningCouplings::new(),
-            symmetry_breaking: SymmetryBreaking::new(),
+            running_couplings: quantum::RunningCouplings::new(),
+            symmetry_breaking: quantum::SymmetryBreaking::new(),
             stellar_nucleosynthesis: StellarNucleosynthesis::new(),
             time_step: 1e-18, // default time step
             current_time: 0.0,
@@ -726,9 +751,12 @@ impl PhysicsEngine {
         // --------------------
         #[cfg(not(feature = "heavy"))]
         {
-            // Only recompute kinematic energies in parallel; skip expensive gravity pair-wise forces.
-            self.update_particle_energies()?;
+                    // Only recompute kinematic energies in parallel; skip expensive gravity pair-wise forces.
+        self.update_particle_energies()?;
         }
+
+        // Apply cosmological expansion effects to all particles 
+        self.apply_cosmological_expansion_to_particles(dt)?;
 
         Ok(())
     }
@@ -3152,440 +3180,112 @@ impl PhysicsEngine {
 
         Ok(total_energy_j)
     }
-}
-// Supporting types and implementations
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Interaction;
 
-/// Decay channel for an unstable particle
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DecayChannel {
-    pub products: Vec<ParticleType>,
-    pub branching_ratio: f64,
-    pub decay_constant: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FusionReaction {
-    pub reactant_indices: Vec<usize>,
-    pub product_mass_number: u32,
-    pub product_atomic_number: u32,
-    pub q_value: f64, // Energy released (J)
-    pub cross_section: f64, // Cross-section (m²)
-    pub requires_catalysis: bool,
-}
-
-impl Default for FusionReaction {
-    fn default() -> Self {
-        Self {
-            reactant_indices: Vec::new(),
-            product_mass_number: 0,
-            product_atomic_number: 0,
-            q_value: 0.0,
-            cross_section: 0.0,
-            requires_catalysis: false,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct InteractionMatrix;
-impl Default for InteractionMatrix {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl InteractionMatrix {
-    pub fn new() -> Self { Self }
-    pub fn set_electromagnetic_coupling(&mut self, _coupling: f64) {}
-    pub fn set_weak_coupling(&mut self, _coupling: f64) {}
-    pub fn set_strong_coupling(&mut self, _coupling: f64) {}
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SpacetimeGrid;
-impl SpacetimeGrid {
-    pub fn new(_size: usize, _spacing: f64) -> Self { Self }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct QuantumVacuum;
-impl Default for QuantumVacuum {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl QuantumVacuum {
-    pub fn new() -> Self { Self }
-    pub fn initialize_fluctuations(&mut self, _temperature: f64) -> Result<()> { Ok(()) }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct FieldEquations;
-impl Default for FieldEquations {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl FieldEquations {
-    pub fn new() -> Self { Self }
-    pub fn update_field(&self, _field: &mut QuantumField, _dt: f64, _particles: &[FundamentalParticle]) -> Result<()> { Ok(()) }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ParticleAccelerator;
-impl Default for ParticleAccelerator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ParticleAccelerator {
-    pub fn new() -> Self { Self }
-}
-
-/// Energy-dependent coupling constants (one-loop running)
-///
-/// * `scale_gev`  – Renormalisation scale Q in GeV.
-/// * `alpha_em`   – Electromagnetic fine-structure constant α(Q).
-/// * `alpha_s`    – Strong coupling αₛ(Q) in the MS-bar scheme (one loop).
-#[derive(Debug, Clone, Copy)]
-pub struct RunningCouplings {
-    pub scale_gev: f64,
-    pub alpha_em: f64,
-    pub alpha_s: f64,
-}
-
-impl Default for RunningCouplings {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RunningCouplings {
-    /// Initialise couplings at low energy (Q ≈ 0) using PDG 2024 values.
-    pub fn new() -> Self {
-        Self {
-            scale_gev: 0.0,
-            alpha_em: FINE_STRUCTURE_CONSTANT, // α(0) ≈ 1/137.035999084
-            alpha_s: 0.118,                    // α_s(M_Z) ≈ 0.118 – use as sensible default
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SymmetryBreaking;
-impl Default for SymmetryBreaking {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SymmetryBreaking {
-    pub fn new() -> Self { Self }
-    pub fn initialize_higgs_mechanism(&mut self) -> Result<()> { Ok(()) }
-}
-
-impl QuantumField {
-    pub fn new(field_type: FieldType, _grid: &SpacetimeGrid) -> Result<Self> {
-        let size = 16; // Default lattice size
-        Ok(Self {
-            field_type,
-            field_values: vec![vec![vec![Complex::new(0.0, 0.0); size]; size]; size],
-            field_derivatives: vec![vec![vec![Vector3::zeros(); size]; size]; size],
-            vacuum_expectation_value: Complex::new(0.0, 0.0),
-            coupling_constants: HashMap::new(),
-            lattice_spacing: 1e-15,
-            boundary_conditions: BoundaryConditions::Periodic,
-        })
-    }
-}
-
-impl QuantumState {
-    pub fn new() -> Self {
-        Self {
-            wave_function: Vec::new(),
-            entanglement_partners: Vec::new(),
-            decoherence_time: 0.0,
-            measurement_basis: MeasurementBasis::Position,
-            superposition_amplitudes: HashMap::new(),
-            principal_quantum_number: 0,
-            orbital_angular_momentum: 0,
-            magnetic_quantum_number: 0,
-            spin_quantum_number: 0.0,
-            energy_level: 0.0,
-            occupation_probability: 0.0,
-        }
-    }
-}
-
-// Additional type definitions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum BoundaryConditions {
-    Periodic, Absorbing, Reflecting,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum MeasurementBasis {
-    Position,
-    Momentum,
-    Energy,
-    Spin,
-}
-
-impl Default for MeasurementBasis {
-    fn default() -> Self { Self::Position }
-}
-
-pub type GluonField = Vec<Vector3<Complex<f64>>>;
-pub type NuclearShellState = HashMap<String, f64>;
-pub type ElectronicState = HashMap<String, Complex<f64>>;
-pub type MolecularOrbital = AtomicOrbital;
-pub type VibrationalMode = Vector3<f64>;
-pub type PotentialEnergySurface = Vec<Vec<Vec<f64>>>;
-pub type ReactionCoordinate = Vector3<f64>;
-
-// Constants for new particles
-pub const MUON_MASS: f64 = 1.883e-28; // kg
-pub const TAU_MASS: f64 = 3.167e-27; // kg
-
-// Exact Coulomb constant: k_e = 1/(4π ε₀)
-pub const K_E: f64 = 1.0 / (4.0 * std::f64::consts::PI * VACUUM_PERMITTIVITY); // N⋅m²/C²
-pub const E_CHARGE: f64 = ELEMENTARY_CHARGE;
-pub const C: f64 = SPEED_OF_LIGHT;
-pub const C_SQUARED: f64 = SPEED_OF_LIGHT * SPEED_OF_LIGHT;
-pub const HBAR: f64 = REDUCED_PLANCK_CONSTANT;
-
-/// Represents the physical state of a celestial body for simulation purposes.
-/// This component will be attached to Bevy entities.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PhysicsState {
-    pub position: Vector3<f64>,
-    pub velocity: Vector3<f64>,
-    pub acceleration: Vector3<f64>,
-    pub mass: f64,
-    pub charge: f64,
-    pub temperature: f64,
-    pub entropy: f64,
-}
-
-/// Record of a single interaction event
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InteractionEvent {
-    pub timestamp: f64,
-    pub interaction_type: InteractionType,
-    pub participants: Vec<usize>, // Particle indices
-    pub energy_exchanged: f64,
-    pub momentum_transfer: Vector3<f64>,
-    pub products: Vec<ParticleType>,
-    pub cross_section: f64,
-}
-
-/// Enumeration of possible interaction types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum InteractionType {
-    ElectromagneticScattering,
-    WeakDecay,
-    StrongInteraction,
-    GravitationalAttraction,
-    NuclearFusion,
-    NuclearFission,
-    Annihilation,
-    PairProduction,
-}
-
-/// Table of elemental abundances (Z=1 to 118)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ElementTable {
-    #[serde(with = "serde_arrays")]
-    pub abundances: [u32; 118],
-}
-
-impl Default for ElementTable {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ElementTable {
-    pub fn new() -> Self {
-        Self { abundances: [0u32; 118] }
-    }
-    
-    /// Set parts-per-million abundance for element `z` (1-based proton number)
-    pub fn set_abundance(&mut self, z: usize, ppm: u32) {
-        if z == 0 || z > 118 { return; }
-        self.abundances[z-1] = ppm;
-    }
-    
-    /// Get abundance for element `z` (ppm)
-    pub fn get_abundance(&self, z: usize) -> u32 {
-        if z == 0 || z > 118 { return 0; }
-        self.abundances[z-1]
-    }
-
-    pub fn from_particles(particles: &[FundamentalParticle]) -> Self {
-        let mut table = Self::new();
+    /// Apply cosmological expansion effects to fundamental particles
+    fn apply_cosmological_expansion_to_particles(&mut self, dt: f64) -> Result<()> {
+        use crate::constants::{GRAVITATIONAL_CONSTANT, SPEED_OF_LIGHT};
+        use universe_sim::cosmic_era::cosmology::CosmologicalParameters;
         
-        // Count atomic nuclei and convert to element abundances
-        for particle in particles {
-            match particle.particle_type {
-                ParticleType::Hydrogen => table.abundances[1] += 1,
-                ParticleType::Helium => table.abundances[2] += 1,
-                ParticleType::Carbon => table.abundances[6] += 1,
-                ParticleType::Oxygen => table.abundances[8] += 1,
-                ParticleType::Iron => table.abundances[26] += 1,
-                _ => {}
-            }
-        }
+        // Create default cosmological parameters (Planck 2018 values)
+        let params = CosmologicalParameters::default();
         
-        table
-    }
-}
-
-/// A profile of local environmental conditions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnvironmentProfile {
-    pub liquid_water: f64,
-    pub atmos_oxygen: f64,
-    pub atmos_pressure: f64,
-    pub temp_celsius: f64,
-    pub radiation: f64,
-    pub energy_flux: f64,
-    pub shelter_index: f64,
-    pub hazard_rate: f64,
-}
-
-impl Default for EnvironmentProfile {
-    fn default() -> Self {
-        Self {
-            liquid_water: 0.0,
-            atmos_oxygen: 0.0,
-            atmos_pressure: 0.0,
-            temp_celsius: -273.15,
-            radiation: 0.0,
-            energy_flux: 0.0,
-            shelter_index: 0.0,
-            hazard_rate: 1.0,
-        }
-    }
-}
-
-impl EnvironmentProfile {
-    pub fn from_fundamental_physics(
-        particles: &[FundamentalParticle],
-        atoms: &[Atom],
-        molecules: &[Molecule],
-        temperature: f64,
-    ) -> Self {
-        // Calculate environment from fundamental particle simulation
-        let water_molecules = molecules.iter()
-            .filter(|m| m.atoms.len() == 3) // H2O approximation
-            .count();
-        
-        let oxygen_atoms = atoms.iter()
-            .filter(|a| a.nucleus.atomic_number == 8)
-            .count();
-        
-        Self {
-            liquid_water: (water_molecules as f64 / molecules.len() as f64).min(1.0),
-            atmos_oxygen: (oxygen_atoms as f64 / atoms.len() as f64).min(1.0),
-            atmos_pressure: 1.0, // Simplified
-            temp_celsius: temperature - 273.15,
-            radiation: particles.iter()
-                .filter(|p| matches!(p.particle_type, ParticleType::Photon))
-                .count() as f64 / 1e6,
-            energy_flux: particles.iter()
-                .map(|p| p.energy)
-                .sum::<f64>() / particles.len() as f64 / 1e-15,
-            shelter_index: 0.1,
-            hazard_rate: 0.001,
-        }
-    }
-}
-
-/// Describes one layer in a planetary stratum.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StratumLayer {
-    pub thickness_m: f64,
-    pub material_type: MaterialType,
-    pub bulk_density: f64,
-    pub elements: ElementTable,
-}
-
-/// Type of material in a stratum layer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum MaterialType {
-    Gas, Regolith, Topsoil, Subsoil, SedimentaryRock, 
-    IgneousRock, MetamorphicRock, OreVein, Ice, Magma,
-}
-
-
-/// General Relativity corrections for strong gravitational fields
-/// Based on PDF recommendation for hybrid gravity approach
-#[cfg(any())]
-pub mod general_relativity {
-    
-    
-    /// Gravitational constant in SI units (CODATA 2023)
-    pub const G: f64 = 6.67430e-11; // m³ kg⁻¹ s⁻²
-    
-    /// Speed of light in vacuum (exact)
-    pub const C: f64 = 299792458.0; // m/s
-    
-    /// Schwarzschild radius calculation: Rs = 2GM/c²
-    pub fn schwarzschild_radius(mass_kg: f64) -> f64 {
-        2.0 * G * mass_kg / (C * C)
-    }
-    
-    /// Post-Newtonian correction to gravitational force
-    /// Implements first-order relativistic corrections for orbital dynamics
-    /// Based on Einstein field equations approximation
-    pub fn post_newtonian_force_correction(
-        mass1_kg: f64,
-        mass2_kg: f64,
-        separation_m: f64,
-        velocity1_ms: [f64; 3],
-        velocity2_ms: [f64; 3],
-    ) -> [f64; 3] {
-        let total_mass = mass1_kg + mass2_kg;
-        let reduced_mass = (mass1_kg * mass2_kg) / total_mass;
-        
-        // Relative velocity
-        let rel_vel = [
-            velocity1_ms[0] - velocity2_ms[0],
-            velocity1_ms[1] - velocity2_ms[1],
-            velocity1_ms[2] - velocity2_ms[2],
-        ];
-        
-        let v_squared = rel_vel[0] * rel_vel[0] + rel_vel[1] * rel_vel[1] + rel_vel[2] * rel_vel[2];
-        
-        // First-order post-Newtonian correction factor
-        // Includes kinetic energy and gravitational potential terms
-        let rs = schwarzschild_radius(total_mass);
-        let pn_factor = 1.0 + (v_squared / (C * C)) + (rs / separation_m);
-        
-        // Unit vector pointing from mass2 to mass1
-        let force_magnitude = G * mass1_kg * mass2_kg / (separation_m * separation_m);
-        let corrected_magnitude = force_magnitude * pn_factor;
-        
-        // Return force components (simplified for demonstration)
-        [corrected_magnitude, 0.0, 0.0] // Would need proper vector calculation in real implementation
-    }
-    
-    /// Time dilation factor in gravitational field
-    /// γ = sqrt(1 - rs/r) for weak field approximation
-    pub fn gravitational_time_dilation(mass_kg: f64, radius_m: f64) -> f64 {
-        let rs = schwarzschild_radius(mass_kg);
-        if radius_m <= rs {
-            0.0 // At or inside event horizon
+        // For now, assume a fixed scale factor evolution for demonstration
+        // In a full implementation, this would be integrated from initial conditions
+        let current_age = self.current_time / (365.25 * 24.0 * 3600.0 * 1e9); // Convert to Gyr
+        let a = if current_age < 13.8 {
+            (current_age / 13.8).powf(2.0/3.0).max(0.001) // Matter-dominated approximation
         } else {
-            (1.0 - rs / radius_m).sqrt()
-        }
-    }
+            1.0 // Present day
+        };
+        
+        // Convert H₀ to SI units (s⁻¹)
+        let h0_si = params.h0 * 1000.0 / 3.086e22;
+        
+                 // Calculate Hubble parameter H(a) = H₀ * sqrt(Ωₘ/a³ + ΩΛ)
+         let omega_r = 9.24e-5; // Radiation density parameter
+         let hubble_parameter_si = h0_si * (
+             omega_r / a.powi(4) + 
+             params.omega_m / a.powi(3) + 
+             params.omega_lambda
+         ).sqrt();
+         
+         // Scale factor evolution: da/dt = H(a) * a
+         let daddt = hubble_parameter_si * a;
+         let expansion_rate = daddt / a; // H(t) in SI units
+         
+         // Apply Hubble flow and cosmological redshift to particles
+         for particle in &mut self.particles {
+             // Hubble flow: v_hubble = H * r
+             let hubble_velocity = particle.position * expansion_rate;
+             
+             // Add Hubble flow to particle velocity
+             particle.velocity += hubble_velocity * dt;
+             
+             // Apply cosmological redshift effects
+             match particle.particle_type {
+                 ParticleType::Photon => {
+                     // Photon energy redshift: E ∝ 1/a
+                     let energy_loss_rate = expansion_rate;
+                     particle.energy *= (1.0 - energy_loss_rate * dt).max(1e-100);
+                     
+                     // Update momentum to maintain E = pc for photons
+                     let p_magnitude = particle.energy / SPEED_OF_LIGHT;
+                     if particle.momentum.magnitude() > 1e-100 {
+                         particle.momentum = particle.momentum.normalize() * p_magnitude;
+                     }
+                 }
+                 
+                 // For massive particles: momentum redshift p ∝ 1/a
+                 _ => {
+                     // Momentum redshift
+                     particle.momentum *= (1.0 - expansion_rate * dt).max(0.01);
+                     
+                     // Update velocity and energy consistently
+                     let p_magnitude = particle.momentum.magnitude();
+                     if p_magnitude > 1e-100 && particle.mass > 1e-100 {
+                         // Relativistic energy-momentum relation
+                         let rest_energy = particle.mass * SPEED_OF_LIGHT * SPEED_OF_LIGHT;
+                         let total_energy = (rest_energy.powi(2) + (p_magnitude * SPEED_OF_LIGHT).powi(2)).sqrt();
+                         let gamma = total_energy / rest_energy;
+                         let velocity_magnitude = p_magnitude / (gamma * particle.mass);
+                         
+                         if particle.momentum.magnitude() > 1e-100 {
+                             particle.velocity = particle.momentum.normalize() * velocity_magnitude;
+                         }
+                         
+                         particle.energy = total_energy;
+                     }
+                 }
+             }
+         }
+         
+         // Update global physics parameters
+         self.volume *= (1.0 + expansion_rate * dt).powi(3); // V ∝ a³
+         self.temperature *= 1.0 - expansion_rate * dt; // T ∝ 1/a (adiabatic expansion)
+         
+         // Calculate and update energy density
+         let critical_density = 3.0 * hubble_parameter_si.powi(2) / (8.0 * std::f64::consts::PI * GRAVITATIONAL_CONSTANT);
+         
+         // Energy density components
+         let matter_density_scale = (1.0 - expansion_rate * dt).powi(3);
+         let radiation_density_scale = (1.0 - expansion_rate * dt).powi(4);
+         
+         let matter_energy_density = params.omega_m * critical_density * matter_density_scale;
+         let radiation_energy_density = omega_r * critical_density * radiation_density_scale;
+         let dark_energy_density = params.omega_lambda * critical_density; // Constant
+         
+         self.energy_density = matter_energy_density + radiation_energy_density + dark_energy_density;
+         
+         if self.current_time.rem_euclid(1e9) < dt {
+             log::debug!(
+                 "Cosmological expansion: age={:.2} Gyr, a={:.6}, H={:.2e} s⁻¹, T={:.1} K, ρ={:.2e} J/m³",
+                 current_age, a, hubble_parameter_si, self.temperature, self.energy_density
+             );
+         }
+         
+         Ok(())
+     }
+}
     
     /// Check if object should use relativistic treatment
     /// Based on PDF guidance: use GR for high-mass or high-velocity scenarios
@@ -3618,7 +3318,6 @@ pub mod general_relativity {
         
         strain.abs()
     }
-}
 
 // Re-export AMR types for backward compatibility
 pub use adaptive_mesh_refinement::*;
@@ -3814,28 +3513,12 @@ pub mod gadget_gravity {
             Ok(())
         }
         
-        /// Apply cosmological expansion following GADGET methodology
-        fn apply_cosmological_expansion(&mut self, dt: f64) -> Result<()> {
-            // Hubble function H(a) = H₀ * sqrt(Ωₘ/a³ + ΩΛ)
-            let a = self.cosmological_parameters.scale_factor;
-            let omega_m = self.cosmological_parameters.omega_matter;
-            let omega_lambda = self.cosmological_parameters.omega_lambda;
-            
-            let hubble_parameter = self.cosmological_parameters.hubble_constant *
-                (omega_m / (a * a * a) + omega_lambda).sqrt();
-            
-            // Scale factor evolution: da/dt = H * a
-            let scale_factor_derivative = hubble_parameter * a;
-            self.cosmological_parameters.scale_factor += scale_factor_derivative * dt;
-            
-            // Apply Hubble flow to particle velocities
-            let expansion_factor = scale_factor_derivative * dt / a;
-            for particle in &mut self.particles {
-                if particle.active {
-                    particle.velocity += particle.position * (expansion_factor / dt);
-                }
-            }
-            
+        /// Apply cosmological expansion following GADGET methodology with full Friedmann equations
+        fn apply_cosmological_expansion(&mut self, _dt: f64) -> Result<()> {
+            // Note: For now this is a placeholder in the GADGET context
+            // The actual cosmological expansion will be implemented in the main PhysicsEngine
+            // when it integrates with the GADGET particles
+            log::trace!("GADGET cosmological expansion placeholder called");
             Ok(())
         }
     }

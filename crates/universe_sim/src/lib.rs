@@ -13,11 +13,15 @@ use physics_engine::{
 };
 use rand::Rng;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::collections::VecDeque;
-// use bevy_ecs::prelude::*; // Bevy ECS removed from core simulation logic
+use serde_json::{json, Value};
+use crate::config::Config;
+use crate::storage::{Storage, AgentLineage, CelestialBody, CelestialBodyType};
+use crate::cosmic_era::{UniverseState, PhysicalTransition, TransitionType};
+use agent_evolution::AgentConfig;
 
 pub mod config;
 pub mod cosmic_era;
@@ -27,7 +31,7 @@ pub mod storage;
 pub mod world;
 
 pub use physics_engine;
-pub use storage::{AgentLineage, CelestialBody, CelestialBodyType, PlanetClass, StellarEvolution, StellarPhase, Store, ParticleStore};
+pub use storage::{CelestialBodyType, PlanetClass, StellarEvolution, StellarPhase, Store, ParticleStore};
 
 /// Calculate relativistic total energy from momentum and mass
 /// E = sqrt((pc)^2 + (mc^2)^2) where c = speed of light
@@ -55,10 +59,56 @@ pub struct UniverseSimulation {
     pub physical_transitions: Vec<cosmic_era::PhysicalTransition>, // Record of major transitions
     /// Historical simulation statistics recorded each tick (limited length)
     pub stats_history: VecDeque<SimulationStats>,
+    pub performance_stats: PerformanceStats,
 }
 
 /// Maximum number of historical statistics points to keep in memory
 const MAX_STATS_HISTORY: usize = 10_000;
+
+/// Performance tracking for simulation steps
+#[derive(Debug, Default)]
+pub struct PerformanceStats {
+    step_times: VecDeque<Duration>,
+    max_history: usize,
+}
+
+impl PerformanceStats {
+    pub fn new() -> Self {
+        Self {
+            step_times: VecDeque::new(),
+            max_history: 1000,
+        }
+    }
+    
+    pub fn add_step_time(&mut self, duration: Duration) {
+        self.step_times.push_back(duration);
+        if self.step_times.len() > self.max_history {
+            self.step_times.pop_front();
+        }
+    }
+    
+    pub fn average_step_time(&self) -> Duration {
+        if self.step_times.is_empty() {
+            Duration::from_secs(0)
+        } else {
+            let total: Duration = self.step_times.iter().sum();
+            total / self.step_times.len() as u32
+        }
+    }
+}
+
+/// Cosmological parameters for universe expansion
+#[derive(Debug, Clone)]
+pub struct CosmologicalParameters {
+    pub hubble_constant: f64,      // H₀ in km/s/Mpc
+    pub omega_matter: f64,         // Ωₘ
+    pub omega_lambda: f64,         // ΩΛ
+    pub omega_baryon: f64,         // Ωᵦ
+    pub scale_factor: f64,         // a(t)
+    pub redshift: f64,             // z
+    pub age_of_universe: f64,      // t in Gyr
+    pub enable_expansion: bool,
+}
 
 impl UniverseSimulation {
     /// Create a new universe simulation
@@ -79,6 +129,7 @@ impl UniverseSimulation {
             diagnostics: DiagnosticsSystem::new(),
             physical_transitions: Vec::new(),
             stats_history: VecDeque::new(),
+            performance_stats: PerformanceStats::default(),
         })
     }
 
@@ -180,32 +231,37 @@ impl UniverseSimulation {
     }
 
     /// Main simulation tick
-    pub fn tick(&mut self) -> Result<()> {
-        let tick_start = Instant::now();
+    pub fn step(&mut self, dt: f64) -> Result<()> {
+        // Increment tick counter
         self.current_tick += 1;
-
-        // 1. Update universe physical state (age, temperature, density)
+        
+        // Track performance
+        let start_time = std::time::Instant::now();
+        
+        // Run physics simulation step
+        self.physics_engine.step(dt)?;
+        
+        // Update cosmic state from simulation results
         self.update_universe_state()?;
-
-        // 2. Update physics simulation (interactions, gravity, etc.)
-        self.update_physics()?;
-
-        // 3. Update cosmic-scale processes (star formation, etc.)
-        self.update_cosmic_processes()?;
-
-        // 4. Update agent evolution
-        self.update_agent_evolution()?;
-
-        // 5. Victory conditions check
-        self.check_victory_conditions()?;
-
-        // Record diagnostics
-        self.diagnostics
-            .record_universe_tick(tick_start.elapsed());
-
-        // Record high-level statistics for historical trend analysis
-        self.record_stats()?;
-
+        
+        // Process stellar evolution
+        self.process_stellar_evolution(dt)?;
+        
+        // Process agent evolution on habitable worlds
+        self.process_agent_evolution(dt)?;
+        
+        // Apply cosmological expansion effects to universe-scale properties
+        self.apply_cosmological_effects(dt)?;
+        
+        // Update persistence layer
+        if self.current_tick % self.config.save_interval == 0 {
+            self.save_state()?;
+        }
+        
+        // Track performance
+        let step_duration = start_time.elapsed();
+        self.performance_stats.add_step_time(step_duration);
+        
         Ok(())
     }
 
@@ -263,8 +319,8 @@ impl UniverseSimulation {
     }
 
     /// Process stellar evolution based on nuclear burning
-    fn process_stellar_evolution(&mut self) -> Result<()> {
-        let dt_years = self.tick_span_years;
+    fn process_stellar_evolution(&mut self, dt: f64) -> Result<()> {
+        let dt_years = dt;
 
         // Iterate over all stellar evolution records.
         let mut death_events: Vec<usize> = Vec::new();
@@ -1589,6 +1645,116 @@ impl UniverseSimulation {
             })
             .collect();
         Ok(json!(history_json))
+    }
+
+    /// Apply cosmological expansion effects to universe-scale properties
+    fn apply_cosmological_effects(&mut self, dt: f64) -> Result<()> {
+        // Get current cosmological parameters from physics engine
+        if let Some(ref params) = self.get_cosmological_parameters() {
+            // Update universe state with cosmological expansion
+            let age_gyr = params.age_of_universe;
+            let hubble_constant = params.hubble_constant;
+            let scale_factor = params.scale_factor;
+            let redshift = params.redshift;
+            
+            // Apply scale factor evolution to stored celestial bodies
+            for body in &mut self.store.celestial_bodies {
+                // Scale distances by cosmic expansion
+                body.position = body.position * scale_factor;
+                
+                // Apply cosmic time dilation effects to stellar evolution
+                if matches!(body.body_type, crate::storage::CelestialBodyType::Star) {
+                    // Stellar time scales with cosmic time
+                    body.age *= (1.0 + redshift).recip();
+                }
+                
+                // Update cosmic microwave background temperature
+                // T_CMB = T_0 * (1 + z) where T_0 = 2.7 K today
+                let cmb_temperature = 2.725 * (1.0 + redshift);
+                
+                // For planets, add CMB contribution to background temperature
+                if matches!(body.body_type, crate::storage::CelestialBodyType::Planet) {
+                    // Don't let CMB dominate for young universe scenarios
+                    body.temperature = body.temperature.max(cmb_temperature * 0.1);
+                }
+            }
+            
+            // Update agent lineages with cosmological time effects
+            for lineage in &mut self.store.agent_lineages {
+                // Biological evolution rates affected by cosmic environment
+                let cosmic_acceleration_factor = if age_gyr < 1.0 { 
+                    0.1 // Early universe is harsh for life
+                } else if age_gyr > 10.0 {
+                    1.2 // Mature universe favors complexity
+                } else {
+                    1.0 // Standard evolution rate
+                };
+                
+                lineage.tech_level *= cosmic_acceleration_factor.powf(dt / 1e9); // Scale by Gyr
+                lineage.sentience_level *= cosmic_acceleration_factor.powf(dt / 1e9);
+            }
+            
+            // Update universe-wide statistics
+            self.universe_state.hubble_constant = hubble_constant;
+            self.universe_state.age_gyr = age_gyr;
+            
+            log::debug!(
+                "Applied cosmological effects: age={:.2} Gyr, H={:.1} km/s/Mpc, a={:.6}, z={:.3}",
+                age_gyr, hubble_constant, scale_factor, redshift
+            );
+        }
+        
+        Ok(())
+    }
+    
+    /// Get cosmological parameters from physics engine
+    fn get_cosmological_parameters(&self) -> Option<CosmologicalParameters> {
+        // Extract cosmological parameters from GADGET gravity solver if available
+        #[cfg(feature = "gadget")]
+        if let Some(ref gadget_engine) = self.physics_engine.gadget_engine {
+            return Some(gadget_engine.get_cosmological_parameters().clone());
+        }
+        
+        // Fallback: create parameters from current universe state
+        Some(CosmologicalParameters {
+            hubble_constant: self.universe_state.hubble_constant,
+            omega_matter: 0.315,
+            omega_lambda: 0.685,
+            omega_baryon: 0.049,
+            scale_factor: 1.0, // Default to present day
+            redshift: 0.0,
+            age_of_universe: self.universe_state.age_gyr,
+            enable_expansion: true,
+        })
+    }
+    
+    /// Process agent evolution with cosmic context
+    fn process_agent_evolution(&mut self, dt: f64) -> Result<()> {
+        let dt_years = dt;
+        
+        for lineage in &mut self.store.agent_lineages {
+            // Apply natural selection pressure
+            agent_evolution::natural_selection::apply_selection_pressure(
+                lineage,
+                dt_years,
+                &self.config.agent_config,
+            )?;
+            
+            // Update AI consciousness development
+            agent_evolution::consciousness::update_consciousness_level(
+                lineage,
+                dt_years,
+                &self.universe_state,
+            )?;
+            
+            // Process technological development
+            agent_evolution::genetics::process_genetic_drift(
+                lineage,
+                dt_years,
+            )?;
+        }
+        
+        Ok(())
     }
 }
 

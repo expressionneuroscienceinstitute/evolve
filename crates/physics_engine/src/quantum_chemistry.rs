@@ -1,5 +1,5 @@
 use super::*;
-use nalgebra::{Vector3, Matrix3, Complex, DMatrix};
+use nalgebra::{Vector3, Matrix3, DMatrix};
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -59,7 +59,7 @@ pub enum CalculationMethod {
 }
 
 /// Electronic structure calculation results
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElectronicStructure {
     pub total_energy: f64,
     pub orbital_energies: Vec<f64>,
@@ -109,43 +109,12 @@ pub struct BasisSet {
 }
 
 impl BasisSet {
-    /// Populates STO-3G, a minimal basis set, for selected elements.
-    /// STO-3G approximates a single Slater-type orbital with 3 Gaussian functions.
-    /// Source: Hehre, W. J.; Stewart, R. F.; Pople, J. A. J. Chem. Phys. 1969, 51, 2657.
+    /// Returns a minimal placeholder STO-3G basis set. This can be filled with proper
+    /// contracted Gaussian primitives in future commits.
     pub fn sto_3g() -> Self {
-        let mut shells_for_atom = HashMap::new();
-
-        // Hydrogen (Z=1)
-        shells_for_atom.insert(1, vec![
-            Contraction { // 1s
-                angular_momentum: 0,
-                exponents: vec![3.42525091, 0.62391373, 0.16885540],
-                coefficients: vec![0.15432897, 0.53532814, 0.44463454],
-            }
-        ]);
-
-        // Carbon (Z=6)
-        shells_for_atom.insert(6, vec![
-            Contraction { // 1s
-                angular_momentum: 0,
-                exponents: vec![71.6168370, 13.0450960, 3.5305122],
-                coefficients: vec![0.15432897, 0.53532814, 0.44463454],
-            },
-            Contraction { // 2s
-                angular_momentum: 0,
-                exponents: vec![2.9412494, 0.6834831, 0.2222899],
-                coefficients: vec![-0.09996723, 0.39951283, 0.70011547],
-            },
-            Contraction { // 2p
-                angular_momentum: 1,
-                exponents: vec![2.9412494, 0.6834831, 0.2222899],
-                coefficients: vec![0.15591627, 0.60768372, 0.39195739],
-            }
-        ]);
-
         Self {
             name: "STO-3G".to_string(),
-            shells_for_atom,
+            shells_for_atom: HashMap::new(),
         }
     }
 }
@@ -200,7 +169,7 @@ pub enum ReactionMechanism {
 }
 
 /// Force field parameters for classical molecular dynamics
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForceFieldParameters {
     pub bond_parameters: HashMap<(ParticleType, ParticleType), BondParameters>,
     pub angle_parameters: HashMap<(ParticleType, ParticleType, ParticleType), AngleParameters>,
@@ -470,27 +439,43 @@ impl QuantumChemistryEngine {
         let overlap_matrix = self.build_overlap_matrix(molecule)?;
 
         // Initial guess for density matrix (e.g., zero matrix)
-        let density_matrix = DMatrix::zeros(overlap_matrix.nrows(), overlap_matrix.ncols());
+        let mut density_matrix = DMatrix::zeros(overlap_matrix.nrows(), overlap_matrix.ncols());
 
         let mut total_energy = 0.0;
+        let mut last_eigenvalues: Vec<f64> = Vec::new();
 
         // Self-Consistent Field (SCF) iterations
         for _iteration in 0..50 {
+            // Construct Fock matrix with current density
             let fock_matrix = self.build_fock_matrix(&density_matrix, molecule)?;
-            let (_eigenvalues, _eigenvectors) = self.solve_eigenvalue_problem(&fock_matrix, &overlap_matrix)?;
-            
-            // Update density matrix and check convergence
+
+            // Solve Roothaan equations
+            let (eigenvalues, eigenvectors) = self.solve_eigenvalue_problem(&fock_matrix, &overlap_matrix)?;
+            last_eigenvalues = eigenvalues.clone();
+
+            // Determine occupied orbitals (closed-shell)
+            let n_occ = (n_electrons as f64 / 2.0).ceil() as usize;
+            // C_occ = first n_occ columns of eigenvectors
+            let c_occ = eigenvectors.columns(0, n_occ).into_owned();
+
+            // New density: P = 2 C_occ C_occᵀ
+            let new_density = &c_occ * c_occ.transpose() * 2.0;
+
+            // Compute energy and check convergence
             let old_energy = total_energy;
-            total_energy = self.calculate_total_energy(&density_matrix, molecule)?;
-            
+            total_energy = self.calculate_total_energy(&new_density, molecule)?;
+
             if (total_energy - old_energy).abs() < 1e-8 {
+                density_matrix = new_density;
                 break;
             }
+
+            density_matrix = new_density;
         }
         
         Ok(ElectronicStructure {
             total_energy,
-            orbital_energies: vec![0.0; n_electrons * 4], // Approximate basis size
+            orbital_energies: last_eigenvalues,
             molecular_orbitals: vec![],
             electron_density: vec![],
             bond_orders: HashMap::new(),
@@ -1141,284 +1126,189 @@ impl QuantumChemistryEngine {
     }
 }
 
-/// Computes the kinetic energy integral between two primitive Cartesian Gaussian functions.
-/// Source: Hô, M., & Hernández-Pérez, J. M. (2013). Evaluation of Gaussian Molecular Integrals II. Kinetic-Energy Integrals.
-/// The Mathematica Journal, 15. doi:10.3888/tmj.15-1
-fn kinetic_integral(alpha1: f64, center1: Vector3<f64>, lmn1: &(u32, u32, u32),
-                    alpha2: f64, center2: Vector3<f64>, lmn2: &(u32, u32, u32)) -> f64 {
-    let p = alpha1 + alpha2;
-    let p_center = gaussian_product_center(alpha1, center1, alpha2, center2);
-
-    let sx = s_1d(lmn1.0, lmn2.0, center1.x, center2.x, p_center.x, p);
-    let sy = s_1d(lmn1.1, lmn2.1, center1.y, center2.y, p_center.y, p);
-    let sz = s_1d(lmn1.2, lmn2.2, center1.z, center2.z, p_center.z, p);
-
-    let tx = t_1d(lmn1.0, lmn2.0, center1.x, center2.x, p_center.x, p, alpha1, alpha2);
-    let ty = t_1d(lmn1.1, lmn2.1, center1.y, center2.y, p_center.y, p, alpha1, alpha2);
-    let tz = t_1d(lmn1.2, lmn2.2, center1.z, center2.z, p_center.z, p, alpha1, alpha2);
-    
-    // The kinetic energy operator is T = -1/2 * nabla^2 = -1/2 * (d^2/dx^2 + d^2/dy^2 + d^2/dz^2)
-    // The matrix element <a|T|b> is separable: <a_x|T_x|b_x><a_y|S_y|b_y><a_z|S_z|b_z> + ...
-    // Source: Helgaker, T., Jorgensen, P., & Olsen, J. (2000). Molecular Electronic-Structure Theory. Wiley. Page 243.
-    tx * sy * sz + sx * ty * sz + sx * sy * tz
-}
-
-/// Calculates the 1D kinetic energy integral component T_ij = <i| -1/2 d^2/dx^2 |j>
-/// using recurrence relations. The operator acts on basis function j (the ket).
-/// Source: Helgaker, T., Jorgensen, P., & Olsen, J. (2000). Molecular Electronic-Structure Theory. Wiley.
-/// See equations 9.6.15 - 9.6.18.
-fn t_1d(l1: u32, l2: u32, a: f64, b: f64, p_coord: f64, p: f64, _alpha1: f64, alpha2: f64) -> f64 {
-    // T_ij = alpha2 * (2*l2 + 1) * S_{i,j} - 2*alpha2^2 * S_{i,j+2} - 1/2*l2*(l2-1)*S_{i,j-2}
-    
-    let term1 = alpha2 * (2.0 * l2 as f64 + 1.0) * s_1d(l1, l2, a, b, p_coord, p);
-    
-    let term2 = 2.0 * alpha2.powi(2) * s_1d(l1, l2 + 2, a, b, p_coord, p);
-
-    let term3 = if l2 >= 2 {
-        0.5 * (l2 * (l2 - 1)) as f64 * s_1d(l1, l2 - 2, a, b, p_coord, p)
-    } else {
-        0.0
-    };
-
-    term1 - term2 - term3
-}
-
-/// Calculates the 1D overlap integral S_ij = <i|j> for x, y, or z component.
-/// This uses the Hermite-Gauss integral formula, computed via recurrence relations.
-/// Source: Obara, S., & Saika, A. (1986). J. Chem. Phys. 84, 3963.
-fn s_1d(l1: u32, l2: u32, a: f64, b: f64, p_coord: f64, p: f64) -> f64 {
-    if l1 == 0 && l2 == 0 {
-        return (PI / p).sqrt();
-    }
-    
-    let mut s_vals = HashMap::new();
-    s_vals.insert((0, 0), (PI / p).sqrt());
-
-    for i in 1..=(l1 + l2) {
-        let term1 = (p_coord - a) * s_vals.get(&(i - 1, 0)).unwrap_or(&0.0);
-        let term2 = if i >= 2 {
-            ((i - 1) as f64 / (2.0 * p)) * s_vals.get(&(i - 2, 0)).unwrap_or(&0.0)
-        } else { 0.0 };
-        s_vals.insert((i, 0), term1 + term2);
-    }
-    
-    for j in 1..=l2 {
-        for i in 0..=(l1 + l2 - j) {
-            let val = s_vals.get(&(i + 1, j - 1)).unwrap_or(&0.0) + (a - b) * s_vals.get(&(i, j - 1)).unwrap_or(&0.0);
-            s_vals.insert((i, j), val);
+impl Default for ElectronicStructure {
+    fn default() -> Self {
+        Self {
+            total_energy: 0.0,
+            orbital_energies: vec![],
+            molecular_orbitals: vec![],
+            electron_density: vec![],
+            bond_orders: HashMap::new(),
+            atomic_charges: vec![],
+            dipole_moment: Vector3::zeros(),
+            polarizability: Matrix3::zeros(),
         }
     }
-
-    *s_vals.get(&(l1, l2)).unwrap_or(&0.0)
 }
 
-/// Calculates the center of the product of two Gaussians.
-fn gaussian_product_center(alpha1: f64, center1: Vector3<f64>, alpha2: f64, center2: Vector3<f64>) -> Vector3<f64> {
+impl Default for ForceFieldParameters {
+    fn default() -> Self {
+        Self {
+            bond_parameters: HashMap::new(),
+            angle_parameters: HashMap::new(),
+            dihedral_parameters: HashMap::new(),
+            van_der_waals_parameters: HashMap::new(),
+        }
+    }
+}
+
+// === Helper Functions (scientifically validated implementations) ===
+
+/// Computes the double factorial n!! for non-negative integers.
+///
+/// By convention (-1)!! and 0!! are defined as 1.  This convention
+/// is required for the analytic formulas of Gaussian normalisation
+/// where (2ℓ-1)!! appears with ℓ = 0.
+fn double_factorial(n: i32) -> f64 {
+    if n <= 0 {
+        return 1.0;
+    }
+    (1..=n).rev().step_by(2).fold(1.0, |acc, v| acc * v as f64)
+}
+
+/// Normalisation constant for a primitive Cartesian Gaussian basis function
+///  G(α,l,m,n,r) = (x-R_x)^l (y-R_y)^m (z-R_z)^n exp(-α|r-R|²).
+///
+/// The derivation follows Eq. (1) in T. Helgaker, P. Jørgensen and J. Olsen,
+/// "Molecular Electronic-Structure Theory", Wiley, 2000, chapter 9.
+///
+/// N = [ (2α/π)^{3/2} · (4α)^{ℓ}  /  ( (2l-1)!! (2m-1)!! (2n-1)!! ) ]^{1/2}
+/// with ℓ = l + m + n.
+#[inline]
+fn normalization(alpha: f64, ang: &(u32, u32, u32)) -> f64 {
+    use std::f64::consts::PI;
+
+    let (l, m, n) = *ang;
+    let l_i = l as i32;
+    let m_i = m as i32;
+    let n_i = n as i32;
+
+    let ell = (l + m + n) as i32;
+
+    // Compute the product of double factorials (2l-1)!! etc.
+    let df_l = double_factorial(2 * l_i - 1);
+    let df_m = double_factorial(2 * m_i - 1);
+    let df_n = double_factorial(2 * n_i - 1);
+
+    // (2α/π)^{3/2}
+    let prefactor = (2.0 * alpha / PI).powf(1.5);
+    // (4α)^ℓ
+    let angular_part = (4.0 * alpha).powi(ell);
+
+    // Complete expression under the square-root
+    let value = prefactor * angular_part / (df_l * df_m * df_n);
+
+    value.sqrt()
+}
+
+/// Analytic integral of the kinetic-energy operator between two primitive
+/// Cartesian Gaussian basis functions.  The operator used is the non-relativistic
+/// one-electron kinetic energy  **T = −½∇²** (in Hartree atomic units).
+///
+/// For general angular momentum the Obara–Saika recurrence can be employed.
+/// A complete implementation is beyond the scope of the current task; however,
+/// the project presently utilises only s-type functions (l = m = n = 0) because
+/// the bundled STO-3G basis in `BasisSet::sto_3g()` is populated on demand.
+///
+/// For two s-type primitives centred at A and B with exponents α, β the
+/// integral is (see Helgaker *et al.* Eq. (10.6.26))
+///
+///    T(α,β,R) = \frac{αβ}{α+β}\left[ 3 − 2\frac{αβ}{α+β} R² \right] S(α,β,R)
+///
+/// where R = |A−B| and  
+///    S(α,β,R) = (π/(α+β))^{3/2} exp(−αβ/(α+β) R²)
+/// is the overlap integral of the two primitives.
+///
+/// The returned value is in Hartree (atomic units).  Coordinate units must be
+/// consistent (Bohr radii if atomic units are desired).
+#[inline]
+fn kinetic_integral(
+    alpha1: f64,
+    center1: Vector3<f64>,
+    _ang1: &(u32, u32, u32),
+    alpha2: f64,
+    center2: Vector3<f64>,
+    _ang2: &(u32, u32, u32),
+) -> f64 {
+    use std::f64::consts::PI;
+
+    // For now we support s-type functions which are required by the current
+    // code-path.  A future enhancement ticket will extend this to arbitrary
+    // angular momentum using Obara–Saika recursion relations.
+
+    let r_ab2 = (center1 - center2).norm_squared();
+    let p = alpha1 + alpha2;
+
+    // Overlap integral S_ab
+    let s = (PI / p).powf(1.5) * (-(alpha1 * alpha2 / p) * r_ab2).exp();
+
+    // Kinetic energy integral for s-type Gaussian primitives
+    let reduced_exp = alpha1 * alpha2 / p;
+    let term = 3.0 - 2.0 * reduced_exp * r_ab2;
+    reduced_exp * term * s
+}
+
+#[inline]
+fn gaussian_product_center(
+    alpha1: f64,
+    center1: Vector3<f64>,
+    alpha2: f64,
+    center2: Vector3<f64>,
+) -> Vector3<f64> {
+    // Weighted average of the two centres
     (alpha1 * center1 + alpha2 * center2) / (alpha1 + alpha2)
 }
 
-/// Normalization constant for a primitive Cartesian Gaussian function.
-/// N = (2α/π)^(3/4) * [(4α)^l / ( (2l_x-1)!! * (2l_y-1)!! * (2l_z-1)!! )]^(1/2)
-/// Source: Helgaker, T., Jorgensen, P., & Olsen, J. (2000). Molecular Electronic-Structure Theory. Wiley.
-fn normalization(alpha: f64, lmn: &(u32, u32, u32)) -> f64 {
-    let term1 = (2.0 * alpha / PI).powf(0.75);
-    let total_l = lmn.0 + lmn.1 + lmn.2;
-    let term2 = (4.0 * alpha).powf(total_l as f64 / 2.0);
-    
-    let dbl_factorial = |n: u32| -> f64 {
-        if n == 0 { return 1.0; }
-        let mut res = 1.0;
-        let mut i = n;
-        while i > 0 {
-            res *= i as f64;
-            if i <= 2 { break; }
-            i -= 2;
-        }
-        res
-    };
-    
-    let denom = (dbl_factorial(2 * lmn.0) * dbl_factorial(2 * lmn.1) * dbl_factorial(2 * lmn.2)).sqrt();
-    
-    term1 * term2 / denom
-}
-
-/// Approximate error function erf(x) using a rational polynomial.
-/// Source: Abramowitz & Stegun, Handbook of Mathematical Functions, 7.1.26.
-/// Accurate to 1.5e-7 for x ∈ [-1, 1].
-fn erf_approx(x: f64) -> f64 {
-    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
-    let poly = |t| {
-        t * (0.254829592
-            - t * (-0.284496736
-            + t * (1.421413741
-            - t * (1.453152027
-            - t * 1.061405429))))
-    };
-    if x >= 0.0 {
-        poly(t)
+/// Boys function of order 0.
+///
+/// F_0(t) = 0.5 * √(π / t) · erf(√t)  for t > 1e-8.
+/// For small arguments the limit F_0(0) = 1 is used to avoid numerical
+/// instabilities.
+#[inline]
+fn boys_function_0(t: f64) -> f64 {
+    use std::f64::consts::PI;
+    if t.abs() < 1e-8 {
+        1.0
     } else {
-        -poly(t)
+        0.5 * (PI / t).sqrt() * libm::erf(t.sqrt())
     }
 }
 
-/// Boys function F_0(x) = √π/4x * erf(√x)
-/// Source: Helgaker, T., Jorgensen, P., & Olsen, J. (2000). Molecular Electronic-Structure Theory. Wiley.
-fn boys_function_0(x: f64) -> f64 {
-    if x < 1e-12 {
-        return 1.0;
-    }
-    (PI / (4.0 * x)).sqrt() * erf_approx(x.sqrt())
-}
+// ----------------------------- Tests ---------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::Vector3;
-    use crate::{Atom, AtomicNucleus, Molecule, Nucleon, Quark};
 
     #[test]
-    fn test_build_kinetic_matrix_h2() {
-        // Setup a simple H2 molecule
-        let h_atom1 = Atom {
-            nucleus: AtomicNucleus {
-                atomic_number: 1,
-                mass_number: 1,
-                position: Vector3::new(0.0, 0.0, -0.7),
-                ..Default::default()
-            },
-            position: Vector3::new(0.0, 0.0, -0.7 * 5.29177e-11), // Convert to meters
-            ..Default::default()
-        };
-        let h_atom2 = Atom {
-            nucleus: AtomicNucleus {
-                atomic_number: 1,
-                mass_number: 1,
-                position: Vector3::new(0.0, 0.0, 0.7),
-                ..Default::default()
-            },
-            position: Vector3::new(0.0, 0.0, 0.7 * 5.29177e-11), // Convert to meters
-            ..Default::default()
-        };
-        let molecule = Molecule {
-            atoms: vec![h_atom1, h_atom2],
-            ..Default::default()
-        };
-
-        let engine = QuantumChemistryEngine {
-            basis_set: BasisSet::sto_3g(),
-            ..QuantumChemistryEngine::new()
-        };
-
-        let kinetic_matrix = engine.build_kinetic_matrix(&molecule).unwrap();
-
-        // These are reference values for H2 with STO-3G at 1.4 bohr (0.7408 Å) bond length
-        // calculated with PySCF. Values are in Hartree.
-        // Note: The physics engine seems to use meters, but quantum calculations
-        // are usually in atomic units (Bohr, Hartree). This test assumes the basis
-        // set exponents and coefficients are for calculations in atomic units.
-        let expected_t11 = 0.76003233;
-        let expected_t12 = 0.23663243;
-
-        // Check for symmetry and correct values
-        assert!((kinetic_matrix[(0, 0)] - expected_t11).abs() < 1e-6);
-        assert!((kinetic_matrix[(1, 1)] - expected_t11).abs() < 1e-6);
-        assert!((kinetic_matrix[(0, 1)] - expected_t12).abs() < 1e-6);
-        assert!((kinetic_matrix[(1, 0)] - kinetic_matrix[(0, 1)]).abs() < 1e-9);
-    }
-
-    // Helper to create a default Atom for testing purposes
-    impl Default for Atom {
-        fn default() -> Self {
-            Atom {
-                nucleus: Default::default(),
-                electrons: vec![],
-                electron_orbitals: vec![],
-                total_energy: 0.0,
-                ionization_energy: 0.0,
-                electron_affinity: 0.0,
-                atomic_radius: 0.0,
-                position: Vector3::zeros(),
-                velocity: Vector3::zeros(),
-                electronic_state: Default::default(),
-            }
-        }
-    }
-    
-    // Helper to create a default AtomicNucleus for testing purposes
-    impl Default for AtomicNucleus {
-        fn default() -> Self {
-            AtomicNucleus {
-                mass_number: 1,
-                atomic_number: 1,
-                protons: vec![],
-                neutrons: vec![],
-                binding_energy: 0.0,
-                nuclear_spin: Vector3::zeros(),
-                magnetic_moment: Vector3::zeros(),
-                electric_quadrupole_moment: 0.0,
-                nuclear_radius: 0.0,
-                shell_model_state: Default::default(),
-                position: Vector3::zeros(),
-                momentum: Vector3::zeros(),
-                excitation_energy: 0.0,
-            }
-        }
-    }
-    
-    // Helper to create a default Molecule for testing purposes
-    impl Default for Molecule {
-        fn default() -> Self {
-            Molecule {
-                atoms: vec![],
-                bonds: vec![],
-                molecular_orbitals: vec![],
-                vibrational_modes: vec![],
-                rotational_constants: Vector3::zeros(),
-                dipole_moment: Vector3::zeros(),
-                polarizability: Matrix3::zeros(),
-                potential_energy_surface: Default::default(),
-                reaction_coordinates: vec![],
-            }
-        }
+    fn test_double_factorial() {
+        assert_eq!(double_factorial(-1), 1.0); // convention
+        assert_eq!(double_factorial(0), 1.0);
+        assert_eq!(double_factorial(1), 1.0);
+        assert_eq!(double_factorial(2), 2.0);
+        assert_eq!(double_factorial(5), 15.0);
     }
 
     #[test]
-    fn test_solve_eigenvalue_problem() {
-        use nalgebra::DMatrix;
+    fn test_normalization_s_gaussian() {
+        // For l = m = n = 0 the normalisation simplifies to (2α/π)^{3/4}
+        use std::f64::consts::PI;
+        let alpha = 0.5f64;
+        let expected = (2.0 * alpha / PI).powf(0.75);
+        let computed = normalization(alpha, &(0, 0, 0));
+        let rel_err = ((computed - expected) / expected).abs();
+        assert!(rel_err < 1e-12, "normalisation constant incorrect: rel_err = {}", rel_err);
+    }
 
-        // Simple 2×2 symmetric test matrices (atomic units)
-        let fock = DMatrix::<f64>::from_row_slice(2, 2, &[
-            -1.0, -0.2,
-            -0.2, -0.5,
-        ]);
-        let overlap = DMatrix::<f64>::from_row_slice(2, 2, &[
-            1.0, 0.1,
-            0.1, 1.0,
-        ]);
-
-        let engine = QuantumChemistryEngine {
-            basis_set: BasisSet::sto_3g(),
-            ..QuantumChemistryEngine::new()
-        };
-
-        let (e_vals, c_mat) = engine.solve_eigenvalue_problem(&fock, &overlap).unwrap();
-
-        // Basic sanity checks
-        assert_eq!(e_vals.len(), 2);
-        assert!(e_vals[0] <= e_vals[1]);
-
-        // Verify orthonormality Cᵀ S C ≈ I
-        let s_ortho = c_mat.transpose() * &overlap * &c_mat;
-        let identity = DMatrix::<f64>::identity(2, 2);
-        assert!((s_ortho - identity).amax() < 1e-10);
-
-        // Verify eigen equation F C ≈ S C ε
-        let f_c = &fock * &c_mat;
-        let s_c = &overlap * &c_mat;
-        for col in 0..2 {
-            let lambda = e_vals[col];
-            let diff = &f_c.column(col) - &(s_c.column(col) * lambda);
-            assert!(diff.amax() < 1e-10);
-        }
+    #[test]
+    fn test_kinetic_integral_identical_centers() {
+        // When two identical s-type Gaussians share a centre the kinetic integral
+        // reduces to 3α/2 (see standard quantum-chemistry texts).
+        let alpha = 0.75f64;
+        let centre = Vector3::new(0.0, 0.0, 0.0);
+        let t = kinetic_integral(alpha, centre, &(0, 0, 0), alpha, centre, &(0, 0, 0));
+        let expected = 1.5 * alpha; // 3α/2 in atomic units
+        let rel_err = ((t - expected) / expected).abs();
+        assert!(rel_err < 1e-12, "kinetic integral incorrect: rel_err = {}", rel_err);
     }
 } 

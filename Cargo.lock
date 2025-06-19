@@ -2595,6 +2595,7 @@ dependencies = [
  "endf_parser",
  "ffi_integration",
  "itertools 0.10.5",
+ "libm",
  "log",
  "nalgebra",
  "ndarray",

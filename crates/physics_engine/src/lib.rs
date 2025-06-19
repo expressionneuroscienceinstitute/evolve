@@ -10,6 +10,7 @@ pub mod classical;
 pub mod chemistry;
 pub mod climate;
 pub mod constants;
+pub mod atomic_data;
 pub mod electromagnetic;
 pub mod emergent_properties;
 pub mod endf_data;
@@ -168,6 +169,8 @@ pub struct PhysicsEngine {
     pub nuclei: Vec<AtomicNucleus>,
     pub atoms: Vec<Atom>,
     pub molecules: Vec<Molecule>,
+    /// High-level quantum chemistry module for molecular calculations
+    pub quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine,
     pub interaction_matrix: InteractionMatrix,
     pub spacetime_grid: SpacetimeGrid,
     pub quantum_vacuum: QuantumVacuum,
@@ -178,7 +181,6 @@ pub struct PhysicsEngine {
     pub running_couplings: RunningCouplings,
     pub symmetry_breaking: SymmetryBreaking,
     pub stellar_nucleosynthesis: StellarNucleosynthesis,
-    pub quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine,
     pub time_step: f64,
     pub current_time: f64,
     pub temperature: f64,
@@ -367,6 +369,7 @@ impl PhysicsEngine {
             nuclei: Vec::new(),
             atoms: Vec::new(),
             molecules: Vec::new(),
+            quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new(),
             interaction_matrix: InteractionMatrix::new(),
             spacetime_grid: SpacetimeGrid::new(1000, 1e-15), // Femtometer scale
             quantum_vacuum: QuantumVacuum::new(),
@@ -377,7 +380,6 @@ impl PhysicsEngine {
             running_couplings: RunningCouplings::new(),
             symmetry_breaking: SymmetryBreaking::new(),
             stellar_nucleosynthesis: StellarNucleosynthesis::new(),
-            quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new(),
             time_step: 1e-18, // default time step
             current_time: 0.0,
             temperature: 0.0,
@@ -1402,6 +1404,12 @@ impl PhysicsEngine {
             ParticleType::CO2 => 7.31e-26,  // 44.01 u
             ParticleType::CH4 => 2.66e-26,  // 16.043 u
             ParticleType::NH3 => 2.83e-26,  // 17.031 u
+            // Individual atomic species (neutral atoms)
+            ParticleType::HydrogenAtom => crate::atomic_data::mass_kg(1),
+            ParticleType::HeliumAtom   => crate::atomic_data::mass_kg(2),
+            ParticleType::CarbonAtom   => crate::atomic_data::mass_kg(6),
+            ParticleType::OxygenAtom   => crate::atomic_data::mass_kg(8),
+            ParticleType::IronAtom     => crate::atomic_data::mass_kg(26),
             _ => 0.0,
         }
     }
@@ -2788,7 +2796,8 @@ impl PhysicsEngine {
         }
     }
 
-    pub fn calculate_qm_region_energy(&self, atoms: &[crate::Atom]) -> Result<f64> {
+    #[cfg(FALSE)]
+    fn calculate_mm_region_energy(&self, atoms: &[crate::Atom]) -> Result<f64> {
         // Estimate total quantum energy of the QM region.
         // --------------------------------------------------------------------
         // We combine two main energetic contributions that are readily
@@ -2878,6 +2887,78 @@ impl PhysicsEngine {
         Ok(interaction_energy)
     }
 
+    /// Approximate ground-state electronic energy (J) for an isolated atom.
+    ///
+    /// Ground-state electronic energy estimate for an isolated atom.
+    ///
+    /// We use the simple hydrogenic model 𝐸 = −Z² R_H (in eV) and convert to Joules.
+    /// Although crude, this provides a lower-bound on the total electronic binding
+    /// energy that is adequate for the semi-empirical energy bookkeeping carried
+    /// out by the fast QC routines.
+    fn get_atomic_energy(&self, atomic_number: &u32) -> f64 {
+        // Delegate to the quantum-chemistry engine which provides a Thomas–Fermi
+        // estimate of the ground-state electronic energy in Joules (see
+        // `quantum_chemistry::QuantumChemistryEngine::get_atomic_energy`).  This
+        // keeps a single authoritative implementation of the model and avoids
+        // diverging approximations throughout the codebase.
+        self.quantum_chemistry_engine.get_atomic_energy(atomic_number)
+    }
+
+    /// Empirical bond-dissociation energy (approximate) returned in Joules per bond.
+    /// Values are based on typical gas-phase bond energies at 298 K.
+    fn get_bond_energy(&self, bond_type: &crate::BondType, _bond_length: f64) -> f64 {
+        // Typical gas-phase bond dissociation energies at 298 K.
+        // Source: CRC Handbook of Chemistry & Physics (103rd edition). Values are
+        // converted from kJ mol⁻¹ to Joules per individual bond using Avogadro's
+        // constant (CODATA 2022).
+        const AVOGADRO: f64 = 6.022_140_76e23; // mol⁻¹
+        let kj_per_mol_to_j_per_bond = 1_000.0 / AVOGADRO;
+
+        match bond_type {
+            crate::BondType::Covalent      => 350.0 * kj_per_mol_to_j_per_bond, // C–C single ≈ 348
+            crate::BondType::Ionic         => 400.0 * kj_per_mol_to_j_per_bond, // Na–Cl ≈ 411
+            crate::BondType::Metallic      => 200.0 * kj_per_mol_to_j_per_bond, // averaged transition metals
+            crate::BondType::HydrogenBond  => 20.0  * kj_per_mol_to_j_per_bond, // O–H···O in water
+            crate::BondType::VanDerWaals   => 2.0   * kj_per_mol_to_j_per_bond, // Dispersion interactions
+        }
+    }
+
+    /// Return true if atoms with indices `i` and `j` share a chemical bond in `molecule`.
+    fn are_bonded(&self, i: usize, j: usize, molecule: &crate::Molecule) -> bool {
+        use crate::quantum_chemistry::COVALENT_RADII;
+        const BOND_TOLERANCE: f64 = 1.20; // Allow up to 20 % stretch/compression.
+
+        if i >= molecule.atoms.len() || j >= molecule.atoms.len() { return false; }
+        let atom_i = &molecule.atoms[i];
+        let atom_j = &molecule.atoms[j];
+
+        // Calculate inter-nuclear distance.
+        let distance = (atom_i.position - atom_j.position).norm();
+
+        // Retrieve covalent radii (fallback ≈ 70 pm if unknown).
+        let default_radius = 70e-12; // metres
+        let r_i = COVALENT_RADII
+            .get(&atom_i.get_particle_type())
+            .copied()
+            .unwrap_or(default_radius);
+        let r_j = COVALENT_RADII
+            .get(&atom_j.get_particle_type())
+            .copied()
+            .unwrap_or(default_radius);
+
+        distance < (r_i + r_j) * BOND_TOLERANCE
+    }
+
+    /// Lennard-Jones 12-6 potential (dispersion + Pauli repulsion) for a pair of atoms.
+    fn van_der_waals_energy(&self, i: usize, j: usize, distance: f64, molecule: &crate::Molecule) -> f64 {
+        // Re-use the well-tested implementation in the quantum-chemistry module
+        // to avoid duplicating force-field parameter look-ups.
+        self.quantum_chemistry_engine
+            .van_der_waals_energy(i, j, distance, molecule)
+    }
+
+    /// Apply Geant4 interaction results to a particle, updating its state and spawning any secondary particles produced.
+    ///
     /// This helper keeps the Geant4 bridge isolated from the core physics loop while still enforcing
     /// energy–momentum conservation for the primary particle. The detailed secondary kinematics are
     /// delegated to the Geant4 engine; we simply insert the returned products into the particle list.
@@ -2930,6 +3011,38 @@ impl PhysicsEngine {
             velocity: Vector3::zeros(),
             charge: self.get_electric_charge(particle_type),
         })
+    }
+
+    pub fn calculate_qm_region_energy(&self, atoms: &[crate::Atom]) -> Result<f64> {
+        // Estimate total quantum energy of the QM region.
+        // --------------------------------------------------------------------
+        // We combine two main energetic contributions that are readily
+        // available from the data structures:
+        // 1. Nuclear binding energies (returned by `nuclear_physics::Nucleus`
+        //    in MeV) which we convert to Joules via the CODATA 2022 factor.
+        // 2. Electronic binding energies stored in each `Electron` record
+        //    (already in Joules – e.g. −13.6 eV ≈ −2.18 × 10⁻¹⁸ J for H(1s)).
+        // This provides a lower-bound on the total internal energy that is
+        // conserved irrespective of molecular conformation and is therefore
+        // adequate for the coarse QM/MM energy bookkeeping carried out by the
+        // simulation. For full ab-initio accuracy this routine should be
+        // replaced by a proper SCF/DFT call – see the project roadmap.
+        // --------------------------------------------------------------------
+        const MEV_TO_J: f64 = 1.602_176_634e-13; // exact conversion (J/MeV)
+
+        let mut total_energy_j = 0.0_f64;
+
+        for atom in atoms {
+            // 1. Nuclear contribution (MeV ➜ J)
+            total_energy_j += atom.nucleus.binding_energy * MEV_TO_J;
+
+            // 2. Electronic contribution (already in Joules)
+            for elec in &atom.electrons {
+                total_energy_j += elec.binding_energy;
+            }
+        }
+
+        Ok(total_energy_j)
     }
 }
 // Supporting types and implementations
@@ -3936,10 +4049,31 @@ impl PhysicsEngine {
 
 impl Drop for PhysicsEngine {
     fn drop(&mut self) {
-        // Custom drop logic if needed, e.g., for cleaning up FFI resources.
-        // For now, just a placeholder.
-        // Note: The `geant4_engine` and `lammps_engine` have their own `Drop` impls
-        // which will be called automatically.
+        // Ensure FFI libraries are cleaned up gracefully when the engine is dropped.
+        // This prevents resource leaks, especially from C/C++ libraries that don't
+        // follow Rust's ownership model.
+        log::info!("PhysicsEngine is being dropped, ensuring FFI cleanup...");
+
+        if self.ffi_available.geant4_available {
+            if let Err(e) = ffi_integration::geant4::cleanup() {
+                log::error!("Error cleaning up Geant4: {}", e);
+            }
+        }
+        if self.ffi_available.lammps_available {
+            if let Err(e) = ffi_integration::lammps::cleanup() {
+                log::error!("Error cleaning up LAMMPS: {}", e);
+            }
+        }
+        if self.ffi_available.gadget_available {
+            if let Err(e) = ffi_integration::gadget::cleanup() {
+                log::error!("Error cleaning up GADGET: {}", e);
+            }
+        }
+        if self.ffi_available.endf_available {
+            if let Err(e) = ffi_integration::endf::cleanup() {
+                log::error!("Error cleaning up ENDF: {}", e);
+            }
+        }
     }
 }
 
@@ -3985,6 +4119,49 @@ pub struct MaterialProperties {
     pub mean_excitation_energy_ev: f64,
     pub radiation_length_cm: f64,
     pub nuclear_interaction_length_cm: f64,
+}
+
+#[cfg(FALSE)]
+impl crate::quantum_chemistry::BasisSet {
+    /// Return a minimal placeholder STO-3G basis set.
+    pub fn sto_3g() -> Self {
+        Self {
+            name: "STO-3G".to_string(),
+            atomic_number_to_shells: HashMap::new(),
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------//
+// Type conversions between internal representations and shared physics types  //
+//-----------------------------------------------------------------------------//
+
+impl From<&FundamentalParticle> for shared_types::FundamentalParticle {
+    fn from(p: &FundamentalParticle) -> Self {
+        Self {
+            particle_type: map_particle_type_to_shared(p.particle_type),
+            position: p.position,
+            momentum: p.momentum,
+            velocity: p.velocity,
+            spin: p.spin,
+            color_charge: p.color_charge.map(|c| match c {
+                ColorCharge::Red => shared_types::ColorCharge::Red,
+                ColorCharge::Green => shared_types::ColorCharge::Green,
+                ColorCharge::Blue => shared_types::ColorCharge::Blue,
+                ColorCharge::AntiRed => shared_types::ColorCharge::AntiRed,
+                ColorCharge::AntiGreen => shared_types::ColorCharge::AntiGreen,
+                ColorCharge::AntiBlue => shared_types::ColorCharge::AntiBlue,
+                ColorCharge::ColorSinglet => shared_types::ColorCharge::ColorSinglet,
+            }),
+            electric_charge: p.electric_charge,
+            mass: p.mass,
+            energy: p.energy,
+            creation_time: p.creation_time,
+            decay_time: p.decay_time,
+            quantum_state: shared_types::QuantumState::default(),
+            interaction_history: Vec::new(),
+        }
+    }
 }
 
 impl From<shared_types::InteractionEvent> for InteractionEvent {

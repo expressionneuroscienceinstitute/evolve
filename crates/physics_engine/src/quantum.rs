@@ -15,12 +15,18 @@ pub struct QuantumSolver {
     pub rydberg_energy: f64,
 }
 
+impl Default for QuantumSolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QuantumSolver {
     pub fn new() -> Self {
         Self {
             planck_constant: 6.626_070_15e-34,  // J⋅s
-            electron_rest_mass: 9.109_383_7015e-31, // kg
-            bohr_radius: 5.291_772_1067e-11,     // m
+            electron_rest_mass: 9.109_383_701_5e-31, // kg
+            bohr_radius: 5.291_772_106_7e-11,     // m
             rydberg_energy: 13.605_693_122_994,  // eV
         }
     }

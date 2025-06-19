@@ -5,7 +5,7 @@
 
 use anyhow::{Result, anyhow};
 use std::ffi::CString;
-use std::os::raw::{c_int};
+use std::os::raw::{c_int, c_char, c_double};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 

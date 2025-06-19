@@ -2,7 +2,6 @@
 use physics_engine::{PhysicsEngine, ParticleType, FundamentalParticle, QuantumState};
 use nalgebra::Vector3;
 use anyhow::Result;
-use std::f64::consts::PI;
 use nalgebra::Complex;
 
 fn main() -> Result<()> {
@@ -35,7 +34,7 @@ fn simple_particle(ptype: ParticleType, charge: f64) -> FundamentalParticle {
         spin: Vector3::new(Complex::new(0.0, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)),
         color_charge: None,
         electric_charge: charge,
-        charge: charge,
+        charge,
         mass: 938.272,
         energy: 0.0,
         creation_time: 0.0,

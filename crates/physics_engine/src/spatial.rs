@@ -39,7 +39,7 @@ impl SpatialHashGrid {
         
         for (i, particle) in particles.iter().enumerate() {
             let cell_coords = self.position_to_cell(&particle.position);
-            self.grid.entry(cell_coords).or_insert_with(Vec::new).push(i);
+            self.grid.entry(cell_coords).or_default().push(i);
         }
     }
     

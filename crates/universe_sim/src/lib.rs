@@ -4,21 +4,16 @@
 //! with autonomous AI agents evolving toward immortality.
 
 use anyhow::{Result, anyhow};
-use diagnostics::{AllocationType, DiagnosticsSystem};
-use md5;
+use diagnostics::DiagnosticsSystem;
 use nalgebra::Vector3;
 use physics_engine::{
-    nuclear_physics::{process_neutron_capture, NeutronCaptureProcess, Nucleus},
-    PhysicsEngine, PhysicsState,
-    ParticleType,
+    PhysicsEngine,
     FundamentalParticle,
     QuantumState,
 };
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
-use tracing::info;
 use uuid::Uuid;
 // use bevy_ecs::prelude::*; // Bevy ECS removed from core simulation logic
 
@@ -34,6 +29,7 @@ pub use storage::{AgentLineage, CelestialBody, CelestialBodyType, PlanetClass, S
 
 /// Calculate relativistic total energy from momentum and mass
 /// E = sqrt((pc)^2 + (mc^2)^2) where c = speed of light
+#[allow(dead_code)]
 fn calculate_relativistic_energy(momentum: &Vector3<f64>, mass: f64) -> f64 {
     // Use utility function from physics_engine
     physics_engine::utils::math::calculate_relativistic_energy(momentum, mass)
@@ -311,8 +307,8 @@ impl UniverseSimulation {
 
     /// Update stellar composition based on nuclear burning products (placeholder)
     fn update_stellar_composition(
-        body: &mut CelestialBody,
-        evolution: &StellarEvolution,
+        _body: &mut CelestialBody,
+        _evolution: &StellarEvolution,
     ) {
         // For the current lightweight implementation we do not attempt to
         // propagate the detailed isotopic yields to the outer layers. A full
@@ -324,9 +320,9 @@ impl UniverseSimulation {
     /// Handle the death of a star
     fn process_stellar_death(
         &mut self,
-        entity_id: usize,
-        body: &CelestialBody,
-        evolution: &StellarEvolution,
+        _entity_id: usize,
+        _body: &CelestialBody,
+        _evolution: &StellarEvolution,
     ) -> Result<()> {
         // At this resolution we simply note that a stellar death occurred
         // and update global counters. Detailed remnant creation and gas
@@ -335,21 +331,24 @@ impl UniverseSimulation {
     }
 
     /// Handle nucleosynthesis in supernova explosions
+    #[allow(dead_code)]
     fn process_supernova_nucleosynthesis(&mut self) -> Result<()> {
         Ok(())
     }
 
     /// Create enriched gas clouds from stellar death events
+    #[allow(dead_code)]
     fn create_enriched_gas_cloud(
         &mut self,
-        star: &CelestialBody,
-        evolution: &StellarEvolution,
+        _star: &CelestialBody,
+        _evolution: &StellarEvolution,
     ) -> Result<()> {
         Ok(())
     }
 
     /// Handle r-process nucleosynthesis in neutron star mergers
-    fn process_r_process_nucleosynthesis(&self, star: &CelestialBody) -> Result<()> {
+    #[allow(dead_code)]
+    fn process_r_process_nucleosynthesis(&self, _star: &CelestialBody) -> Result<()> {
         Ok(())
     }
 
@@ -436,6 +435,7 @@ impl UniverseSimulation {
     }
 
     /// Find a suitable site for star formation
+    #[allow(dead_code)]
     fn find_star_formation_site<R: Rng>(&self, rng: &mut R) -> Result<Vector3<f64>> {
         // Uniform sampling within a sphere of radius equal to the current
         // universe radius (converted to metres). This is obviously not
@@ -481,6 +481,7 @@ impl UniverseSimulation {
     }
 
     /// Form planets around existing stars
+    #[allow(dead_code)]
     fn process_planet_formation(&mut self) -> Result<()> {
         use physics_engine::{ElementTable, MaterialType, EnvironmentProfile, StratumLayer};
 
@@ -636,6 +637,7 @@ impl UniverseSimulation {
     }
 
     /// Handle the emergence of life on habitable planets
+    #[allow(dead_code)]
     fn process_life_emergence(&mut self) -> Result<()> {
         use rand::Rng;
         let mut rng = rand::thread_rng();
@@ -804,6 +806,7 @@ impl UniverseSimulation {
         Ok(json!({ "density_grid": grid }))
     }
 
+    #[allow(dead_code)]
     fn sync_store_to_physics_engine_particles(&mut self) -> Result<()> {
         // Sync store particles into physics engine particle list
         self.physics_engine.particles.clear();
@@ -842,6 +845,7 @@ impl UniverseSimulation {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn calculate_spatial_bounds(&self) -> Result<(Vector3<f64>, Vector3<f64>)> {
         let positions = &self.store.particles.position;
         if positions.is_empty() {
@@ -1631,6 +1635,7 @@ pub struct SimulationStats {
 
 #[derive(Debug, Default)]
 struct StellarStatistics {
+    #[allow(dead_code)]
     count: usize,
     formation_rate: f64,
     average_mass: f64,
@@ -1674,9 +1679,12 @@ struct PlanetaryStatistics {
 
 #[derive(Debug, Default)]
 struct EvolutionStatistics {
+    #[allow(dead_code)]
     total_ever: usize,
     extinct: usize,
+    #[allow(dead_code)]
     average_fitness: f64,
+    #[allow(dead_code)]
     average_sentience: f64,
     average_tech: f64,
     immortal_count: usize,

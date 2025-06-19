@@ -40,6 +40,7 @@ pub mod particle_types;
 // mod qc_compat;
 pub mod quantum_chemistry;
 pub mod quantum_math;
+pub mod octree;
 
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
@@ -52,6 +53,7 @@ use std::time::Instant;
 
 use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
+use self::octree::{Octree, AABB};
 // use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT, VACUUM_PERMITTIVITY};
 use physics_types as shared_types;
 
@@ -212,6 +214,7 @@ pub struct PhysicsEngine {
     #[cfg(not(feature = "gadget"))]
     pub gadget_engine: Option<()>,
     pub spatial_grid: SpatialHashGrid,
+    pub octree: Octree,
     pub interaction_history: Vec<InteractionEvent>,
 }
 
@@ -360,26 +363,13 @@ struct AtomicUpdate {
 impl PhysicsEngine {
     /// Creates a new physics engine with optional FFI integration
     pub fn new() -> Result<Self> {
-        // TODO: Check FFI library availability when ffi module exists
-        // let ffi_status = crate::ffi::check_library_availability();
-        // if ffi_status.all_available() {
-        //     log::info!("All high-fidelity scientific libraries available");
-        //     log::info!("{}", ffi_status.status_report());
-        // } else {
-        //     log::warn!("Some scientific libraries missing - using fallback implementations");
-        //     log::warn!("{}", ffi_status.status_report());
-        // }
-
-        // Initialize FFI libraries
-        // crate::ffi::initialize_ffi_libraries()?;
-
         let mut engine = Self {
             particles: Vec::new(),
             quantum_fields: HashMap::new(),
             nuclei: Vec::new(),
             atoms: Vec::new(),
             molecules: Vec::new(),
-            quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new(),
+            quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new()?,
             interaction_matrix: InteractionMatrix::new(),
             spacetime_grid: SpacetimeGrid::new(1000, 1e-15), // Femtometer scale
             quantum_vacuum: QuantumVacuum::new(),
@@ -403,13 +393,17 @@ impl PhysicsEngine {
             neutron_decay_count: 0,
             fusion_count: 0,
             fission_count: 0,
-            ffi_available: ffi_integration::check_library_status(),
+            ffi_available: ffi_integration::LibraryStatus::detect(),
             geant4_engine: None,
             lammps_engine: None,
             gadget_engine: None,
             spatial_grid: SpatialHashGrid::new(1e-14), // 10 femtometer interaction range
+            // A default, large boundary. Will be resized dynamically.
+            octree: Octree::new(AABB::new(Vector3::zeros(), Vector3::new(1.0, 1.0, 1.0))),
             interaction_history: Vec::new(),
         };
+
+        engine.initialize_particle_properties()?;
         
         // Initialize quantum fields
         engine.initialize_quantum_fields()?;
@@ -741,17 +735,14 @@ impl PhysicsEngine {
     
     /// Process particle interactions using Geant4 if available, fallback to native
     pub fn process_particle_interactions(&mut self) -> Result<()> {
-        // Update spatial grid for optimized neighbor finding
-        self.spatial_grid.update(&self.particles);
-        
-        // TODO: Restore when FFI engines are available
-        // if let Some(ref mut geant4) = self.geant4_engine {
-        //     // Use high-fidelity Geant4 for particle physics
-        //     self.process_geant4_interactions(geant4)?;
-        // } else {
-            // Fallback to native implementation with spatial optimization
-            self.process_native_interactions_optimized()?;
-        // }
+        // If Geant4 FFI is active, use it for high-energy particles
+        if let Some(mut geant4) = self.geant4_engine.take() {
+            self.process_geant4_interactions(&mut geant4)?;
+            self.geant4_engine = Some(geant4);
+        } else {
+            // Fallback to native Rust implementation
+            self.process_native_interactions()?;
+        }
         Ok(())
     }
 
@@ -770,7 +761,7 @@ impl PhysicsEngine {
                 position: particle.position,
                 momentum: particle.momentum,
                 velocity: particle.velocity,
-                spin: particle.spin.clone(),
+                spin: particle.spin,
                 color_charge: particle.color_charge.map(|c| match c {
                     ColorCharge::Red => shared_types::ColorCharge::Red,
                     ColorCharge::Green => shared_types::ColorCharge::Green,
@@ -800,8 +791,54 @@ impl PhysicsEngine {
 
     /// Process native interactions (fallback method)
     fn process_native_interactions(&mut self) -> Result<()> {
-        // Fallback to optimized version
-        self.process_native_interactions_optimized()
+        if self.particles.is_empty() {
+            return Ok(());
+        }
+
+        // 1. Calculate the bounding box of all particles
+        let mut min = self.particles[0].position;
+        let mut max = self.particles[0].position;
+        for p in self.particles.iter().skip(1) {
+            min = min.inf(&p.position);
+            max = max.sup(&p.position);
+        }
+        let center = (min + max) / 2.0;
+        let half_dim = (max - min) / 2.0;
+        
+        // Add a small buffer to the boundary
+        let half_dim_buffered = Vector3::new(
+            half_dim.x.max(1.0),
+            half_dim.y.max(1.0),
+            half_dim.z.max(1.0)
+        );
+
+        // 2. Rebuild the octree for this step
+        self.octree = Octree::new(AABB::new(center, half_dim_buffered));
+        for i in 0..self.particles.len() {
+            self.octree.insert(i, &self.particles[i].position);
+        }
+
+        // 3. Query for interactions
+        for i in 0..self.particles.len() {
+            let p1 = &self.particles[i];
+            // This should be based on the largest possible interaction range
+            let interaction_range = 1e-14; 
+            let query_aabb = AABB::new(p1.position, Vector3::new(interaction_range, interaction_range, interaction_range));
+            
+            let potential_neighbors = self.octree.query_range(&query_aabb);
+
+            for &j in &potential_neighbors {
+                if i >= j { continue; }
+
+                let p2 = &self.particles[j];
+                let distance = (p1.position - p2.position).norm();
+                
+                if distance < self.calculate_interaction_range(p1.particle_type, p2.particle_type) {
+                    self.process_particle_pair_interaction(i, j, distance)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Process molecular dynamics using LAMMPS if available
@@ -2010,7 +2047,7 @@ impl PhysicsEngine {
         let mut update = AtomicUpdate::default();
         
         // Check for spontaneous emission
-        for (_electron_idx, electron) in atom.electrons.iter().enumerate() {
+        for electron in atom.electrons.iter() {
             if electron.binding_energy < -13.6e-19 { // Excited state (simplified)
                 if rand::random::<f64>() < 0.001 { // Spontaneous emission probability
                     // Emit photon and drop to lower energy state
@@ -2787,7 +2824,6 @@ impl PhysicsEngine {
 
     /// Validate conservation laws (energy, momentum, charge) - placeholder implementation
     fn validate_conservation_laws(&self) -> Result<()> {
-        use crate::constants::SPEED_OF_LIGHT;
 
         // Net charge should remain (approximately) conserved.
         let total_charge_c: f64 = self.particles.iter().map(|p| p.electric_charge).sum();
@@ -3150,6 +3186,12 @@ impl Default for FusionReaction {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InteractionMatrix;
+impl Default for InteractionMatrix {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InteractionMatrix {
     pub fn new() -> Self { Self }
     pub fn set_electromagnetic_coupling(&mut self, _coupling: f64) {}
@@ -3165,6 +3207,12 @@ impl SpacetimeGrid {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct QuantumVacuum;
+impl Default for QuantumVacuum {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QuantumVacuum {
     pub fn new() -> Self { Self }
     pub fn initialize_fluctuations(&mut self, _temperature: f64) -> Result<()> { Ok(()) }
@@ -3172,6 +3220,12 @@ impl QuantumVacuum {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FieldEquations;
+impl Default for FieldEquations {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FieldEquations {
     pub fn new() -> Self { Self }
     pub fn update_field(&self, _field: &mut QuantumField, _dt: f64, _particles: &[FundamentalParticle]) -> Result<()> { Ok(()) }
@@ -3179,6 +3233,12 @@ impl FieldEquations {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ParticleAccelerator;
+impl Default for ParticleAccelerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParticleAccelerator {
     pub fn new() -> Self { Self }
 }
@@ -3195,6 +3255,12 @@ pub struct RunningCouplings {
     pub alpha_s: f64,
 }
 
+impl Default for RunningCouplings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RunningCouplings {
     /// Initialise couplings at low energy (Q ≈ 0) using PDG 2024 values.
     pub fn new() -> Self {
@@ -3208,6 +3274,12 @@ impl RunningCouplings {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SymmetryBreaking;
+impl Default for SymmetryBreaking {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SymmetryBreaking {
     pub fn new() -> Self { Self }
     pub fn initialize_higgs_mechanism(&mut self) -> Result<()> { Ok(()) }
@@ -3326,6 +3398,12 @@ pub enum InteractionType {
 pub struct ElementTable {
     #[serde(with = "serde_arrays")]
     pub abundances: [u32; 118],
+}
+
+impl Default for ElementTable {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ElementTable {

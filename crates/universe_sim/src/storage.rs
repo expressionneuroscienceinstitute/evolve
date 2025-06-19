@@ -131,7 +131,7 @@ pub struct StellarEvolution {
 impl StellarEvolution {
     /// Create a new StellarEvolution record with reasonable defaults for a given stellar mass.
     pub fn new(star_mass_kg: f64) -> Self {
-        let mut nucleosynthesis = StellarNucleosynthesis::new();
+        let nucleosynthesis = StellarNucleosynthesis::new();
         // Initialize primordial composition: 75% H-1, 25% He-4 (by mass fraction)
         let core_composition = vec![
             (1, 1, 0.75),  // Hydrogen-1

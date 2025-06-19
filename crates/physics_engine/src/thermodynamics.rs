@@ -24,6 +24,12 @@ pub struct ThermoSolver {
     pub reference_pressure: f64,
 }
 
+impl Default for ThermoSolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ThermoSolver {
     pub fn new() -> Self {
         Self {

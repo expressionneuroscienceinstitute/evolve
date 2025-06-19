@@ -36,6 +36,7 @@ use ffi::*;
 #[cfg(not(feature = "geant4"))]
 mod ffi {
     use super::*;
+    use std::os::raw::{c_char, c_int, c_void};
 
     // Dummy opaque types – in the real bindings these are structs with hidden
     // fields.  We just need distinct types so pointers are well-typed.
@@ -99,6 +100,7 @@ mod ffi {
     // They keep the symbol names identical so the wrapper code compiles.
     // ---------------------------------------------------------------------
     #[inline]
+    #[allow(dead_code)]
     pub unsafe fn g4_is_available() -> c_int { 0 }
 
     #[inline]

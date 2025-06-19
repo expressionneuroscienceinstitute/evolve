@@ -175,6 +175,7 @@ pub enum ReactionMechanism {
 
 /// Force field parameters for classical molecular dynamics
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ForceFieldParameters {
     pub bond_parameters: HashMap<(ParticleType, ParticleType), BondParameters>,
     pub angle_parameters: HashMap<(ParticleType, ParticleType, ParticleType), AngleParameters>,
@@ -234,6 +235,12 @@ impl Atom {
     }
 }
 
+
+impl Default for QuantumChemistryEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl QuantumChemistryEngine {
     /// Create new quantum chemistry engine
@@ -547,8 +554,12 @@ impl QuantumChemistryEngine {
             density = &density * DENSITY_MIXING + &new_density * (1.0 - DENSITY_MIXING);
             
             previous_energy = total_energy;
-            orbital_energies = new_energies;
-            molecular_orbitals_matrix = new_orbitals;
+            // Store converged values (suppressing clippy warning - values updated in next iteration)
+            #[allow(unused_assignments)]
+            {
+                orbital_energies = new_energies;
+                molecular_orbitals_matrix = new_orbitals;
+            }
             
             if cycle % 10 == 0 {
                 println!("HF SCF cycle {}: Energy = {:.8} Hartree, ΔE = {:.2e}", 
@@ -1379,16 +1390,6 @@ impl Default for ElectronicStructure {
     }
 }
 
-impl Default for ForceFieldParameters {
-    fn default() -> Self {
-        Self {
-            bond_parameters: HashMap::new(),
-            angle_parameters: HashMap::new(),
-            dihedral_parameters: HashMap::new(),
-            van_der_waals_parameters: HashMap::new(),
-        }
-    }
-}
 
 // === Helper Functions (using quantum_math module) ===
 

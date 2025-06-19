@@ -392,7 +392,7 @@ impl World {
     /// Generate composition for a new star
     fn generate_stellar_composition(&self, mass: f64) -> ElementTable {
         // Higher mass stars form from slightly more metal-rich gas due to galactic evolution
-        let metallicity_factor = (mass / 10.0).min(2.0).max(0.5); // 0.5x to 2x solar metallicity
+        let metallicity_factor = (mass / 10.0).clamp(0.5, 2.0); // 0.5x to 2x solar metallicity
         
         let mut composition = ElementTable::new();
         composition.set_abundance(1, 730_000);  // 73% H (constant)

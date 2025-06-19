@@ -398,4 +398,5 @@ unsafe fn lammps_extract_atom(_: *mut c_void, _: *const c_char) -> *mut c_void {
 #[cfg(not(feature = "lammps"))]
 unsafe fn lammps_extract_global(_: *mut c_void, _: *const c_char) -> *mut c_void { ptr::null_mut() }
 #[cfg(not(feature = "lammps"))]
+#[allow(dead_code)]
 unsafe fn lammps_version() -> c_int { 0 } 

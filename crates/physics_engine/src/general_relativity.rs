@@ -1,20 +1,28 @@
-//! General Relativity Implementation
+//! General Relativity Implementation for Universe Simulation
+//!
+//! This module provides gravitational calculations using general relativity 
+//! (GR) as an extension to Newtonian mechanics in strong-field regimes.
+//! Key features:
 //! 
-//! Based on PDF recommendation for hybrid gravity approach.
-//! Implements relativistic corrections for high-mass and high-velocity scenarios.
-//! 
-//! ## Features
-//! - Post-Newtonian force corrections for orbital dynamics
-//! - Schwarzschild radius calculations for black hole physics
-//! - Gravitational time dilation for strong field effects
-//! - Gravitational wave strain estimation for compact objects
-//! 
-//! ## References
-//! - Einstein, A. (1915). "The Field Equations of Gravitation"
+//! - Post-Newtonian force corrections for massive objects
+//! - Schwarzschild radius calculations for black hole formation
+//! - Gravitational time dilation effects
+//! - Preliminary gravitational wave strain estimation
+//!
+//! ## Scientific Background
+//!
+//! The implementation follows the standard formulation of Einstein's field
+//! equations: G_μν = 8πG/c⁴ T_μν, where G_μν is the Einstein tensor and T_μν 
+//! is the stress-energy tensor. For weak fields and low velocities, we apply
+//! post-Newtonian expansions that correct Newtonian gravity.
+//!
+//! ## Key References
+//!
+//! - Einstein, A. (1915). "Die Feldgleichungen der Gravitation"
 //! - Weinberg, S. (1972). "Gravitation and Cosmology"
 //! - Will, C. M. (2014). "The Confrontation between General Relativity and Experiment"
 
-use anyhow::Result;
+
 
 /// Gravitational constant in SI units (CODATA 2023)
 /// Reference: NIST CODATA 2023 fundamental constants

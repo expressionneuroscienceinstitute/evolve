@@ -103,7 +103,7 @@ impl MolecularDynamics {
 
 /// A convenience function to run a single step of a molecular dynamics simulation.
 pub fn step_molecular_dynamics(
-    particles: &mut Vec<PhysicsState>,
+    particles: &mut [PhysicsState],
     force_field: &ForceField,
     time_step: f64,
 ) -> Result<()> {

@@ -11,7 +11,7 @@
 //!
 //! All types maintain full scientific rigor with proper documentation and units.
 
-use nalgebra::{Vector3, Matrix3, Complex};
+use nalgebra::{Vector3, Complex};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
@@ -222,6 +222,12 @@ pub struct ElementTable {
     /// Abundances in parts per million (ppm)
     #[serde(with = "serde_arrays")]
     pub abundances: [u32; 118],
+}
+
+impl Default for ElementTable {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ElementTable {

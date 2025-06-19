@@ -8,8 +8,7 @@ use bytemuck::{Pod, Zeroable};
 use nalgebra::{Vector3, Point3};
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
-use tracing::{info, warn, error};
-use wgpu::util::DeviceExt;
+use tracing::{info, error};
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -60,7 +59,9 @@ pub struct NativeRenderer<'window> {
     
     // Camera and view state
     camera: Camera,
+    #[allow(dead_code)]
     view_matrix: [[f32; 4]; 4],
+    #[allow(dead_code)]
     proj_matrix: [[f32; 4]; 4],
     
     // Performance metrics
@@ -126,16 +127,16 @@ impl Camera {
         
         // Calculate projection matrix
         let f = 1.0 / (self.fov / 2.0).tan();
-        let proj = [
+        
+        
+        // Multiply view * proj (simplified for demonstration)
+        // In a real implementation, use proper matrix multiplication
+        [
             [f / self.aspect, 0.0, 0.0, 0.0],
             [0.0, f, 0.0, 0.0],
             [0.0, 0.0, (self.far + self.near) / (self.near - self.far), -1.0],
             [0.0, 0.0, (2.0 * self.far * self.near) / (self.near - self.far), 0.0],
-        ];
-        
-        // Multiply view * proj (simplified for demonstration)
-        // In a real implementation, use proper matrix multiplication
-        proj // Return projection for now
+        ] // Return projection for now
     }
 }
 

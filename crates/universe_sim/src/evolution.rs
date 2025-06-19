@@ -9,6 +9,12 @@ pub struct EvolutionSystem {
     pub generation: u64,
 }
 
+impl Default for EvolutionSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EvolutionSystem {
     pub fn new() -> Self {
         Self { generation: 0 }

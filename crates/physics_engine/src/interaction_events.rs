@@ -402,10 +402,10 @@ impl StoppingPowerTable {
         // In practice, would use tabulated NIST data
         let energies: Vec<f64> = (0..100).map(|i| 0.01 * (i + 1) as f64).collect(); // 0.01 to 1 MeV
         let stopping_powers: Vec<f64> = energies.iter()
-            .map(|&energy| Self::bethe_bloch_stopping_power(energy, &material))
+            .map(|&energy| Self::bethe_bloch_stopping_power(energy, material))
             .collect();
         let ranges: Vec<f64> = energies.iter()
-            .map(|&energy| Self::csda_range(energy, &material))
+            .map(|&energy| Self::csda_range(energy, material))
             .collect();
         
         Self {

@@ -48,6 +48,12 @@ pub struct NuclearDatabase {
     decay_data: HashMap<(u32, u32), NuclearDecayData>, // (Z, A) -> decay data
 }
 
+impl Default for NuclearDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NuclearDatabase {
     /// Initialize nuclear database with known isotope data
     /// Data sources: NNDC (National Nuclear Data Center), Chart of Nuclides
@@ -442,6 +448,12 @@ pub struct StellarNucleosynthesis {
     pub advanced_burning_active: bool,
 }
 
+impl Default for StellarNucleosynthesis {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StellarNucleosynthesis {
     pub fn new() -> Self {
         let mut synth = Self {
@@ -660,6 +672,12 @@ pub struct NeutronCaptureDatabase {
     capture_data: HashMap<(u32, u32), NeutronCaptureData>, // (Z, A) -> capture data
 }
 
+impl Default for NeutronCaptureDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NeutronCaptureDatabase {
     /// Create a new neutron capture database
     pub fn new() -> Self {
@@ -830,6 +848,12 @@ pub struct ReactionCrossSectionData {
     pub thermal_cross_section: f64,
     /// Resonance integrals
     pub resonance_integral: f64,
+}
+
+impl Default for NuclearCrossSectionDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NuclearCrossSectionDatabase {

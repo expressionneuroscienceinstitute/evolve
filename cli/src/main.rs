@@ -14,7 +14,6 @@ use tracing::{error, info, warn};
 use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
 use std::collections::HashMap;
 use universe_sim::{CelestialBodyType};
-use native_renderer;
 
 mod rpc;
 
@@ -496,7 +495,7 @@ async fn cmd_start(
             }
             let checkpoint_file = save_path.join(format!("snapshot_{}.bin", sim_guard.current_tick));
             info!("Auto-saving checkpoint to {:?}", checkpoint_file);
-            if let Err(e) = persistence::save_checkpoint(&mut *sim_guard, &checkpoint_file) {
+            if let Err(e) = persistence::save_checkpoint(&mut sim_guard, &checkpoint_file) {
                 error!("Failed to save checkpoint: {}", e);
             } else {
                 // Update last save time on successful save
@@ -518,7 +517,7 @@ async fn cmd_start(
         // Send WebSocket updates every 10 ticks or so for better responsiveness
         if stats.current_tick % 10 == 0 {
             // Get a fresh lock on the simulation to get more detailed data
-            let mut sim_guard = sim.lock().unwrap();
+            let sim_guard = sim.lock().unwrap();
             
             // Get physics engine reference (extract data we need before borrowing mutably)
             let physics_data = {
@@ -2540,7 +2539,7 @@ async fn handle_rpc_request(
                 Ok(params) => {
                     let stats = {
                         let mut sim_guard = shared_state.sim.lock().unwrap();
-                        match persistence::save_checkpoint(&mut *sim_guard, &params.path) {
+                        match persistence::save_checkpoint(&mut sim_guard, &params.path) {
                             Ok(_) => sim_guard.get_stats().unwrap(),
                             Err(e) => {
                                 let error = rpc::RpcError {
@@ -2794,7 +2793,7 @@ async fn handle_rpc_request(
                 let mut sim_guard = shared_state.sim.lock().unwrap();
                 let final_checkpoint = format!("final_checkpoint_{}.bin", sim_guard.current_tick);
                 
-                let save_success = match persistence::save_checkpoint(&mut *sim_guard, &PathBuf::from(&final_checkpoint)) {
+                let save_success = match persistence::save_checkpoint(&mut sim_guard, &PathBuf::from(&final_checkpoint)) {
                     Ok(_) => {
                         info!("Final checkpoint saved to {}", final_checkpoint);
                         true

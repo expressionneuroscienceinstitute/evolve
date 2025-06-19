@@ -40,6 +40,12 @@ pub struct ClimateSolver {
     pub land_area: f64,           // m²
 }
 
+impl Default for ClimateSolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClimateSolver {
     pub fn new() -> Self {
         Self {
@@ -137,8 +143,7 @@ impl ClimateSolver {
         
         // Limit CO₂ concentration
         self.climate_state.co2_concentration = (self.climate_state.co2_concentration + co2_change)
-            .max(180.0) // Minimum for photosynthesis
-            .min(10000.0); // Maximum reasonable
+            .clamp(180.0, 10000.0); // Minimum for photosynthesis to Maximum reasonable
         
         Ok(())
     }
@@ -172,12 +177,10 @@ impl ClimateSolver {
         
         // Limits
         self.climate_state.global_temperature = self.climate_state.global_temperature
-            .max(200.0) // Minimum temperature
-            .min(400.0); // Maximum temperature
+            .clamp(200.0, 400.0); // Minimum to Maximum temperature
         
         self.climate_state.surface_temperature = self.climate_state.surface_temperature
-            .max(200.0)
-            .min(400.0);
+            .clamp(200.0, 400.0);
         
         Ok(())
     }
@@ -273,7 +276,7 @@ impl ClimateSolver {
                 state.temperature += 0.001 * temp_diff; // Slow adjustment
                 
                 // Limit particle temperatures
-                state.temperature = state.temperature.max(200.0).min(400.0);
+                state.temperature = state.temperature.clamp(200.0, 400.0);
             }
         }
         

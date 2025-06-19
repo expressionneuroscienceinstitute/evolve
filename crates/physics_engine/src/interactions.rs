@@ -558,9 +558,7 @@ fn sample_nu_e_scattering_angle(nu_energy_gev: f64, s_hat: f64, electron_momentu
     let theta = (s_hat * (1.0 - cos_theta * cos_theta)).sqrt();
     
     // Calculate scattering angle
-    let cos_theta_final = (s_hat - theta) / (2.0 * electron_momentum.norm() * nu_energy_gev);
-    
-    cos_theta_final
+    (s_hat - theta) / (2.0 * electron_momentum.norm() * nu_energy_gev)
 }
 
 /// Bethe–Heitler pair production total cross section (m²)

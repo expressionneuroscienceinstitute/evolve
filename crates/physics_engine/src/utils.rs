@@ -225,7 +225,6 @@ pub mod physics {
 
 /// Stellar physics utilities
 pub mod stellar {
-    use super::{SPEED_OF_LIGHT, BOLTZMANN};
     
     /// Calculate stellar radius using empirical mass-radius relation
     /// R ∝ M^α where α depends on stellar mass regime
@@ -486,7 +485,6 @@ pub mod performance {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use nalgebra::Vector3;
     use crate::{SPEED_OF_LIGHT, ELEMENTARY_CHARGE};
     
@@ -568,4 +566,9 @@ mod tests {
         let mass_amu = kg_to_amu(mass_kg);
         assert!((mass_amu - 1.0).abs() < 1e-10);
     }
+}
+
+#[cfg(test)]
+mod molecular_dynamics_tests {
+    // Add any necessary imports and setup for molecular dynamics tests
 } 

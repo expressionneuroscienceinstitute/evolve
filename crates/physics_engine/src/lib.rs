@@ -62,6 +62,13 @@ pub use constants::*;
 
 // Add missing imports for constants and types
 use crate::constants::{SPEED_OF_LIGHT, GRAVITATIONAL_CONSTANT, ELECTRON_MASS, MUON_MASS, TAU_MASS, C_SQUARED};
+use crate::constants::ELEMENTARY_CHARGE as E_CHARGE;
+use crate::utils::K_E;
+use crate::types::{
+    MeasurementBasis, BoundaryConditions, DecayChannel, NuclearShellState,
+    GluonField, ElectronicState, MolecularOrbital, VibrationalMode,
+    PotentialEnergySurface, ReactionCoordinate
+};
 use crate::general_relativity::{C, G, schwarzschild_radius};
 use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType};
 use crate::interaction_events::FusionReaction as FusionReactionEvent;
@@ -174,6 +181,50 @@ pub enum ColorCharge {
     Red, Green, Blue,
     AntiRed, AntiGreen, AntiBlue,
     ColorSinglet,
+}
+
+/// Stub implementations for missing types
+#[derive(Debug, Clone, Default)]
+pub struct InteractionMatrix;
+
+impl InteractionMatrix {
+    pub fn set_electromagnetic_coupling(&mut self, _coupling: f64) {}
+    pub fn set_weak_coupling(&mut self, _coupling: f64) {}
+    pub fn set_strong_coupling(&mut self, _coupling: f64) {}
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SpacetimeGrid;
+
+#[derive(Debug, Clone, Default)]
+pub struct QuantumVacuum;
+
+impl QuantumVacuum {
+    pub fn initialize_fluctuations(&mut self, _temperature: f64) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FieldEquations;
+
+#[derive(Debug, Clone, Default)]
+pub struct ParticleAccelerator;
+
+#[derive(Debug, Clone, Default)]
+pub struct RunningCouplings {
+    pub scale_gev: f64,
+    pub alpha_em: f64,
+    pub alpha_s: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SymmetryBreaking;
+
+impl SymmetryBreaking {
+    pub fn initialize_higgs_mechanism(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Quantum field representation
@@ -395,15 +446,15 @@ impl PhysicsEngine {
             atoms: Vec::new(),
             molecules: Vec::new(),
             quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new(),
-            interaction_matrix: interactions::InteractionMatrix::default(),
-            spacetime_grid: spatial::SpacetimeGrid::default(),
-            quantum_vacuum: quantum::QuantumVacuum::default(),
-            field_equations: quantum_fields::FieldEquations::default(),
-            particle_accelerator: particles::ParticleAccelerator::default(),
+            interaction_matrix: InteractionMatrix::default(),
+            spacetime_grid: SpacetimeGrid::default(),
+            quantum_vacuum: QuantumVacuum::default(),
+            field_equations: FieldEquations::default(),
+            particle_accelerator: ParticleAccelerator::default(),
             decay_channels: HashMap::new(),
             cross_sections: HashMap::new(),
-            running_couplings: quantum::RunningCouplings::default(),
-            symmetry_breaking: quantum::SymmetryBreaking::default(),
+            running_couplings: RunningCouplings::default(),
+            symmetry_breaking: SymmetryBreaking::default(),
             stellar_nucleosynthesis: StellarNucleosynthesis::new(),
             time_step: 1e-18, // default time step
             current_time: 0.0,
@@ -3713,5 +3764,19 @@ fn map_interaction_type(it: shared_types::InteractionType) -> InteractionType {
         shared_types::InteractionType::PairProduction => InteractionType::PairProduction,
         shared_types::InteractionType::Annihilation => InteractionType::Annihilation,
         _ => InteractionType::ElectromagneticScattering,
+    }
+}
+
+impl QuantumField {
+    pub fn new(_field_type: FieldType, _spacetime_grid: &SpacetimeGrid) -> Result<Self> {
+        Ok(Self {
+            field_type: _field_type,
+            field_values: vec![vec![vec![Complex::new(0.0, 0.0); 10]; 10]; 10],
+            field_derivatives: vec![vec![vec![Vector3::zeros(); 10]; 10]; 10],
+            vacuum_expectation_value: Complex::new(0.0, 0.0),
+            coupling_constants: HashMap::new(),
+            lattice_spacing: 1e-15,
+            boundary_conditions: BoundaryConditions::Periodic,
+        })
     }
 }

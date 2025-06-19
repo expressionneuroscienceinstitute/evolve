@@ -3,7 +3,7 @@
 //! Manages the 2D+Z toroidal grid universe with stratified geological layers,
 //! celestial bodies, and planetary systems with resource extraction.
 
-use crate::physics_engine::{ElementTable, EnvironmentProfile, StratumLayer, MaterialType};
+use crate::physics_engine::types::{ElementTable, EnvironmentProfile, StratumLayer, MaterialType};
 use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
 use anyhow::Result;

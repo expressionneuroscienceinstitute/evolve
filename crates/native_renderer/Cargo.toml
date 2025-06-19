@@ -25,6 +25,25 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 env_logger = { workspace = true }
 
+# Additional heavy mode dependencies for advanced rendering
+instant = "0.1"
+pollster = "0.3"
+cfg-if = "1.0"
+
+[dev-dependencies]
+approx = "0.5"
+
 [features]
 default = []
+# Heavy mode rendering with advanced physics visualization
+heavy = [
+    "physics_engine/heavy",
+    "advanced-shaders",
+    "multi-scale-rendering",
+    "scientific-visualization"
+]
+# Enhanced features for heavy mode
+advanced-shaders = []
+multi-scale-rendering = []
+scientific-visualization = []
 validation = [] 

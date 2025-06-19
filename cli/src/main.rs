@@ -6,14 +6,13 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
-use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
-use std::collections::HashMap;
-use universe_sim::{CelestialBodyType};
+use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation, CelestialBodyType};
 
 mod rpc;
 
@@ -292,20 +291,30 @@ async fn main() -> Result<()> {
 }
 
 fn init_logging(verbose: bool, trace_json: bool) {
-    let level = if verbose { "debug" } else { "info" };
-    let env_filter = tracing_subscriber::EnvFilter::new(
-        format!("universectl={},universe_sim={},physics_engine={}", level, level, level),
-    );
+    use tracing_subscriber::{fmt, EnvFilter};
+    use tracing_appender::non_blocking;
 
+    let level = if verbose { "debug" } else { "info" };
+    let env_filter = EnvFilter::new(format!(
+        "universectl={},universe_sim={},physics_engine={}",
+        level, level, level
+    ));
+
+    // Non-blocking writer reduces stalls when the terminal is slow (e.g. verbose mode)
+    let (writer, _guard) = non_blocking(std::io::stderr());
+
+    // Handle the different subscriber types by setting them directly
     if trace_json {
-        let subscriber = tracing_subscriber::fmt()
+        let subscriber = fmt::Subscriber::builder()
             .with_env_filter(env_filter)
+            .with_writer(writer)
             .json()
             .finish();
         let _ = tracing::subscriber::set_global_default(subscriber);
     } else {
-        let subscriber = tracing_subscriber::fmt()
+        let subscriber = fmt::Subscriber::builder()
             .with_env_filter(env_filter)
+            .with_writer(writer)
             .finish();
         let _ = tracing::subscriber::set_global_default(subscriber);
     }
@@ -509,7 +518,7 @@ async fn cmd_start(
             }
         }
         
-        let stats = sim_guard.get_stats().unwrap();
+        let _stats = sim_guard.get_stats().unwrap();
 
         drop(sim_guard); // Release lock before sleeping
 
@@ -517,7 +526,7 @@ async fn cmd_start(
         let elapsed = start_time.elapsed();
         
         // Send WebSocket updates every 10 ticks or so for better responsiveness
-        if stats.current_tick % 10 == 0 {
+        if _stats.current_tick % 10 == 0 {
             // Get a fresh lock on the simulation to get more detailed data
             let sim_guard = sim.lock().unwrap();
             
@@ -660,9 +669,9 @@ async fn cmd_start(
 
                 json!({
                     "kind": "full",
-                    "current_tick": stats.current_tick,
-                    "universe_age_gyr": stats.universe_age_gyr,
-                    "universe_description": stats.universe_description,
+                    "current_tick": _stats.current_tick,
+                    "universe_age_gyr": _stats.universe_age_gyr,
+                    "universe_description": _stats.universe_description,
                     "temperature": temperature,
                     "energy_density": energy_density,
                     "particles": particle_data,
@@ -711,7 +720,7 @@ async fn cmd_start(
 
                 json!({
                     "kind": "delta",
-                    "current_tick": stats.current_tick,
+                    "current_tick": _stats.current_tick,
                     "new_particles": new_particles,
                     "updated_particles": updated_particles,
                     "removed_particle_ids": removed_ids,

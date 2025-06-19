@@ -3,22 +3,29 @@ name = "universe_sim"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "universe_sim"
+path = "src/lib.rs"
+
 [dependencies]
 physics_engine = { path = "../physics_engine" }
+physics_types = { path = "../physics_types" }
 diagnostics = { path = "../diagnostics" }
-bevy_ecs = { workspace = true }
-rkyv = { workspace = true }
+agent_evolution = { path = "../agent_evolution" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
 anyhow = { workspace = true }
+tracing = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+rayon = { workspace = true }
+bevy_ecs = { workspace = true }
+rkyv = { workspace = true }
+tokio = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
-rayon = { workspace = true }
 nalgebra = { workspace = true }
-rand = { workspace = true }
 rand_chacha = { workspace = true }
-tracing = { workspace = true }
 config = { workspace = true }
 toml = { workspace = true }
 bincode = { workspace = true }

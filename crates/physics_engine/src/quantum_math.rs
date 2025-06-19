@@ -162,6 +162,7 @@ pub fn boys_function_batch(max_n: usize, t_values: &[f64]) -> Vec<Vec<f64>> {
             }
         } else {
             // Use Taylor series for small t
+            #[allow(clippy::needless_range_loop)]
             for n in 1..=max_n {
                 results[n] = 1.0 / ((2 * n + 1) as f64);
             }

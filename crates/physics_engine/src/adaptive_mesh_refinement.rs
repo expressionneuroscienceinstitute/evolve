@@ -21,7 +21,7 @@ use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::{FundamentalParticle, BoundaryConditions};
+use crate::{FundamentalParticle, types::BoundaryConditions};
 
 /// AMR grid cell with hierarchical refinement capability
 /// 

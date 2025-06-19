@@ -624,7 +624,7 @@ impl PhysicsEngine {
         // At lower temperatures, lighter particles dominate
         let thermal_mass_scale = BOLTZMANN * temperature / (SPEED_OF_LIGHT * SPEED_OF_LIGHT);
         
-        let particle_types = vec![
+        let particle_types = [
             ParticleType::Photon,     // Massless
             ParticleType::Gluon,      // Massless
             ParticleType::Electron,   // 0.511 MeV
@@ -1676,10 +1676,12 @@ impl PhysicsEngine {
         let separation = (p1.position - p2.position).norm().max(1.0e-18);
 
         // Default elastic placeholder
-        let mut interaction = interactions::Interaction::default();
-        interaction.particle_indices = (i, j);
-        interaction.cross_section = 0.0;
-        interaction.interaction_type = interactions::InteractionType::ElasticScattering;
+        let mut interaction = interactions::Interaction {
+            particle_indices: (i, j),
+            cross_section: 0.0,
+            interaction_type: interactions::InteractionType::ElasticScattering,
+            ..Default::default()
+        };
 
         // Compton (γ + e⁻)
         if (p1.particle_type == ParticleType::Photon && p2.particle_type == ParticleType::Electron) ||

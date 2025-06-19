@@ -144,36 +144,45 @@ impl EnvironmentProfile {
         molecules: &[Molecule],
         temperature: f64,
     ) -> Self {
-        let mut profile = Self::default();
-        
         // Derive temperature from kinetic energy
-        profile.temp_celsius = temperature - 273.15;
+        let temp_celsius = temperature - 273.15;
         
         // Calculate radiation from high-energy particles
         let radiation_particles = particles.iter()
             .filter(|p| p.energy > 1e-13) // MeV scale
             .count();
-        profile.radiation = radiation_particles as f64 * 1e-6; // Rough conversion
+        let radiation = radiation_particles as f64 * 1e-6; // Rough conversion
         
         // Estimate atmospheric composition from molecules
         let total_molecules = molecules.len() as f64;
-        if total_molecules > 0.0 {
+        let (atmos_oxygen, liquid_water) = if total_molecules > 0.0 {
             let oxygen_molecules = molecules.iter()
                 .filter(|m| m.atoms.iter().any(|a| a.nucleus.atomic_number == 8))
                 .count() as f64;
-            profile.atmos_oxygen = (oxygen_molecules / total_molecules).min(1.0);
+            let oxygen_fraction = (oxygen_molecules / total_molecules).min(1.0);
             
             let water_molecules = molecules.iter()
                 .filter(|m| is_water_molecule(m))
                 .count() as f64;
-            profile.liquid_water = (water_molecules / total_molecules).min(1.0);
-        }
+            let water_fraction = (water_molecules / total_molecules).min(1.0);
+            
+            (oxygen_fraction, water_fraction)
+        } else {
+            (0.0, 0.0)
+        };
         
         // Estimate pressure from particle density and temperature
         let particle_density = particles.len() as f64 / 1e9; // Rough volume estimate
-        profile.atmos_pressure = particle_density * 1.38e-23 * temperature; // Ideal gas law approximation
+        let atmos_pressure = particle_density * 1.38e-23 * temperature; // Ideal gas law approximation
         
-        profile
+        Self {
+            temp_celsius,
+            radiation,
+            atmos_oxygen,
+            liquid_water,
+            atmos_pressure,
+            ..Default::default()
+        }
     }
 }
 

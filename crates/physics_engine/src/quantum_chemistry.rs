@@ -508,13 +508,13 @@ impl QuantumChemistryEngine {
                 
                 // Build molecular orbitals
                 let mut molecular_orbitals = Vec::new();
-                for i in 0..n_basis {
+                for (i, &energy) in new_energies.iter().enumerate().take(n_basis) {
                     let coefficients = new_orbitals.column(i).iter().cloned().collect();
                     molecular_orbitals.push(MolecularOrbital {
-                        energy: new_energies[i],
+                        energy,
                         occupation: if i < n_occupied { 2.0 } else { 0.0 },
                         coefficients,
-                        orbital_type: if i < n_occupied { OrbitalType::S } else { OrbitalType::S }, // Simplified
+                        orbital_type: OrbitalType::S, // Simplified for all orbitals
                         symmetry: format!("MO_{}", i + 1),
                     });
                 }
@@ -1097,6 +1097,7 @@ impl QuantumChemistryEngine {
         let grid_spacing = (max_pos - min_pos) / (GRID_SIZE as f64 - 1.0);
         
         // Calculate electron density at each grid point
+        #[allow(clippy::needless_range_loop)]
         for i in 0..GRID_SIZE {
             for j in 0..GRID_SIZE {
                 for k in 0..GRID_SIZE {
@@ -1187,6 +1188,7 @@ impl QuantumChemistryEngine {
         }
 
         // Iterate over all atoms as the central atom of an angle
+        #[allow(clippy::needless_range_loop)]
         for j in 0..num_atoms {
             let neighbors = &adj[j];
             if neighbors.len() < 2 {
@@ -1433,6 +1435,7 @@ fn kinetic_integral(
 /// and R_N is the nuclear position.
 /// 
 /// Uses the Boys function for the fundamental integrals.
+#[allow(clippy::too_many_arguments)]
 fn nuclear_attraction_integral(
     alpha1: f64,
     center1: Vector3<f64>,

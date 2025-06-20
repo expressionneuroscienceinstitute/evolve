@@ -30,6 +30,9 @@ instant = "0.1"
 pollster = "0.3"
 cfg-if = "1.0"
 
+# New dependencies
+glyphon = "0.5"
+
 [dev-dependencies]
 approx = "0.5"
 

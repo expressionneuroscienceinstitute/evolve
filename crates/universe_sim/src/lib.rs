@@ -235,9 +235,8 @@ impl UniverseSimulation {
         // Run the standard step
         let result = self.step(self.tick_span_years);
 
-        // Emit a lightweight progress log every 100 ticks.
-        // This keeps the console quiet but gives clear evidence the simulation is advancing.
-        if self.current_tick % 100 == 0 {
+        // Emit progress logs frequently for the first 100 ticks, then every 100 ticks thereafter.
+        if self.current_tick <= 100 || self.current_tick % 100 == 0 {
             use tracing::info;
             info!(
                 tick = self.current_tick,

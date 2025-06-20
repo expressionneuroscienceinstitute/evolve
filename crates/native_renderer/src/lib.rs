@@ -189,19 +189,19 @@ struct Uniforms {
 impl Default for Camera {
     fn default() -> Self {
         Self {
-            position: Point3::new(0.0, 0.0, 10.0),
+            position: Point3::new(0.0, 0.0, 5.0), // Closer to particles
             target: Point3::new(0.0, 0.0, 0.0),
             up: Vector3::new(0.0, 1.0, 0.0),
-            fov: 45.0_f32.to_radians(),
+            fov: 60.0_f32.to_radians(), // Wider field of view
             aspect: 1.0,
-            near: 0.1,
+            near: 0.01, // Closer near plane
             far: 1000.0,
             zoom_speed: 0.1,
             pan_speed: 0.01,
             rotation_speed: 0.01,
             scale_mode: ScaleMode::Linear,
-            color_mode: ColorMode::ParticleType,
-            filter_threshold: 0.5,
+            color_mode: ColorMode::Charge, // Start with charge for better visibility
+            filter_threshold: 0.0, // No filtering initially
             view_matrix: Matrix4::identity(),
             proj_matrix: Matrix4::identity(),
         }
@@ -370,6 +370,9 @@ struct VertexInput {
     @location(2) mass: f32,
     @location(3) charge: f32,
     @location(4) temperature: f32,
+    @location(5) particle_type: f32,
+    @location(6) interaction_count: f32,
+    @location(7) _padding: f32,
 }
 
 struct VertexOutput {
@@ -396,8 +399,8 @@ fn vs_main(vertex: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Ver
         default: { offset = vec2<f32>(-0.5,  0.5); out.uv = vec2<f32>(0.0, 1.0); }
     }
     
-    // Constant particle size for initial visibility (can be replaced with mass scaling later)
-    let size = 0.03;
+    // Large particle size for initial visibility (can be replaced with mass scaling later)
+    let size = 0.2; // Much larger particles
     offset = offset * size;
     
     let world_pos = vec4<f32>(vertex.position, 1.0);
@@ -523,6 +526,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                         wgpu::VertexAttribute {
                             offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 2) as u64,
                             shader_location: 4,
+                            format: wgpu::VertexFormat::Float32,
+                        },
+                        // Particle type
+                        wgpu::VertexAttribute {
+                            offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 3) as u64,
+                            shader_location: 5,
+                            format: wgpu::VertexFormat::Float32,
+                        },
+                        // Interaction count
+                        wgpu::VertexAttribute {
+                            offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 4) as u64,
+                            shader_location: 6,
+                            format: wgpu::VertexFormat::Float32,
+                        },
+                        // Padding
+                        wgpu::VertexAttribute {
+                            offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 5) as u64,
+                            shader_location: 7,
                             format: wgpu::VertexFormat::Float32,
                         },
                     ],
@@ -673,54 +694,113 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 .collect()
         } else {
             warn!("No particles found in either store or physics engine! Creating test particles.");
-            // Create some test particles for debugging at simple positions
+            // Create some test particles for debugging at simple positions - TEMPORARILY FORCE THIS PATH
             vec![
-                // Particle at origin
+                // Particle at origin - large and bright
                 ParticleVertex {
                     position: [0.0, 0.0, 0.0],
                     velocity: [0.0, 0.0, 0.0],
-                    mass: 1e-27,
+                    mass: 1e20, // Large mass for size
                     charge: 1.6e-19,
-                    temperature: 3000.0,
-                    particle_type: 0.0,
+                    temperature: 10000.0,
+                    particle_type: 5.0,
                     interaction_count: 0.0,
                     _padding: 0.0,
                 },
-                // Particle to the right
+                // Particle to the right - negative charge
                 ParticleVertex {
-                    position: [1.0, 0.0, 0.0],
-                    velocity: [0.0, 0.0, 0.0],
-                    mass: 1e-27,
+                    position: [2.0, 0.0, 0.0],
+                    velocity: [100.0, 0.0, 0.0],
+                    mass: 1e20,
                     charge: -1.6e-19,
-                    temperature: 3000.0,
-                    particle_type: 0.0,
+                    temperature: 5000.0,
+                    particle_type: 3.0,
                     interaction_count: 0.0,
                     _padding: 0.0,
                 },
-                // Particle above
+                // Particle above - neutral
                 ParticleVertex {
-                    position: [0.0, 1.0, 0.0],
-                    velocity: [0.0, 0.0, 0.0],
-                    mass: 1e-27,
+                    position: [0.0, 2.0, 0.0],
+                    velocity: [0.0, 50.0, 0.0],
+                    mass: 1e19,
                     charge: 0.0,
                     temperature: 3000.0,
-                    particle_type: 0.0,
+                    particle_type: 1.0,
                     interaction_count: 0.0,
                     _padding: 0.0,
                 },
                 // Particle closer to camera
                 ParticleVertex {
-                    position: [0.0, 0.0, 2.0],
-                    velocity: [0.0, 0.0, 0.0],
-                    mass: 1e-27,
+                    position: [0.0, 0.0, 1.0],
+                    velocity: [0.0, 0.0, 200.0],
+                    mass: 1e18,
                     charge: 1.6e-19,
-                    temperature: 3000.0,
-                    particle_type: 0.0,
+                    temperature: 8000.0,
+                    particle_type: 2.0,
+                    interaction_count: 0.0,
+                    _padding: 0.0,
+                },
+                // Additional particles for better coverage
+                ParticleVertex {
+                    position: [-1.0, -1.0, 0.0],
+                    velocity: [-50.0, -50.0, 0.0],
+                    mass: 1e21,
+                    charge: 2.0 * 1.6e-19,
+                    temperature: 15000.0,
+                    particle_type: 7.0,
                     interaction_count: 0.0,
                     _padding: 0.0,
                 },
             ]
         };
+        
+        // TEMPORARILY FORCE TEST PARTICLES FOR DEBUGGING
+        let gpu_particles = vec![
+            // Particle at origin - large and bright
+            ParticleVertex {
+                position: [0.0, 0.0, 0.0],
+                velocity: [0.0, 0.0, 0.0],
+                mass: 1e20, // Large mass for size
+                charge: 1.6e-19,
+                temperature: 10000.0,
+                particle_type: 5.0,
+                interaction_count: 0.0,
+                _padding: 0.0,
+            },
+            // Particle to the right - negative charge (blue)
+            ParticleVertex {
+                position: [2.0, 0.0, 0.0],
+                velocity: [100.0, 0.0, 0.0],
+                mass: 1e20,
+                charge: -1.6e-19,
+                temperature: 5000.0,
+                particle_type: 3.0,
+                interaction_count: 0.0,
+                _padding: 0.0,
+            },
+            // Particle above - neutral (gray)
+            ParticleVertex {
+                position: [0.0, 2.0, 0.0],
+                velocity: [0.0, 50.0, 0.0],
+                mass: 1e19,
+                charge: 0.0,
+                temperature: 3000.0,
+                particle_type: 1.0,
+                interaction_count: 0.0,
+                _padding: 0.0,
+            },
+            // Particle closer to camera
+            ParticleVertex {
+                position: [0.0, 0.0, 1.0],
+                velocity: [0.0, 0.0, 200.0],
+                mass: 1e18,
+                charge: 1.6e-19,
+                temperature: 8000.0,
+                particle_type: 2.0,
+                interaction_count: 0.0,
+                _padding: 0.0,
+            },
+        ];
         
         self.particle_count = gpu_particles.len();
         

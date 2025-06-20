@@ -245,6 +245,16 @@ impl UniverseSimulation {
                 target_ups = self.target_ups,
                 "simulation progress"
             );
+            // Redundant stdout print to ensure visibility even if tracing subscriber is misconfigured.
+            if self.current_tick <= 10 {
+                println!(
+                    "[progress] tick={} age_gyr={:.4} particles={} UPS_target={}",
+                    self.current_tick,
+                    self.universe_state.age_gyr,
+                    self.physics_engine.particles.len(),
+                    self.target_ups
+                );
+            }
         }
 
         result

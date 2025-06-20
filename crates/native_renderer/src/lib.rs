@@ -24,6 +24,36 @@ use winit::{
 
 pub use universe_sim::UniverseSimulation;
 
+#[cfg(test)]
+mod inline_tests {
+    use super::*;
+    use std::mem;
+    
+    #[test]
+    fn test_gpu_buffer_size_limit() {
+        // Test that our buffer size calculation fits within GPU limits
+        let max_particles = 800_000;
+        let vertices_per_particle = 6;
+        let vertex_size = mem::size_of::<ParticleVertex>();
+        
+        let total_buffer_size = max_particles * vertices_per_particle * vertex_size;
+        let gpu_limit = 268_435_456; // 268 MB limit observed on macOS Metal
+        
+        println!("Buffer size calculation:");
+        println!("  Max particles: {}", max_particles);
+        println!("  Vertices per particle: {}", vertices_per_particle);
+        println!("  Vertex size: {} bytes", vertex_size);
+        println!("  Total buffer size: {} bytes ({:.1} MB)", total_buffer_size, total_buffer_size as f64 / 1_048_576.0);
+        println!("  GPU limit: {} bytes ({:.1} MB)", gpu_limit, gpu_limit as f64 / 1_048_576.0);
+        
+        assert!(total_buffer_size < gpu_limit, 
+            "Buffer size {} exceeds GPU limit {}", total_buffer_size, gpu_limit);
+        
+        // Verify ParticleVertex size matches expected
+        assert_eq!(vertex_size, 48, "ParticleVertex size should be 48 bytes");
+    }
+}
+
 /// High-performance particle vertex for GPU rendering
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]

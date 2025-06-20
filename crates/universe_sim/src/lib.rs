@@ -232,7 +232,23 @@ impl UniverseSimulation {
 
     /// Main simulation tick (alias for step with default dt)
     pub fn tick(&mut self) -> Result<()> {
-        self.step(self.tick_span_years)
+        // Run the standard step
+        let result = self.step(self.tick_span_years);
+
+        // Emit a lightweight progress log every 100 ticks.
+        // This keeps the console quiet but gives clear evidence the simulation is advancing.
+        if self.current_tick % 100 == 0 {
+            use tracing::info;
+            info!(
+                tick = self.current_tick,
+                age_gyr = self.universe_state.age_gyr,
+                particle_count = self.physics_engine.particles.len(),
+                target_ups = self.target_ups,
+                "simulation progress"
+            );
+        }
+
+        result
     }
 
     /// Main simulation step

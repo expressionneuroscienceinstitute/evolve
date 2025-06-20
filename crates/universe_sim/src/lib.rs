@@ -235,26 +235,29 @@ impl UniverseSimulation {
         // Run the standard step
         let result = self.step(self.tick_span_years);
 
-        // Emit progress logs frequently for the first 100 ticks, then every 100 ticks thereafter.
-        if self.current_tick <= 100 || self.current_tick % 100 == 0 {
-            use tracing::info;
-            info!(
-                tick = self.current_tick,
-                age_gyr = self.universe_state.age_gyr,
-                particle_count = self.physics_engine.particles.len(),
-                target_ups = self.target_ups,
-                "simulation progress"
+        // Emit progress logs every tick. When verbose mode is enabled at the CLI level, these
+        // `tracing::info!` logs will be shown in the console, giving continuous insight into the
+        // simulation. We still keep the redundant `println!` for the first few ticks to guarantee
+        // visibility even if tracing is mis-configured.
+
+        use tracing::debug;
+        debug!(
+            tick = self.current_tick,
+            age_gyr = self.universe_state.age_gyr,
+            particle_count = self.physics_engine.particles.len(),
+            target_ups = self.target_ups,
+            "simulation progress"
+        );
+
+        // To avoid overwhelming stdout, we only print the plaintext message for the first 10 ticks.
+        if self.current_tick <= 10 {
+            println!(
+                "[progress] tick={} age_gyr={:.4} particles={} UPS_target={}",
+                self.current_tick,
+                self.universe_state.age_gyr,
+                self.physics_engine.particles.len(),
+                self.target_ups
             );
-            // Redundant stdout print to ensure visibility even if tracing subscriber is misconfigured.
-            if self.current_tick <= 10 {
-                println!(
-                    "[progress] tick={} age_gyr={:.4} particles={} UPS_target={}",
-                    self.current_tick,
-                    self.universe_state.age_gyr,
-                    self.physics_engine.particles.len(),
-                    self.target_ups
-                );
-            }
         }
 
         result

@@ -267,7 +267,7 @@ struct ParticleSnapshot {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     
-    init_logging(cli.verbose, cli.trace);
+    let _guard = init_logging(cli.verbose, cli.trace);
     
     let config = load_config(cli.config.as_ref()).await?;
     
@@ -290,7 +290,7 @@ async fn main() -> Result<()> {
     }
 }
 
-fn init_logging(verbose: bool, trace_json: bool) {
+fn init_logging(verbose: bool, trace_json: bool) -> tracing_appender::non_blocking::WorkerGuard {
     use tracing_subscriber::{fmt, EnvFilter};
     use tracing_appender::non_blocking;
 
@@ -301,7 +301,7 @@ fn init_logging(verbose: bool, trace_json: bool) {
     ));
 
     // Non-blocking writer reduces stalls when the terminal is slow (e.g. verbose mode)
-    let (writer, _guard) = non_blocking(std::io::stderr());
+    let (writer, guard) = non_blocking(std::io::stderr());
 
     // Handle the different subscriber types by setting them directly
     if trace_json {
@@ -320,6 +320,7 @@ fn init_logging(verbose: bool, trace_json: bool) {
     }
 
     let _ = tracing_log::LogTracer::init();
+    guard
 }
 
 async fn load_config(config_path: Option<&PathBuf>) -> Result<SimulationConfig> {

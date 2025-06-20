@@ -12,11 +12,11 @@
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use nalgebra::{Vector3, Point3, Matrix4};
-use rayon::prelude::*;
+// use rayon::prelude::*; // Unused for now
 use std::sync::{Arc, Mutex};
 use tracing::{info, error, warn, debug};
 use winit::{
-    event::{Event, WindowEvent, KeyEvent, ElementState},
+    event::{Event, WindowEvent, ElementState},
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
     keyboard::{PhysicalKey, KeyCode},
@@ -407,7 +407,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         });
         
         // Create uniform buffer
-        let max_particles = 1_000_000; // 1M particles max
+        let max_particles = 800_000; // Reduced from 1M to fit GPU buffer limits (800k * 6 * 48 = ~230MB)
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform Buffer"),
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -577,8 +577,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             store_particles.count, physics_particles.len());
         
         // Use physics engine particles if available, otherwise store particles
-        // TEMPORARY: Force test particles for debugging
-        let gpu_particles: Vec<ParticleVertex> = if false && !physics_particles.is_empty() {
+        let gpu_particles: Vec<ParticleVertex> = if !physics_particles.is_empty() {
             info!("Using physics engine particles");
             if physics_particles.len() > 0 {
                 info!("Sample physics particle 0: pos=({:.2e}, {:.2e}, {:.2e}), mass={:.2e}, energy={:.2e}", 
@@ -591,7 +590,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 .enumerate()
                 .map(|(i, p)| {
                     // Scale positions to be visible (particles might be at cosmic scales)
-                    let scale_factor = 1e-14; // Scale down from meters to something visible
+                    let scale_factor = 1e-12; // Scale down from meters to something visible (~0.01 to 10 units)
                     ParticleVertex {
                         position: [
                             (p.position.x * scale_factor) as f32, 
@@ -612,7 +611,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                     }
                 })
                 .collect()
-        } else if false && store_particles.count > 0 {
+        } else if store_particles.count > 0 {
             info!("Using store particles");
             info!("Sample store particle 0: pos=({:.2e}, {:.2e}, {:.2e}), mass={:.2e}, temp={:.2e}", 
                 store_particles.position[0].x, store_particles.position[0].y, store_particles.position[0].z,
@@ -621,7 +620,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             (0..store_particles.count.min(self.max_particles))
                 .map(|i| {
                     // Scale positions to be visible (particles might be at cosmic scales)
-                    let scale_factor = 1e-14; // Scale down from meters to something visible
+                    let scale_factor = 1e-12; // Scale down from meters to something visible (~0.01 to 10 units)
                     ParticleVertex {
                         position: [
                             (store_particles.position[i].x * scale_factor) as f32, 

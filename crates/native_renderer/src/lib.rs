@@ -399,29 +399,23 @@ fn vs_main(vertex: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Ver
         default: { offset = vec2<f32>(-0.5,  0.5); out.uv = vec2<f32>(0.0, 1.0); }
     }
     
-    // Large particle size for initial visibility (can be replaced with mass scaling later)
-    let size = 0.2; // Much larger particles
+    // HUGE particle size for debugging visibility
+    let size = 1.0; // Massive particles for debugging
     offset = offset * size;
     
-    let world_pos = vec4<f32>(vertex.position, 1.0);
-    let clip_pos = uniforms.view_proj * world_pos;
+    // Simple world position with quad offset applied directly
+    let world_pos = vec4<f32>(vertex.position + vec3<f32>(offset, 0.0), 1.0);
     
-    // Add offset in screen space
-    out.clip_position = vec4<f32>(clip_pos.xy + offset * clip_pos.w, clip_pos.z, clip_pos.w);
+    // Transform to clip space
+    out.clip_position = uniforms.view_proj * world_pos;
     
-    // Color by charge - make colors much brighter
+    // EXTREMELY bright colors for debugging - override everything
     if (vertex.charge > 0.0) {
-        out.color = vec3<f32>(1.0, 0.0, 0.0); // Bright red for positive
+        out.color = vec3<f32>(2.0, 0.0, 0.0); // SUPER bright red for positive
     } else if (vertex.charge < 0.0) {
-        out.color = vec3<f32>(0.0, 0.0, 1.0); // Bright blue for negative
+        out.color = vec3<f32>(0.0, 0.0, 2.0); // SUPER bright blue for negative
     } else {
-        out.color = vec3<f32>(1.0, 1.0, 1.0); // White for neutral
-    }
-    
-    // Modulate by temperature
-    if (vertex.temperature > 0.0) {
-        let temp_normalized = min(vertex.temperature / 10000.0, 1.0);
-        out.color = mix(out.color, vec3<f32>(1.0, 0.8, 0.2), temp_normalized);
+        out.color = vec3<f32>(2.0, 2.0, 0.0); // SUPER bright yellow for neutral
     }
     
     return out;
@@ -429,7 +423,7 @@ fn vs_main(vertex: VertexInput, @builtin(vertex_index) vertex_index: u32) -> Ver
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Simple solid particles for debugging - no transparency
+    // SUPER SIMPLE - just output bright colors for debugging
     return vec4<f32>(in.color, 1.0);
 }
 "#;
@@ -754,53 +748,53 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             ]
         };
         
-        // TEMPORARILY FORCE TEST PARTICLES FOR DEBUGGING
-        let gpu_particles = vec![
-            // Particle at origin - large and bright
-            ParticleVertex {
-                position: [0.0, 0.0, 0.0],
-                velocity: [0.0, 0.0, 0.0],
-                mass: 1e20, // Large mass for size
-                charge: 1.6e-19,
-                temperature: 10000.0,
-                particle_type: 5.0,
-                interaction_count: 0.0,
-                _padding: 0.0,
-            },
-            // Particle to the right - negative charge (blue)
-            ParticleVertex {
-                position: [2.0, 0.0, 0.0],
-                velocity: [100.0, 0.0, 0.0],
-                mass: 1e20,
-                charge: -1.6e-19,
-                temperature: 5000.0,
-                particle_type: 3.0,
-                interaction_count: 0.0,
-                _padding: 0.0,
-            },
-            // Particle above - neutral (gray)
-            ParticleVertex {
-                position: [0.0, 2.0, 0.0],
-                velocity: [0.0, 50.0, 0.0],
-                mass: 1e19,
-                charge: 0.0,
-                temperature: 3000.0,
-                particle_type: 1.0,
-                interaction_count: 0.0,
-                _padding: 0.0,
-            },
-            // Particle closer to camera
-            ParticleVertex {
-                position: [0.0, 0.0, 1.0],
-                velocity: [0.0, 0.0, 200.0],
-                mass: 1e18,
-                charge: 1.6e-19,
-                temperature: 8000.0,
-                particle_type: 2.0,
-                interaction_count: 0.0,
-                _padding: 0.0,
-            },
-        ];
+                 // TEMPORARILY FORCE TEST PARTICLES FOR DEBUGGING - RIGHT IN FRONT OF CAMERA
+         let gpu_particles = vec![
+             // Particle directly in front of camera - GUARANTEED visibility
+             ParticleVertex {
+                 position: [0.0, 0.0, 0.0], // At origin where camera looks
+                 velocity: [0.0, 0.0, 0.0],
+                 mass: 1e20,
+                 charge: 1.6e-19, // Positive = red
+                 temperature: 10000.0,
+                 particle_type: 5.0,
+                 interaction_count: 0.0,
+                 _padding: 0.0,
+             },
+             // Particle slightly to the right - negative charge (blue)
+             ParticleVertex {
+                 position: [1.0, 0.0, 0.0],
+                 velocity: [100.0, 0.0, 0.0],
+                 mass: 1e20,
+                 charge: -1.6e-19, // Negative = blue
+                 temperature: 5000.0,
+                 particle_type: 3.0,
+                 interaction_count: 0.0,
+                 _padding: 0.0,
+             },
+             // Particle above - neutral (yellow)
+             ParticleVertex {
+                 position: [0.0, 1.0, 0.0],
+                 velocity: [0.0, 50.0, 0.0],
+                 mass: 1e19,
+                 charge: 0.0, // Neutral = yellow
+                 temperature: 3000.0,
+                 particle_type: 1.0,
+                 interaction_count: 0.0,
+                 _padding: 0.0,
+             },
+             // Particle in negative area for variety
+             ParticleVertex {
+                 position: [-1.0, 0.0, 0.0],
+                 velocity: [0.0, 0.0, 200.0],
+                 mass: 1e18,
+                 charge: 1.6e-19, // Positive = red
+                 temperature: 8000.0,
+                 particle_type: 2.0,
+                 interaction_count: 0.0,
+                 _padding: 0.0,
+             },
+         ];
         
         self.particle_count = gpu_particles.len();
         

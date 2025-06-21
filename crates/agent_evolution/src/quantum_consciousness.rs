@@ -1,20 +1,16 @@
-//! # Agent Evolution: Quantum Consciousness Module
-//!
-//! Revolutionary implementation of Orchestrated Objective Reduction (Orch-OR) theory
-//! for quantum-based consciousness simulation. This module implements cutting-edge
-//! research in quantum biology, microtubule quantum states, and gravitational collapse.
-//!
-//! Research Basis:
-//! - Orch-OR Theory (Hameroff & Penrose, 1996-2024)
-//! - Quantum Biology in Microtubules (Craddock et al., 2017)
-//! - Gravitational Collapse in Neural Systems (Penrose, 2020)
-//! - Quantum Coherence in Biological Systems (McFadden & Al-Khalili, 2018)
+//! Quantum Consciousness Models
+//! 
+//! Implements quantum-based consciousness theories including:
+//! - Orchestrated Objective Reduction (Orch-OR)
+//! - Quantum coherence in microtubules
+//! - Gravitational collapse mechanisms
+//! - Integration time calculations
 
 use anyhow::Result;
-use nalgebra::{DVector, DMatrix, Complex};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
+use nalgebra::{DVector, Complex};
 use rand::{Rng, thread_rng};
 
 /// Quantum state of a microtubule
@@ -488,8 +484,8 @@ impl QuantumConsciousnessSystem {
         }
 
         // Normalize by number of connections
-        let num_connections = self.microtubules.len() * (self.microtubules.len() - 1) / 2;
-        if num_connections > 0 {
+        if self.microtubules.len() > 1 {
+            let num_connections = self.microtubules.len() * (self.microtubules.len() - 1) / 2;
             integration /= num_connections as f64;
         }
 

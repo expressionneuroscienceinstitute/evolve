@@ -223,7 +223,7 @@ impl AIResearchDemo {
     }
 
     /// Update demo state based on AI output
-    fn update_demo_state(&mut self, output: EvolutionOutput, delta_time: f64) -> Result<()> {
+    fn update_demo_state(&mut self, output: EvolutionOutput, _delta_time: f64) -> Result<()> {
         // Update research metrics
         self.research_metrics.consciousness_level = output.consciousness_level;
         self.research_metrics.integration_strength = output.fitness_score;
@@ -292,7 +292,7 @@ impl AIResearchDemo {
             timestamp: self.demo_state.simulation_time,
             event_type: ConsciousnessEventType::ResearchBreakthrough,
             consciousness_level: self.research_metrics.consciousness_level,
-            description,
+            description: description.clone(),
             research_impact: 1.0,
         };
 

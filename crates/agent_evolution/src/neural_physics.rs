@@ -11,7 +11,7 @@
 //! - AI-accelerated Cosmological Simulations (2024)
 
 use anyhow::Result;
-use nalgebra::{DVector, DMatrix};
+use nalgebra::DVector;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -258,7 +258,7 @@ impl PhysicsInformedNeuralNetwork {
     }
 
     /// Forward pass through the PINN
-    pub fn forward(&self, input: &DVector<f64>) -> Result<DVector<f64>> {
+    pub fn forward(&self, _input: &DVector<f64>) -> Result<DVector<f64>> {
         // This would implement the actual neural network forward pass
         // For now, return a placeholder
         Ok(DVector::zeros(self.architecture.output_dim))
@@ -295,32 +295,32 @@ impl PhysicsInformedNeuralNetwork {
     }
 
     /// Compute wave equation loss: ∂²u/∂t² = c²∇²u
-    fn compute_wave_equation_loss(&self, input: &DVector<f64>, c: f64) -> Result<f64> {
+    fn compute_wave_equation_loss(&self, _input: &DVector<f64>, _c: f64) -> Result<f64> {
         // This would compute the residual of the wave equation
         // For now, return a placeholder
         Ok(0.0)
     }
 
     /// Compute heat equation loss: ∂u/∂t = α∇²u
-    fn compute_heat_equation_loss(&self, input: &DVector<f64>, alpha: f64) -> Result<f64> {
+    fn compute_heat_equation_loss(&self, _input: &DVector<f64>, _alpha: f64) -> Result<f64> {
         // This would compute the residual of the heat equation
         Ok(0.0)
     }
 
     /// Compute Schrödinger equation loss
-    fn compute_schrodinger_loss(&self, input: &DVector<f64>, hbar: f64) -> Result<f64> {
+    fn compute_schrodinger_loss(&self, _input: &DVector<f64>, _hbar: f64) -> Result<f64> {
         // This would compute the residual of the Schrödinger equation
         Ok(0.0)
     }
 
     /// Compute mass conservation loss
-    fn compute_mass_conservation_loss(&self, input: &DVector<f64>) -> Result<f64> {
+    fn compute_mass_conservation_loss(&self, _input: &DVector<f64>) -> Result<f64> {
         // This would compute the divergence of the velocity field
         Ok(0.0)
     }
 
     /// Compute energy conservation loss
-    fn compute_energy_conservation_loss(&self, input: &DVector<f64>) -> Result<f64> {
+    fn compute_energy_conservation_loss(&self, _input: &DVector<f64>) -> Result<f64> {
         // This would compute the energy conservation residual
         Ok(0.0)
     }

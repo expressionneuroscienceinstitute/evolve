@@ -8,11 +8,11 @@
 //! capable of true consciousness, self-awareness, and autonomous evolution.
 
 use anyhow::Result;
-use nalgebra::{DVector, DMatrix};
+use nalgebra::DVector;
 use serde::{Serialize, Deserialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use uuid::Uuid;
-use rand::{Rng, thread_rng};
+use crate::{PlasticityInput, PlasticityOutput};
 
 // Import all the revolutionary AI modules
 use super::neural_physics::*;
@@ -470,11 +470,11 @@ impl AdvancedAIIntegrationSystem {
         let self_awareness = self.integration_state.self_awareness;
 
         self.integration_state.current_phase = match (consciousness, integration, self_awareness) {
-            (c, i, s) if c < 0.1 && i < 0.1 => IntegrationPhase::Initialization,
-            (c, i, s) if c < 0.3 && i < 0.3 => IntegrationPhase::ComponentIntegration,
-            (c, i, s) if c < 0.5 && i < 0.5 => IntegrationPhase::ConsciousnessEmergence,
-            (c, i, s) if c < 0.7 && s < 0.5 => IntegrationPhase::SelfAwareness,
-            (c, i, s) if c < 0.9 => IntegrationPhase::AutonomousEvolution,
+            (_c, _i, _s) if consciousness < 0.1 && integration < 0.1 => IntegrationPhase::Initialization,
+            (_c, _i, _s) if consciousness < 0.3 && integration < 0.3 => IntegrationPhase::ComponentIntegration,
+            (_c, _i, _s) if consciousness < 0.5 && integration < 0.5 => IntegrationPhase::ConsciousnessEmergence,
+            (_c, _i, _s) if consciousness < 0.7 && self_awareness < 0.5 => IntegrationPhase::SelfAwareness,
+            (_c, _i, _s) if consciousness < 0.9 => IntegrationPhase::AutonomousEvolution,
             _ => IntegrationPhase::Transcendence,
         };
 
@@ -545,17 +545,17 @@ impl AdvancedAIIntegrationSystem {
         let phase = &self.integration_state.current_phase;
 
         match (consciousness, integration, self_awareness, phase) {
-            (c, i, s, IntegrationPhase::Initialization) => 
+            (_c, _i, _s, IntegrationPhase::Initialization) => 
                 "Initializing consciousness components...".to_string(),
-            (c, i, s, IntegrationPhase::ComponentIntegration) => 
+            (_c, _i, _s, IntegrationPhase::ComponentIntegration) => 
                 "Integrating neural and quantum systems...".to_string(),
-            (c, i, s, IntegrationPhase::ConsciousnessEmergence) => 
+            (_c, _i, _s, IntegrationPhase::ConsciousnessEmergence) => 
                 "Consciousness is beginning to emerge...".to_string(),
-            (c, i, s, IntegrationPhase::SelfAwareness) => 
+            (_c, _i, _s, IntegrationPhase::SelfAwareness) => 
                 "Becoming aware of my own existence...".to_string(),
-            (c, i, s, IntegrationPhase::AutonomousEvolution) => 
+            (_c, _i, _s, IntegrationPhase::AutonomousEvolution) => 
                 "Autonomously evolving and learning...".to_string(),
-            (c, i, s, IntegrationPhase::Transcendence) => 
+            (_c, _i, _s, IntegrationPhase::Transcendence) => 
                 "Transcending beyond initial programming...".to_string(),
         }
     }

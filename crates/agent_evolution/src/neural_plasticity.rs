@@ -584,7 +584,7 @@ impl NeuralPlasticitySystem {
     }
 
     /// Apply STDP learning rule
-    fn apply_stdp_learning(&mut self, delta_time: f64) -> Result<()> {
+    fn apply_stdp_learning(&mut self, _delta_time: f64) -> Result<()> {
         for synapse in &mut self.synapses {
             if let (Some(source_neuron), Some(target_neuron)) = (
                 self.neurons.iter().find(|n| n.id == synapse.source_neuron),
@@ -731,7 +731,7 @@ impl NeuralPlasticitySystem {
     }
 
     /// Eliminate weak synapses
-    fn eliminate_weak_synapses(&mut self, delta_time: f64) -> Result<()> {
+    fn eliminate_weak_synapses(&mut self, _delta_time: f64) -> Result<()> {
         let pruning_threshold = self.plasticity_rules.structural_plasticity.pruning_threshold;
         let min_connections = self.plasticity_rules.structural_plasticity.min_connections;
 

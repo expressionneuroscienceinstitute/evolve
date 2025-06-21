@@ -35,12 +35,15 @@ impl SensoryInput {
         let mut vision = Vec::new();
         let mut social = Vec::new();
         
-        // Process visual field (simplified as spatial awareness)
-        vision.extend_from_slice(&position);
-        vision.push(resource_density);
-        vision.push(temperature);
+        // Process visual field (8 values total)
+        vision.extend_from_slice(&position); // 3 values
+        vision.push(resource_density);       // 1 value
+        vision.push(temperature);            // 1 value
+        vision.push(energy / 100.0);         // 1 value (normalized)
+        vision.push(0.0);                    // 1 value (placeholder)
+        vision.push(0.0);                    // 1 value (placeholder)
         
-        // Process social information
+        // Process social information (15 values total)
         for agent_data in nearby_agents.iter().take(5) { // Limit to 5 nearest agents
             social.push(agent_data.distance);
             social.push(agent_data.energy_level);
@@ -52,30 +55,37 @@ impl SensoryInput {
             social.push(0.0);
         }
         
-        // Internal state
+        // Internal state (3 values)
         let internal_state = vec![
-            energy,
-            temperature,
-            resource_density,
+            energy / 100.0,      // Normalized energy
+            temperature / 50.0,  // Normalized temperature
+            resource_density,    // Resource density
         ];
         
-        // Environmental conditions
+        // Environmental conditions (5 values)
         let environmental = vec![
-            temperature,
-            resource_density,
-            position[0] * 1e-12, // Normalize position
-            position[1] * 1e-12,
-            position[2] * 1e-12,
+            temperature / 50.0,                    // Normalized temperature
+            resource_density,                      // Resource density
+            position[0].abs().min(1000.0) / 1000.0, // Normalized position X
+            position[1].abs().min(1000.0) / 1000.0, // Normalized position Y
+            position[2].abs().min(1000.0) / 1000.0, // Normalized position Z
         ];
+        
+        // Memory state (limit to 10 values)
+        let mut memory = memory_state.to_vec();
+        memory.truncate(10);
+        while memory.len() < 10 {
+            memory.push(0.0);
+        }
         
         Self {
-            vision,
-            audio: vec![0.0; 5], // Placeholder for audio
-            internal_state,
-            social,
-            environmental,
-            memory: memory_state.to_vec(),
-        }
+            vision,                              // 8 values
+            audio: vec![0.0; 5],                // 5 values
+            internal_state,                     // 3 values
+            social,                             // 15 values
+            environmental,                      // 5 values
+            memory,                             // 10 values
+        }                                       // Total: 46 values
     }
     
     /// Flattens all sensory inputs into a single vector for the neural network.
@@ -92,7 +102,8 @@ impl SensoryInput {
     
     /// Get the expected input size for neural network construction
     pub fn expected_size() -> usize {
-        8 + 5 + 3 + 15 + 5 + 10 // vision + audio + internal + social + environmental + memory
+        // vision(8) + audio(5) + internal(3) + social(15) + environmental(5) + memory(10)
+        46
     }
 }
 

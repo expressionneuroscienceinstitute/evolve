@@ -10,11 +10,13 @@
 //! - Synaptic Pruning and Memory Optimization (Huttenlocher, 1990)
 
 use anyhow::Result;
-use nalgebra::{DVector, DMatrix};
+use nalgebra::DVector;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, VecDeque, HashSet};
 use uuid::Uuid;
 use rand::{Rng, thread_rng};
+use std::time::{Duration, Instant};
+use crate::{PlasticityInput, PlasticityOutput};
 
 /// Memory consolidation system for advanced learning and memory optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -918,7 +920,7 @@ impl MemoryConsolidationSystem {
     fn update_memory_stores(&mut self, delta_time: f64) -> Result<()> {
         // Update short-term memory decay
         for memory in &mut self.memory_stores.short_term_memory.memories {
-            memory.consolidation_strength *= (1.0 - self.memory_stores.short_term_memory.decay_rate * delta_time);
+            memory.consolidation_strength *= 1.0 - self.memory_stores.short_term_memory.decay_rate * delta_time;
         }
 
         // Remove decayed memories
@@ -929,11 +931,8 @@ impl MemoryConsolidationSystem {
             self.memory_stores.working_memory.active_items.len() as f64 / self.memory_stores.working_memory.capacity as f64;
 
         // Update long-term memory consolidation
-        for (memory_id, status) in &mut self.memory_stores.long_term_memory.consolidation_status {
-            if let Some(memory) = self.memory_stores.long_term_memory.memories.get_mut(memory_id) {
-                status.consolidation_level += 0.001 * delta_time;
-                memory.consolidation_strength = status.consolidation_level;
-            }
+        for (_memory_id, status) in &mut self.memory_stores.long_term_memory.consolidation_status {
+            status.consolidation_level += 0.001 * delta_time;
         }
 
         Ok(())
@@ -964,10 +963,10 @@ impl MemoryConsolidationSystem {
         let mut pruned_connections = Vec::new();
 
         // Prune weak memories
-        for (memory_id, status) in &mut self.memory_stores.long_term_memory.consolidation_status {
+        for (_memory_id, status) in &mut self.memory_stores.long_term_memory.consolidation_status {
             if status.consolidation_level < self.consolidation_processes.synaptic_pruning.pruning_threshold {
                 if thread_rng().gen::<f64>() < pruning_rate {
-                    pruned_connections.push(*memory_id);
+                    pruned_connections.push(*_memory_id);
                 }
             }
         }
@@ -1207,7 +1206,7 @@ pub struct ConsolidationSummary {
 
 fn process_sleep_consolidation(sleep_cycle: &mut SleepCycle, consolidation_status: &mut HashMap<Uuid, ConsolidationStatus>, consolidation_efficiency: f64, delta_time: f64) -> Result<()> {
     // Consolidate important memories during sleep
-    for (memory_id, status) in consolidation_status {
+    for (_memory_id, status) in consolidation_status {
         if status.sleep_dependent {
             status.consolidation_level += 0.01 * delta_time * consolidation_efficiency;
             status.replay_frequency += 0.001 * delta_time;

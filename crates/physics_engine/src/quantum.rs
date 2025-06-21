@@ -6,7 +6,7 @@
 use crate::*;
 use rand::{Rng, thread_rng};
 use anyhow::Result;
-use crate::constants::FINE_STRUCTURE_CONSTANT;
+use nalgebra::{Vector3, Complex};
 
 /// Quantum mechanics solver
 pub struct QuantumSolver {
@@ -14,6 +14,9 @@ pub struct QuantumSolver {
     pub electron_rest_mass: f64,
     pub bohr_radius: f64,
     pub rydberg_energy: f64,
+    pub reduced_planck_constant: f64,
+    pub vacuum_permittivity: f64,
+    pub elementary_charge: f64,
 }
 
 impl Default for QuantumSolver {
@@ -29,6 +32,9 @@ impl QuantumSolver {
             electron_rest_mass: 9.109_383_701_5e-31, // kg
             bohr_radius: 5.291_772_106_7e-11,     // m
             rydberg_energy: 13.605_693_122_994,  // eV
+            reduced_planck_constant: 1.054_571_817e-34, // J⋅s
+            vacuum_permittivity: 8.854_187_812_8e-12, // F/m
+            elementary_charge: 1.602_176_634e-19, // C
         }
     }
 
@@ -37,6 +43,8 @@ impl QuantumSolver {
         for state in states.iter_mut() {
             self.update_quantum_transitions(state, constants)?;
             self.apply_pauli_exclusion(state)?;
+            self.evolve_quantum_state(state, constants)?;
+            self.handle_decoherence(state, constants)?;
         }
         Ok(())
     }
@@ -78,6 +86,138 @@ impl QuantumSolver {
         // and prevent multiple electrons in the same quantum state
         
         // For now, just a placeholder
+        Ok(())
+    }
+
+    /// Evolve quantum state using Schrödinger equation
+    fn evolve_quantum_state(&self, state: &mut PhysicsState, _constants: &PhysicsConstants) -> Result<()> {
+        // Simplified quantum state evolution
+        // In a full implementation, this would solve the time-dependent Schrödinger equation
+        
+        // Calculate energy from kinetic energy: E = ½mv²
+        let kinetic_energy = 0.5 * state.mass * state.velocity.magnitude().powi(2);
+        let momentum = state.mass * state.velocity.magnitude();
+        
+        // Simple phase evolution: ψ(t) = ψ(0) * exp(-iEt/ℏ)
+        // Use a simplified time evolution based on current simulation state
+        let time_evolution_phase = -kinetic_energy * 1e-12 / self.reduced_planck_constant; // Simplified time scale
+        
+        // Update quantum state amplitude (simplified)
+        // Note: PhysicsState doesn't have quantum_state field, so we'll simulate the effect
+        // by updating the entropy to reflect quantum state changes
+        state.entropy += time_evolution_phase.abs() * 1e-20; // Small entropy change
+        
+        Ok(())
+    }
+
+    /// Handle quantum decoherence
+    fn handle_decoherence(&self, state: &mut PhysicsState, constants: &PhysicsConstants) -> Result<()> {
+        // Simplified decoherence model
+        // In a full implementation, this would model interaction with environment
+        
+        let decoherence_rate = self.calculate_decoherence_rate(state, constants);
+        
+        // Apply decoherence effect to entropy (simplified)
+        let decoherence_factor = (-decoherence_rate * 1e-12).exp(); // Simplified time scale
+        state.entropy *= decoherence_factor;
+        
+        Ok(())
+    }
+
+    /// Calculate decoherence rate based on environmental factors
+    fn calculate_decoherence_rate(&self, state: &PhysicsState, constants: &PhysicsConstants) -> f64 {
+        // Simplified decoherence rate calculation
+        // Based on temperature and system size
+        
+        let thermal_energy = constants.k_b * state.temperature;
+        let system_size = state.position.magnitude().max(1e-10);
+        
+        // Decoherence rate ∝ kT / (ℏ * system_size)
+        thermal_energy / (self.reduced_planck_constant * system_size)
+    }
+
+    /// Perform quantum measurement
+    pub fn measure_quantum_state(&self, quantum_state: &mut QuantumState, measurement_basis: MeasurementBasis) -> Result<f64> {
+        // Perform quantum measurement in specified basis
+        match measurement_basis {
+            MeasurementBasis::Position => self.measure_position(quantum_state),
+            MeasurementBasis::Momentum => self.measure_momentum(quantum_state),
+            MeasurementBasis::Energy => self.measure_energy(quantum_state),
+            MeasurementBasis::Spin => self.measure_spin(quantum_state),
+        }
+    }
+
+    /// Measure position (simplified)
+    fn measure_position(&self, quantum_state: &mut QuantumState) -> Result<f64> {
+        // Simplified position measurement
+        // In a full implementation, this would collapse the wave function
+        
+        let mut rng = thread_rng();
+        let measurement_result = rng.gen_range(-1.0..1.0) * self.bohr_radius;
+        
+        // Update quantum state after measurement
+        quantum_state.wave_function = vec![Complex::new(1.0, 0.0)];
+        quantum_state.superposition_amplitudes.clear();
+        
+        Ok(measurement_result)
+    }
+
+    /// Measure momentum (simplified)
+    fn measure_momentum(&self, quantum_state: &mut QuantumState) -> Result<f64> {
+        // Simplified momentum measurement
+        let mut rng = thread_rng();
+        let measurement_result = rng.gen_range(-1.0..1.0) * self.reduced_planck_constant / self.bohr_radius;
+        
+        // Update quantum state after measurement
+        quantum_state.wave_function = vec![Complex::new(1.0, 0.0)];
+        quantum_state.superposition_amplitudes.clear();
+        
+        Ok(measurement_result)
+    }
+
+    /// Measure energy (simplified)
+    fn measure_energy(&self, quantum_state: &mut QuantumState) -> Result<f64> {
+        // Simplified energy measurement
+        let energy = quantum_state.energy_level;
+        
+        // Update quantum state after measurement
+        quantum_state.wave_function = vec![Complex::new(1.0, 0.0)];
+        quantum_state.superposition_amplitudes.clear();
+        
+        Ok(energy)
+    }
+
+    /// Measure spin (simplified)
+    fn measure_spin(&self, quantum_state: &mut QuantumState) -> Result<f64> {
+        // Simplified spin measurement
+        let spin = quantum_state.spin_quantum_number;
+        
+        // Update quantum state after measurement
+        quantum_state.wave_function = vec![Complex::new(1.0, 0.0)];
+        quantum_state.superposition_amplitudes.clear();
+        
+        Ok(spin)
+    }
+
+    /// Create entangled quantum state
+    pub fn create_entangled_state(&self, particle1: &mut FundamentalParticle, particle2: &mut FundamentalParticle) -> Result<()> {
+        // Create Bell state: |ψ⟩ = (|00⟩ + |11⟩) / √2
+        
+        // Initialize quantum states
+        particle1.quantum_state = QuantumState::new();
+        particle2.quantum_state = QuantumState::new();
+        
+        // Create superposition
+        particle1.quantum_state.superposition_amplitudes.insert("0".to_string(), Complex::new(1.0 / 2.0_f64.sqrt(), 0.0));
+        particle1.quantum_state.superposition_amplitudes.insert("1".to_string(), Complex::new(1.0 / 2.0_f64.sqrt(), 0.0));
+        
+        particle2.quantum_state.superposition_amplitudes.insert("0".to_string(), Complex::new(1.0 / 2.0_f64.sqrt(), 0.0));
+        particle2.quantum_state.superposition_amplitudes.insert("1".to_string(), Complex::new(1.0 / 2.0_f64.sqrt(), 0.0));
+        
+        // Mark particles as entangled
+        particle1.quantum_state.entanglement_partners.push(0); // Will be updated with actual index
+        particle2.quantum_state.entanglement_partners.push(0); // Will be updated with actual index
+        
         Ok(())
     }
 
@@ -140,6 +280,58 @@ impl QuantumSolver {
             occupation_probability: 1.0,
             ..Default::default()
         }
+    }
+
+    /// Calculate quantum mechanical expectation value
+    pub fn expectation_value(&self, quantum_state: &QuantumState, observable: &str) -> f64 {
+        match observable {
+            "energy" => quantum_state.energy_level,
+            "position" => 0.0, // Simplified - would integrate ψ* x ψ
+            "momentum" => 0.0, // Simplified - would integrate ψ* p ψ
+            "spin" => quantum_state.spin_quantum_number,
+            _ => 0.0,
+        }
+    }
+
+    /// Calculate quantum mechanical uncertainty
+    pub fn uncertainty(&self, quantum_state: &QuantumState, observable: &str) -> f64 {
+        // Simplified uncertainty calculation
+        // In a full implementation, this would calculate ΔA = √(⟨A²⟩ - ⟨A⟩²)
+        
+        match observable {
+            "energy" => quantum_state.energy_level * 0.1, // 10% uncertainty
+            "position" => self.bohr_radius * 0.5,
+            "momentum" => self.reduced_planck_constant / self.bohr_radius * 0.5,
+            "spin" => 0.5,
+            _ => 0.0,
+        }
+    }
+
+    /// Apply quantum operator to state
+    pub fn apply_operator(&self, quantum_state: &mut QuantumState, operator: &str) -> Result<()> {
+        match operator {
+            "position" => {
+                // Apply position operator (simplified)
+                for amplitude in quantum_state.wave_function.iter_mut() {
+                    *amplitude *= Complex::new(0.0, 1.0); // Phase shift
+                }
+            },
+            "momentum" => {
+                // Apply momentum operator (simplified)
+                for amplitude in quantum_state.wave_function.iter_mut() {
+                    *amplitude *= Complex::new(0.0, -1.0); // Phase shift
+                }
+            },
+            "energy" => {
+                // Apply energy operator (simplified)
+                for amplitude in quantum_state.wave_function.iter_mut() {
+                    *amplitude *= Complex::new(quantum_state.energy_level, 0.0);
+                }
+            },
+            _ => return Err(anyhow::anyhow!("Unknown operator: {}", operator)),
+        }
+        
+        Ok(())
     }
 }
 
@@ -262,24 +454,59 @@ mod tests {
         let solver = QuantumSolver::new();
         
         // Classical case (E > V)
-        let prob_classical = solver.tunneling_probability(2.0, 1.0, 1e-9);
-        assert_eq!(prob_classical, 1.0);
+        let prob = solver.tunneling_probability(2.0, 1.0, 1e-10);
+        assert_relative_eq!(prob, 1.0, epsilon = 1e-10);
         
         // Quantum tunneling case (E < V)
-        let prob_tunnel = solver.tunneling_probability(1.0, 2.0, 1e-9);
-        assert!(prob_tunnel > 0.0);
-        assert!(prob_tunnel < 1.0);
+        let prob = solver.tunneling_probability(0.5, 1.0, 1e-10);
+        assert!(prob < 1.0);
+        assert!(prob > 0.0);
     }
 
     #[test]
     fn test_quantum_state_generation() {
         let solver = QuantumSolver::new();
-        
         let state = solver.generate_electron_state(2, 1, 0);
         
         assert_eq!(state.principal_quantum_number, 2);
         assert_eq!(state.orbital_angular_momentum, 1);
         assert_eq!(state.magnetic_quantum_number, 0);
-        assert_eq!(state.spin_quantum_number, 0.5);
+        assert_relative_eq!(state.spin_quantum_number, 0.5, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_entangled_state_creation() {
+        let solver = QuantumSolver::new();
+        let mut particle1 = FundamentalParticle::new(ParticleType::Electron, 9.109_383_701_5e-31, Vector3::zeros());
+        let mut particle2 = FundamentalParticle::new(ParticleType::Electron, 9.109_383_701_5e-31, Vector3::zeros());
+        
+        let result = solver.create_entangled_state(&mut particle1, &mut particle2);
+        assert!(result.is_ok());
+        
+        // Check that particles are marked as entangled
+        assert!(!particle1.quantum_state.entanglement_partners.is_empty());
+        assert!(!particle2.quantum_state.entanglement_partners.is_empty());
+    }
+
+    #[test]
+    fn test_quantum_measurement() {
+        let solver = QuantumSolver::new();
+        let mut quantum_state = QuantumState::new();
+        
+        // Test energy measurement
+        let energy = solver.measure_energy(&mut quantum_state).unwrap();
+        assert!(energy >= 0.0);
+        
+        // Test that measurement collapses the state
+        assert!(quantum_state.superposition_amplitudes.is_empty());
+    }
+
+    #[test]
+    fn test_expectation_value() {
+        let solver = QuantumSolver::new();
+        let quantum_state = QuantumState::new();
+        
+        let energy_exp = solver.expectation_value(&quantum_state, "energy");
+        assert_relative_eq!(energy_exp, quantum_state.energy_level, epsilon = 1e-10);
     }
 }

@@ -8,7 +8,7 @@ endf-b-viii.0/**
 endf-b-viii.0/*
 endf-b-viii.0-full.zip
 endfb-viii.0-neutrons.zip
-.cursor/rules/*
+.cursor/
 **/build/*
 agent_refactor_monitor.log
 sim_output.log

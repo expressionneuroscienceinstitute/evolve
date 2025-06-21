@@ -25,6 +25,7 @@ pub mod phase_transitions;
 pub mod quantum;
 pub mod quantum_fields;
 pub mod spatial;
+pub mod sph; // NEW: Smoothed Particle Hydrodynamics
 pub mod thermodynamics;
 pub mod utils;
 pub mod validation;
@@ -50,10 +51,12 @@ use rand::{Rng, thread_rng};
 use rand::distributions::Distribution;
 use rayon::prelude::*;
 use std::time::Instant;
+use tracing::debug;
 
 use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
 use self::octree::{Octree, AABB};
+use self::sph::{SphSolver, SphParticle, KernelType}; // NEW: SPH imports
 // use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT, VACUUM_PERMITTIVITY};
 use physics_types as shared_types;
 
@@ -282,6 +285,8 @@ pub struct PhysicsEngine {
     pub spatial_grid: SpatialHashGrid,
     pub octree: Octree,
     pub interaction_history: Vec<InteractionEvent>,
+    /// SPH solver for fluid dynamics and star formation
+    pub sph_solver: SphSolver,
 }
 
 /// Atomic nucleus with detailed structure
@@ -463,6 +468,7 @@ impl PhysicsEngine {
             // A default, large boundary. Will be resized dynamically.
             octree: Octree::new(AABB::new(Vector3::zeros(), Vector3::new(1.0, 1.0, 1.0))),
             interaction_history: Vec::new(),
+            sph_solver: SphSolver::default(),
         };
 
         engine.initialize_particle_properties()?;
@@ -751,16 +757,19 @@ impl PhysicsEngine {
             // 3. Gravitational dynamics (GADGET or native)
             self.process_gravitational_dynamics()?;
 
-            // 4. Nuclear physics
+            // 4. SPH hydrodynamics for fluid dynamics and star formation
+            self.process_sph_hydrodynamics()?;
+
+            // 5. Nuclear physics
             self.process_nuclear_fusion()?;
             self.process_nuclear_fission()?;
             self.update_nuclear_shells()?;
 
-            // 5. Atomic physics & phase changes
+            // 6. Atomic physics & phase changes
             self.update_atomic_physics()?;
             self.process_phase_transitions()?;
 
-            // 6. Emergent phenomena & quantum fields
+            // 7. Emergent phenomena & quantum fields
             let mut emergent_states: Vec<PhysicsState> = self
                 .particles
                 .iter()
@@ -835,6 +844,53 @@ impl PhysicsEngine {
             // Fallback to native gravity calculations
             self.update_gravitational_forces()?;
         // }
+        Ok(())
+    }
+
+    /// Process SPH hydrodynamics for fluid dynamics and star formation
+    pub fn process_sph_hydrodynamics(&mut self) -> Result<()> {
+        // Convert gas particles (Hydrogen, Helium) to SPH particles
+        let gas_particles: Vec<_> = self.particles
+            .iter()
+            .filter(|p| matches!(p.particle_type, ParticleType::Hydrogen | ParticleType::Helium))
+            .cloned()
+            .collect();
+        
+        if gas_particles.is_empty() {
+            return Ok(());
+        }
+        
+        // Convert to SPH particles
+        let mut sph_particles = self.sph_solver.convert_to_sph_particles(gas_particles);
+        
+        if sph_particles.is_empty() {
+            return Ok(());
+        }
+        
+        // Compute SPH time step
+        let sph_dt = self.sph_solver.compute_time_step(&sph_particles);
+        let sph_dt = sph_dt.min(self.time_step); // Use smaller of SPH or physics time step
+        
+        // Integrate SPH particles
+        self.sph_solver.integrate_step(&mut sph_particles, sph_dt)?;
+        
+        // Convert back to regular particles and update positions
+        let updated_particles = self.sph_solver.convert_from_sph_particles(sph_particles);
+        
+        // Update original particle positions and velocities
+        let mut sph_idx = 0;
+        for i in 0..self.particles.len() {
+            if matches!(self.particles[i].particle_type, ParticleType::Hydrogen | ParticleType::Helium) {
+                if sph_idx < updated_particles.len() {
+                    self.particles[i].position = updated_particles[sph_idx].position;
+                    self.particles[i].velocity = updated_particles[sph_idx].velocity;
+                    self.particles[i].momentum = updated_particles[sph_idx].mass * updated_particles[sph_idx].velocity;
+                    sph_idx += 1;
+                }
+            }
+        }
+        
+        debug!("Processed SPH hydrodynamics for {} gas particles", updated_particles.len());
         Ok(())
     }
 

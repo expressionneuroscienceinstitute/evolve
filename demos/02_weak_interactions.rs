@@ -37,7 +37,7 @@ fn main() -> Result<()> {
     // Run simulation for longer time to see beta decays
     let total_steps = 10000;
     for tick in 0..total_steps {
-        engine.step()?;
+        engine.step(dt)?;
         
         // Output every 1000 steps
         if tick % 1000 == 0 {
@@ -202,7 +202,7 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
     }
     
     // Update all particle energies
-    engine.update_particle_energies()?;
+    // engine.update_particle_energies()?;  // This is a private method
     
     Ok(())
 }

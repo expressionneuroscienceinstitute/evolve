@@ -536,7 +536,7 @@ impl JeansInstabilitySolver {
         mass: f64,
         analysis: &JeansAnalysis,
     ) -> Particle {
-        Particle::new(ParticleType::SinkParticle, mass, position)
+        Particle::new(ParticleType::DarkMatter, mass, position)
     }
 }
 

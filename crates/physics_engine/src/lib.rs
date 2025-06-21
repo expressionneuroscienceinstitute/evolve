@@ -53,32 +53,25 @@ use serde::{Serialize, Deserialize};
 use anyhow::{Result};
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
-use rand::distributions::Distribution;
-use rayon::prelude::*;
-use std::time::Instant;
 use log;
 
 use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
-use self::spatial::{SpatialHashGrid, SpatialGridStats};
+use self::spatial::SpatialHashGrid;
 use self::octree::{Octree, AABB};
-use self::sph::SphSolver; // NEW: SPH imports
-use self::radiative_transfer::RadiativeTransferSolver; // NEW: Radiative transfer imports
-use self::jeans_instability::JeansInstabilitySolver; // NEW: Jeans instability imports
 // use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT, VACUUM_PERMITTIVITY};
 use physics_types as shared_types;
 
 pub use constants::*;
 
 // Add missing imports for constants and types
-use crate::utils::K_E;
 use crate::types::{
     MeasurementBasis, DecayChannel, NuclearShellState,
     GluonField, ElectronicState, MolecularOrbital, VibrationalMode,
     PotentialEnergySurface, ReactionCoordinate
 };
-use crate::general_relativity::{C, G, schwarzschild_radius};
+use crate::general_relativity::schwarzschild_radius;
 use crate::types::{PhysicsState, InteractionEvent};
-use crate::particle_types::{BoundaryConditions, InteractionType};
+use crate::particle_types::BoundaryConditions;
 
 /// Fundamental particle types in the Standard Model
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

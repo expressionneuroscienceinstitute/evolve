@@ -22,15 +22,7 @@
 //! - Weinberg, S. (1972). "Gravitation and Cosmology"
 //! - Will, C. M. (2014). "The Confrontation between General Relativity and Experiment"
 
-
-
-/// Gravitational constant in SI units (CODATA 2023)
-/// Reference: NIST CODATA 2023 fundamental constants
-pub const G: f64 = 6.67430e-11; // m³ kg⁻¹ s⁻²
-
-/// Speed of light in vacuum (exact definition)
-/// Reference: BIPM International System of Units (SI), 9th edition
-pub const C: f64 = 299792458.0; // m/s
+use crate::constants::{C, G};
 
 /// Schwarzschild radius calculation: Rs = 2GM/c²
 /// 

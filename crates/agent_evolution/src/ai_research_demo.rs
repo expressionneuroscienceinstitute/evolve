@@ -292,7 +292,7 @@ impl AIResearchDemo {
             timestamp: self.demo_state.simulation_time,
             event_type: ConsciousnessEventType::ResearchBreakthrough,
             consciousness_level: self.research_metrics.consciousness_level,
-            description,
+            description: description.clone(),
             research_impact: 1.0,
         };
 

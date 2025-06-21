@@ -28,6 +28,18 @@ pub mod neural_plasticity;
 pub mod memory_consolidation;
 pub mod advanced_ai_integration;
 
+// AI Research Demo module
+pub mod ai_research_demo;
+
+// New module for real AI organisms
+pub mod evolutionary_organism;
+
+// New: Autonomous communication evolution
+pub mod autonomous_communication;
+
+// NEW: Shows how neurons emerge from physics
+pub mod emergent_neural_formation;
+
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
@@ -49,6 +61,12 @@ pub use integrated_information::*;
 pub use neural_plasticity::*;
 pub use memory_consolidation::*;
 pub use advanced_ai_integration::*;
+
+// Re-export AI Research Demo types
+pub use ai_research_demo::*;
+
+// Re-export evolutionary organism types
+pub use evolutionary_organism::*;
 
 /// Main Agent Evolution System
 #[derive(Debug, Clone, Serialize, Deserialize)]

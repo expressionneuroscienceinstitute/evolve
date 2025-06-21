@@ -4,6 +4,9 @@
 //! self-modification capabilities, and natural selection pressures.
 //! Designed to be the most advanced AI evolution simulation ever created.
 
+#![cfg_attr(all(not(feature = "unstable-agent"), not(test)), deny(warnings, clippy::all, clippy::pedantic))]
+#![allow(clippy::ptr_arg)]
+
 use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use uuid::Uuid;

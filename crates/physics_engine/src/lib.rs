@@ -50,7 +50,6 @@ use rand::{Rng, thread_rng};
 use rand::distributions::Distribution;
 use rayon::prelude::*;
 use std::time::Instant;
-use log;
 
 use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
@@ -437,15 +436,15 @@ impl PhysicsEngine {
             atoms: Vec::new(),
             molecules: Vec::new(),
             quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new(),
-            interaction_matrix: InteractionMatrix::default(),
-            spacetime_grid: SpacetimeGrid::default(),
-            quantum_vacuum: QuantumVacuum::default(),
-            field_equations: FieldEquations::default(),
-            particle_accelerator: ParticleAccelerator::default(),
+            interaction_matrix: InteractionMatrix,
+            spacetime_grid: SpacetimeGrid,
+            quantum_vacuum: QuantumVacuum,
+            field_equations: FieldEquations,
+            particle_accelerator: ParticleAccelerator,
             decay_channels: HashMap::new(),
             cross_sections: HashMap::new(),
             running_couplings: RunningCouplings::default(),
-            symmetry_breaking: SymmetryBreaking::default(),
+            symmetry_breaking: SymmetryBreaking,
             stellar_nucleosynthesis: StellarNucleosynthesis::new(),
             time_step: 1e-18, // default time step
             current_time: 0.0,
@@ -2643,7 +2642,7 @@ impl PhysicsEngine {
         
         // For binary fission, estimate fragment masses
         let fragment1_a = parent_a / 2;
-        let fragment2_a = parent_a - fragment1_a - 2; // Assume 2 neutrons emitted
+        let fragment2_a = parent_a - fragment1_a - 2; // Assume 2 neutrons are emitted
         
         // Estimate Z distribution using charge asymmetry (Wahl systematics)
         let fragment1_z = (parent_z * fragment1_a) / parent_a;

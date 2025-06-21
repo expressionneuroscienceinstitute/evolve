@@ -64,15 +64,62 @@ cargo run --bin universectl -- start --native-render
 
 ### Quantum Chemistry Angular Momentum
 - [ ] **Implement Higher Angular Momentum Support**
-  - **Files**: `crates/physics_engine/src/quantum_chemistry.rs:767`
+  - **Files**: `crates/physics_engine/src/quantum_chemistry.rs:765`
   - **Current State**: `unimplemented!("Angular momentum > 3 not supported yet")`
   - **Required**: Support for d-orbitals (l=2), f-orbitals (l=3), and higher in basis set calculations
   - **Impact**: Limits molecular calculations to simple s and p orbitals only
   - **Effort**: High - requires advanced quantum chemistry knowledge
 
----
+### NEWLY IDENTIFIED: Critical Physics Validation Issues
+- [ ] **Fix Panic-Based Error Handling in ENDF Nuclear Database**
+  - **Files**: `crates/physics_engine/src/endf_data.rs:659`, `crates/physics_engine/src/endf_data.rs:704`
+  - **Current State**: `panic!("Failed to parse {}: {}", filename, e);` and `panic!("Failed to load full ENDF database: {}", e);`
+  - **Required**: Replace panic! calls with proper Result<T, E> error handling
+  - **Impact**: CRITICAL - Nuclear database failures cause application crashes instead of graceful error handling
+  - **Effort**: Low - straightforward error handling refactor
+  - **Note**: All panic! calls should be replaced with proper error propagation per [user preferences][[memory:8282365430725387812]]
 
-## ⚡ HIGH PRIORITY - Scientific Accuracy Overhaul
+### NEWLY IDENTIFIED: Critical Simplified Physics Implementations
+- [ ] **Replace Primitive Electromagnetic Field Solver**
+  - **Files**: `crates/physics_engine/src/electromagnetic.rs:2-106`
+  - **Current State**: "Implements simplified FDTD" with basic field calculations
+  - **Required**: Full Maxwell equations solver with proper boundary conditions, Poynting vector, and radiation fields
+  - **Impact**: Current EM solver lacks realistic field propagation and radiation physics
+  - **Effort**: High - requires advanced electromagnetic theory expertise
+  - **Note**: Current implementation missing proper wave equation solutions
+
+- [ ] **Implement Real Thermodynamic Equations of State**
+  - **Files**: `crates/physics_engine/src/thermodynamics.rs:80-99`, `crates/physics_engine/src/emergent_properties.rs:100-118`
+  - **Current State**: "simplified" ideal gas law and Van der Waals approximations
+  - **Required**: Comprehensive EOS for stellar interiors, dense matter, and phase transitions (Peng-Robinson, virial expansions)
+  - **Impact**: Stellar cores and dense matter physics require accurate pressure-temperature-density relations
+  - **Effort**: High - requires advanced thermodynamics and stellar physics
+  - **Note**: Current EOS too primitive for realistic stellar structure
+
+- [ ] **Replace Simplified Cross-Section Calculations**
+  - **Files**: `crates/physics_engine/src/utils.rs:136`, `crates/physics_engine/src/nuclear_physics.rs:417`
+  - **Current State**: "simplified cross-section calculation" and basic rate coefficients
+  - **Required**: Temperature-dependent cross-sections with proper nuclear data interpolation
+  - **Impact**: Nuclear reaction rates are scientifically inaccurate without proper cross-sections
+  - **Effort**: Medium - nuclear physics database integration
+  - **Note**: ENDF database available but not fully utilized for cross-sections
+
+- [ ] **Implement Real Climate/Atmospheric Models**
+  - **Files**: `crates/physics_engine/src/climate.rs:71-287`
+  - **Current State**: "simplified ocean boxes" and basic atmospheric chemistry
+  - **Required**: 3D atmospheric circulation, realistic ocean-atmosphere coupling, proper radiative transfer
+  - **Impact**: Planet habitability calculations are primitive without realistic climate models
+  - **Effort**: Very High - requires atmospheric physics and climate modeling expertise
+  - **Note**: Current model lacks atmospheric dynamics and realistic feedback loops
+
+### NEWLY IDENTIFIED: Agent Evolution System Gaps
+- [ ] **Replace Placeholder AI Core with Modern Architecture**
+  - **Files**: `crates/agent_evolution/src/ai_core.rs:37`, multiple simplified implementations
+  - **Current State**: "simplified as spatial awareness" and basic feedforward networks
+  - **Required**: Modern neural architectures (transformers, attention mechanisms, memory systems)
+  - **Impact**: Current AI system is too primitive for realistic consciousness emergence
+  - **Effort**: Very High - requires modern AI/ML expertise
+  - **Note**: Current implementation predates modern LLM architectures
 
 ### CRITICAL: Missing Hydrodynamics for Star Formation
 - [ ] **Implement Smoothed Particle Hydrodynamics (SPH) Engine**

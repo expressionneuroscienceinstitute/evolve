@@ -1,7 +1,8 @@
 //! Universe Simulation Core Library
-//! 
-//! Implements the complete universe simulation from Big Bang to far future
-//! with autonomous AI agents evolving toward immortality.
+//! Provides high-level orchestration of cosmic evolution, physics engine integration, and AI systems.
+
+#![cfg_attr(all(not(feature = "unstable-universe"), not(test)), deny(warnings, clippy::all, clippy::pedantic))]
+#![cfg_attr(feature = "unstable-universe", allow(dead_code))]
 
 use anyhow::{Result, anyhow};
 use diagnostics::DiagnosticsSystem;
@@ -327,6 +328,7 @@ impl UniverseSimulation {
     }
 
     /// Update physics simulation
+    #[allow(dead_code)]
     fn update_physics(&mut self) -> Result<()> {
         // Advance physics engine if available; ignore errors for placeholder
         let dt = self.physics_engine.time_step;
@@ -335,6 +337,7 @@ impl UniverseSimulation {
     }
 
     /// Update agent evolution and behavior
+    #[allow(dead_code)]
     fn update_agent_evolution(&mut self) -> Result<()> {
         // This will be implemented in the agents module
         // For now, just a placeholder
@@ -342,6 +345,7 @@ impl UniverseSimulation {
     }
 
     /// Update cosmic-scale processes based on current physical conditions
+    #[allow(dead_code)]
     fn update_cosmic_processes(&mut self, _dt: f64) -> Result<()> {
         // Currently we model only stellar evolution and star formation.
         // Planet formation and other processes are stubbed for now.
@@ -452,6 +456,7 @@ impl UniverseSimulation {
     }
 
     /// Form new stars from dense gas clouds
+    #[allow(dead_code)]
     fn process_star_formation(&mut self) -> Result<()> {
         use rand::Rng;
         // For performance in tiny unit-tests we cap star formation attempts.
@@ -515,6 +520,7 @@ impl UniverseSimulation {
     }
 
     /// Sample a stellar mass from the Initial Mass Function (IMF)
+    #[allow(dead_code)]
     fn sample_stellar_mass_from_imf<R: Rng>(&self, rng: &mut R) -> f64 {
         // Salpeter IMF (α = 2.35) in the range 0.08 – 100 M☉.
         const ALPHA: f64 = 2.35;
@@ -786,7 +792,8 @@ impl UniverseSimulation {
         Ok(())
     }
 
-    /// Check for victory conditions (e.g., immortality achieved)
+    /// Check if victory conditions have been met
+    #[allow(dead_code)]
     fn check_victory_conditions(&mut self) -> Result<()> {
         Ok(())
     }
@@ -1573,6 +1580,7 @@ impl UniverseSimulation {
     }
 
     /// Record current simulation statistics into rolling history for trend analysis.
+    #[allow(dead_code)]
     fn record_stats(&mut self) -> Result<()> {
         // Gather statistics using existing helper
         let stats_snapshot = self.get_stats()?;
@@ -1666,10 +1674,9 @@ impl UniverseSimulation {
     
     /// Get cosmological parameters from physics engine
     fn get_cosmological_parameters(&self) -> Option<CosmologicalParameters> {
-        // Extract cosmological parameters from GADGET gravity solver if available
         #[cfg(feature = "gadget")]
-        if let Some(ref gadget_engine) = self.physics_engine.gadget_engine {
-            return Some(gadget_engine.get_cosmological_parameters().clone());
+        {
+            // GADGET gravity solver integration is not active yet; fallback below
         }
         
         // Fallback: create parameters from current universe state

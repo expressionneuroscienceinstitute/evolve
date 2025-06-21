@@ -49,6 +49,8 @@ heavy = [
     "multi-scale-rendering",
     "scientific-visualization"
 ]
+# Experimental work-in-progress code; must be off in release CI
+unstable-renderer = []
 # Enhanced features for heavy mode
 advanced-shaders = []
 multi-scale-rendering = []

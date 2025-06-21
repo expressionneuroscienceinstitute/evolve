@@ -2709,7 +2709,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "approx 0.5.1",
- "bevy_ecs",
  "endf_parser",
  "itertools",
  "libm",
@@ -2725,7 +2724,6 @@ dependencies = [
  "rayon",
  "serde",
  "serde_arrays",
- "tempfile",
  "thiserror 1.0.69",
  "tracing",
 ]

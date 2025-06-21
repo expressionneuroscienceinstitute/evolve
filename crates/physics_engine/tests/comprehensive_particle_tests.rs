@@ -6,6 +6,7 @@ use physics_engine::*;
 use physics_engine::particles::*;
 use physics_engine::nuclear_physics::*;
 use physics_engine::interactions::*;
+use physics_engine::utils::K_E; // Coulomb constant
 
 /// Test comprehensive particle database coverage
 #[test]

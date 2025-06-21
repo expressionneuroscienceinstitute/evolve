@@ -2,6 +2,9 @@
 //! 
 //! Command-line interface for the universe simulation with full God-Mode and diagnostics
 
+#![cfg_attr(all(not(feature = "unstable-cli"), not(test)), deny(warnings, clippy::all, clippy::pedantic))]
+#![cfg_attr(feature = "unstable-cli", allow(dead_code))]
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
@@ -264,6 +267,7 @@ enum OracleAction {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 struct ParticleSnapshot {
     position: [f64; 3],
     momentum: [f64; 3],

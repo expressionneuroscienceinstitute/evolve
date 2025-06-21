@@ -16,7 +16,7 @@ use std::fs;
 use std::path::Path;
 use std::collections::HashMap;
 use std::str::FromStr;
-use tracing::{info, debug, warn};
+use tracing::{info, debug, warn, error};
 
 /// Represents material identification in ENDF format
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -266,7 +266,7 @@ impl EndfParser {
         
         for record in records {
             let key = (record.mf, record.mt);
-            sections.entry(key).or_insert_with(Vec::new).push(record);
+            sections.entry(key).or_default().push(record);
         }
         
         // Process each section
@@ -317,8 +317,7 @@ impl EndfParser {
             let np = data_record.n2 as usize; // Number of points
             
             // Extract energy-cross section pairs from subsequent records
-            for i in (data_start + 1)..records.len() {
-                let record = &records[i];
+            for record in records.iter().skip(data_start + 1) {
                 if record.mf == 0 && record.mt == 0 {
                     break; // End of section
                 }
@@ -438,6 +437,12 @@ impl EndfParser {
     }
 }
 
+impl Default for EndfParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Load ENDF data from a directory of ENDF files
 pub fn load_endf_data(
     nuclear_db: &mut NuclearDatabase,
@@ -491,7 +496,8 @@ pub fn load_endf_data(
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to parse ENDF file {:?}: {}", path, e);
+                    error!("Failed to parse ENDF file {:?}: {}", path, e);
+                    return Err(anyhow::anyhow!("Failed to parse ENDF file {:?}: {}", path, e));
                 }
             }
         }
@@ -612,13 +618,13 @@ mod tests {
     }
 
     #[test]
-    fn test_endf_integration_with_real_data() {
+    fn test_endf_integration_with_real_data() -> Result<()> {
         let endf_dir = std::path::Path::new("endf-b-viii.0/lib/neutrons");
         
         // Skip test if ENDF directory doesn't exist
         if !endf_dir.exists() {
             println!("Skipping ENDF integration test - directory not found: {:?}", endf_dir);
-            return;
+            return Ok(());
         }
         
         // Create databases (not used in this test, but would be in full integration)
@@ -657,7 +663,8 @@ mod tests {
                         }
                     }
                     Err(e) => {
-                        panic!("Failed to parse {}: {}", filename, e);
+                        error!("Failed to parse {}: {}", filename, e);
+                        return Err(anyhow::anyhow!("Failed to parse {}: {}", filename, e));
                     }
                 }
             }
@@ -665,7 +672,7 @@ mod tests {
         
         if files_found == 0 {
             println!("No test ENDF files found in {:?}", endf_dir);
-            return;
+            return Ok(());
         }
         
         assert!(files_found > 0, "Should find at least one test file");
@@ -677,16 +684,18 @@ mod tests {
         // Suppress unused variable warnings
         let _ = nuclear_db;
         let _ = cross_section_db;
+        
+        Ok(())
     }
     
     #[test]
     #[ignore] // Expensive test - run with --ignored
-    fn test_full_endf_database_loading() {
+    fn test_full_endf_database_loading() -> Result<()> {
         let endf_dir = std::path::Path::new("endf-b-viii.0/lib/neutrons");
         
         if !endf_dir.exists() {
             println!("Skipping full ENDF test - directory not found");
-            return;
+            return Ok(());
         }
         
         // This test loads the entire ENDF database
@@ -700,9 +709,11 @@ mod tests {
                 let duration = start_time.elapsed();
                 println!("✅ Full ENDF database loaded in {:?}", duration);
                 println!("Expected to load 557+ isotopes from ENDF/B-VIII.0");
+                Ok(())
             }
             Err(e) => {
-                panic!("Failed to load full ENDF database: {}", e);
+                error!("Failed to load full ENDF database: {}", e);
+                Err(anyhow::anyhow!("Failed to load full ENDF database: {}", e))
             }
         }
     }

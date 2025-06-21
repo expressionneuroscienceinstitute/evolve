@@ -479,6 +479,8 @@ pub struct NativeRenderer<'window> {
 
     // Keep text buffers alive until GPU is done with them to avoid destroyed-buffer validation errors
     text_buffers: Vec<GlyphonBuffer>,
+    // NEW: Track retired text buffers and their submission indices for safe destruction
+    retired_text_buffers: Vec<(GlyphonBuffer, wgpu::SubmissionIndex)>,
     // NEW: Staging belt for safe GPU uploads
     #[allow(dead_code)]
     staging_belt: StagingBelt,
@@ -1049,6 +1051,8 @@ impl<'window> NativeRenderer<'window> {
 
             // Persistent text buffers (cleared each frame after rendering)
             text_buffers: Vec::new(),
+            // Initialize retired text buffers and submission indices
+            retired_text_buffers: Vec::new(),
             // Initialize staging belt with 1 MiB default chunk size
             #[allow(dead_code)]
             staging_belt: StagingBelt::new(1024 * 1024),
@@ -1233,9 +1237,12 @@ impl<'window> NativeRenderer<'window> {
         
         // Wait for GPU to finish with previous text buffers before clearing them
         if !self.text_buffers.is_empty() {
-            self.device.poll(wgpu::Maintain::Wait);
-            self.text_buffers.clear();
+            let submission_index = self.last_submission_index.clone().unwrap_or_else(|| self.queue.submit(std::iter::empty()));
+            for buf in self.text_buffers.drain(..) {
+                self.retired_text_buffers.push((buf, submission_index.clone()));
+            }
         }
+        self.cleanup_retired_text_buffers();
         
         // Update camera matrices
         self.camera.update_view();
@@ -1589,12 +1596,14 @@ impl<'window> NativeRenderer<'window> {
         self.debug_panel.visible = !self.debug_panel.visible;
         println!("🎛️ Debug panel: {}", if self.debug_panel.visible { "ON" } else { "OFF" });
         
-        // When panel is turned off, safely clear any cached text buffers
         if !self.debug_panel.visible {
-            // Wait for GPU to finish with buffers before clearing them
             self.device.poll(wgpu::Maintain::Wait);
-            self.text_buffers.clear();
-            println!("🧹 Safely cleared {} debug panel text buffers after GPU sync", self.text_buffers.len());
+            let submission_index = self.last_submission_index.clone().unwrap_or_else(|| self.queue.submit(std::iter::empty()));
+            for buf in self.text_buffers.drain(..) {
+                self.retired_text_buffers.push((buf, submission_index.clone()));
+            }
+            self.cleanup_retired_text_buffers();
+            println!("🧹 Safely cleared debug panel text buffers after GPU sync");
         }
     }
     
@@ -2042,12 +2051,15 @@ impl<'window> NativeRenderer<'window> {
     fn render_debug_text(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, text: &str) -> Result<()> {
         // Never clear text buffers during debug panel rendering to prevent 
         // buffer destruction validation errors. Only clear when panel is closed.
-        if self.text_buffers.len() > 20 { // Allow more buffers to accumulate
-            // Only clear if debug panel is not visible to avoid crashes
+        if self.text_buffers.len() > 20 {
             if !self.debug_panel.visible {
                 self.device.poll(wgpu::Maintain::Wait);
-                self.text_buffers.clear();
-                println!("🧹 Cleared {} old text buffers", self.text_buffers.len());
+                let submission_index = self.last_submission_index.clone().unwrap_or_else(|| self.queue.submit(std::iter::empty()));
+                for buf in self.text_buffers.drain(..) {
+                    self.retired_text_buffers.push((buf, submission_index.clone()));
+                }
+                self.cleanup_retired_text_buffers();
+                println!("🧹 Cleared old text buffers safely");
             }
         }
 
@@ -2168,6 +2180,15 @@ impl<'window> NativeRenderer<'window> {
         println!("🔬 MICROSCOPE MODE: Camera positioned at distance {:.4} for particle inspection", 
                 (self.camera.position - self.camera.target).magnitude());
         println!("🔍 Use scroll wheel to zoom in/out, drag to pan around particles");
+    }
+
+    /// Clean up retired text buffers by polling the device and then dropping all retired buffers
+    fn cleanup_retired_text_buffers(&mut self) {
+        if self.retired_text_buffers.is_empty() {
+            return;
+        }
+        self.device.poll(wgpu::Maintain::Wait);
+        self.retired_text_buffers.clear();
     }
 }
 

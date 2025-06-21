@@ -86,6 +86,13 @@ pub static PARTICLE_DATA: Lazy<HashMap<crate::ParticleType, ParticleProperties>>
     ins!(JPsi, 3096.9e6 * 1.78266192e-36, 0.0, 1.0, Some(9.3e-5_f64.recip()), false);
     ins!(Upsilon, 9460.3e6 * 1.78266192e-36, 0.0, 1.0, Some(5.4e-5_f64.recip()), false);
 
+    // Molecular particles (approximate masses)
+    ins!(H2, 3.34e-27, 0.0, 0.0, None, false); // Diatomic hydrogen
+    ins!(H2O, 2.99e-26, 0.0, 0.0, None, false); // Water molecule
+    ins!(CO2, 7.31e-26, 0.0, 0.0, None, false); // Carbon dioxide
+    ins!(CH4, 2.66e-26, 0.0, 0.0, None, false); // Methane
+    ins!(NH3, 2.83e-26, 0.0, 0.0, None, false); // Ammonia
+
     m
 });
 

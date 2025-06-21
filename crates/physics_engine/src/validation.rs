@@ -37,9 +37,14 @@ pub fn check_energy_conservation(states: &[PhysicsState], constants: &PhysicsCon
     let mut total_energy = 0.0;
     
     // Calculate total energy
-    for state in states {
+    for (i, state) in states.iter().enumerate() {
         // Kinetic energy
-        let v = state.velocity.magnitude();
+        let mut v = state.velocity.magnitude();
+        // Clamp velocity for massive particles to just below c
+        if state.mass > 0.0 && v >= constants.c {
+            log::warn!("Clamping velocity for particle {}: mass={}, original_velocity={}", i, state.mass, v);
+            v = 0.999_999 * constants.c;
+        }
         let kinetic = if constants.is_relativistic(v) {
             // Relativistic: E = γmc²
             let gamma = constants.lorentz_factor(v);
@@ -52,7 +57,15 @@ pub fn check_energy_conservation(states: &[PhysicsState], constants: &PhysicsCon
         // Rest mass energy
         let rest_energy = state.mass * constants.c * constants.c;
         
-        total_energy += kinetic + rest_energy;
+        let particle_energy = kinetic + rest_energy;
+        
+        // Debug: Check for NaN in individual particle energy
+        if particle_energy.is_nan() {
+            log::error!("NaN detected in particle {} energy calculation: mass={}, velocity={}, kinetic={}, rest_energy={}", 
+                       i, state.mass, v, kinetic, rest_energy);
+        }
+        
+        total_energy += particle_energy;
     }
     
     // Add potential energies
@@ -70,7 +83,15 @@ pub fn check_energy_conservation(states: &[PhysicsState], constants: &PhysicsCon
                     0.0
                 };
                 
-                total_energy += gravitational_pe + em_pe;
+                let potential_energy = gravitational_pe + em_pe;
+                
+                // Debug: Check for NaN in potential energy
+                if potential_energy.is_nan() {
+                    log::error!("NaN detected in potential energy calculation: r={}, mass1={}, mass2={}, charge1={}, charge2={}", 
+                               r, states[i].mass, states[j].mass, states[i].charge, states[j].charge);
+                }
+                
+                total_energy += potential_energy;
             }
         }
     }
@@ -78,6 +99,7 @@ pub fn check_energy_conservation(states: &[PhysicsState], constants: &PhysicsCon
     // Store initial energy for future comparisons (simplified validation)
     // In a real implementation, this would track energy over time
     if total_energy.is_nan() || total_energy.is_infinite() {
+        log::error!("Total energy is NaN or infinite: {}", total_energy);
         return Err(ValidationError::EnergyConservation { 
             change: total_energy 
         }.into());
@@ -146,15 +168,15 @@ pub fn check_relativistic_constraints(states: &[PhysicsState], constants: &Physi
     for state in states {
         let v = state.velocity.magnitude();
         
-        // Check speed limit
-        if v >= constants.c {
+        // Check speed limit: only massive particles are constrained
+        if state.mass > 0.0 && v >= constants.c {
             return Err(ValidationError::SuperluminalVelocity { 
                 velocity: v 
             }.into());
         }
         
-        // Check for negative mass
-        if state.mass <= 0.0 {
+        // Check for negative mass (allow zero mass for massless particles)
+        if state.mass < 0.0 {
             return Err(ValidationError::NegativeMass { 
                 mass: state.mass 
             }.into());

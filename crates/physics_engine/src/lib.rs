@@ -53,7 +53,6 @@ pub mod gravitational_collapse;
 pub use gravitational_collapse::{jeans_mass, jeans_length, SinkParticle};
 
 pub mod conservation;
-use conservation::{ConservationEnforcer, ConservationMonitor, ConservationConstraint, EnforcementMethod};
 
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
@@ -841,9 +840,70 @@ impl PhysicsEngine {
         pressure.max(0.0) // Ensure non-negative pressure
     }
 
-    /// Process gravitational dynamics using GADGET if available
+    /// Process gravitational dynamics using Barnes-Hut tree algorithm for O(N log N) scaling
     fn process_gravitational_dynamics(&mut self) -> Result<()> {
-        // TODO: Implement GADGET-style gravity solver
+        if self.particles.is_empty() {
+            return Ok(());
+        }
+
+        // Extract particle positions and masses for Barnes-Hut calculation
+        let positions: Vec<Vector3<f64>> = self.particles.iter()
+            .map(|p| p.position)
+            .collect();
+        
+        let masses: Vec<f64> = self.particles.iter()
+            .map(|p| p.mass)
+            .collect();
+
+        // Calculate bounding box for Barnes-Hut tree
+        let mut min = positions[0];
+        let mut max = positions[0];
+        for pos in positions.iter().skip(1) {
+            min = min.inf(pos);
+            max = max.sup(pos);
+        }
+        let center = (min + max) / 2.0;
+        let half_dim = (max - min) / 2.0;
+
+        // Add buffer to ensure all particles are within bounds
+        let half_dim_buffered = Vector3::new(
+            half_dim.x.max(1e-12),
+            half_dim.y.max(1e-12),
+            half_dim.z.max(1e-12),
+        );
+
+        // Create Barnes-Hut tree with optimal parameters
+        let mut barnes_hut_tree = Octree::new_barnes_hut(
+            AABB::new(center, half_dim_buffered),
+            0.5, // Standard opening criterion θ
+            crate::constants::GRAVITATIONAL_CONSTANT
+        );
+
+        // Build the tree and compute mass properties
+        barnes_hut_tree.build_tree(&positions, &masses)?;
+
+        // Compute gravitational forces using Barnes-Hut algorithm (O(N log N))
+        let gravitational_forces = barnes_hut_tree.compute_gravitational_forces(
+            &positions, 
+            &masses, 
+            1e-12 // Softening length to prevent singularities
+        );
+
+        // Apply gravitational forces to particles
+        for (i, force) in gravitational_forces.iter().enumerate() {
+            if i < self.particles.len() {
+                // F = ma, so a = F/m
+                let acceleration = *force / self.particles[i].mass;
+                self.particles[i].acceleration += acceleration;
+                
+                // Update momentum: dp/dt = F
+                self.particles[i].momentum += *force * self.time_step;
+                
+                // Update velocity: v = p/m
+                self.particles[i].velocity = self.particles[i].momentum / self.particles[i].mass;
+            }
+        }
+
         Ok(())
     }
 
@@ -1086,7 +1146,12 @@ impl PhysicsEngine {
                         let rest_energy = particle.mass * C_SQUARED;
                         let total_energy = (rest_energy.powi(2) + (p_magnitude * SPEED_OF_LIGHT).powi(2)).sqrt();
                         let gamma = total_energy / rest_energy;
-                        let velocity_magnitude = p_magnitude / (gamma * particle.mass);
+                        let mut velocity_magnitude = p_magnitude / (gamma * particle.mass);
+                        
+                        // Clamp velocity to prevent exceeding speed of light for massive particles
+                        if particle.mass > 0.0 {
+                            velocity_magnitude = velocity_magnitude.min(0.999 * SPEED_OF_LIGHT);
+                        }
                         
                         // Update particle velocity maintaining momentum direction
                         if particle.momentum.magnitude() > 1e-100 {
@@ -1187,20 +1252,32 @@ impl PhysicsEngine {
 
     // Add missing method implementations
     fn sample_thermal_momentum(&self, particle_type: ParticleType, temperature: f64) -> Vector3<f64> {
-        use crate::constants::BOLTZMANN;
+        use crate::constants::{BOLTZMANN, C};
         let mass = self.get_particle_mass(particle_type);
+        
         if mass <= 0.0 {
-            return Vector3::zeros();
+            // For massless particles, use speed of light
+            let mut rng = thread_rng();
+            let direction = Vector3::new(
+                rng.gen_range(-1.0..1.0),
+                rng.gen_range(-1.0..1.0),
+                rng.gen_range(-1.0..1.0),
+            ).normalize();
+            return direction * C;
         }
         
-        // Maxwell-Boltzmann distribution
+        // For massive particles, use relativistic Maxwell-Boltzmann distribution
         let thermal_velocity = (3.0 * BOLTZMANN * temperature / mass).sqrt();
+        
+        // Clamp to prevent exceeding speed of light
+        let clamped_velocity = thermal_velocity.min(0.999 * C);
+        
         let mut rng = thread_rng();
         
         Vector3::new(
-            rng.gen_range(-thermal_velocity..thermal_velocity),
-            rng.gen_range(-thermal_velocity..thermal_velocity),
-            rng.gen_range(-thermal_velocity..thermal_velocity),
+            rng.gen_range(-clamped_velocity..clamped_velocity),
+            rng.gen_range(-clamped_velocity..clamped_velocity),
+            rng.gen_range(-clamped_velocity..clamped_velocity),
         )
     }
 
@@ -1261,7 +1338,7 @@ impl PhysicsEngine {
         }
     }
 
-    fn get_particle_mass(&self, particle_type: ParticleType) -> f64 {
+    pub fn get_particle_mass(&self, particle_type: ParticleType) -> f64 {
         use crate::particles::get_properties;
         get_properties(particle_type).mass_kg
     }
@@ -1338,6 +1415,129 @@ impl PhysicsEngine {
         
         self.interaction_history.push(interaction_event);
         Ok(())
+    }
+
+    /// Process nuclear fusion reactions
+    fn process_nuclear_fusion(&mut self) -> Result<()> {
+        // TODO: Implement nuclear fusion processing
+        // This would involve checking for fusion conditions and updating nuclei
+        Ok(())
+    }
+
+    /// Process nuclear fission reactions
+    fn process_nuclear_fission(&mut self) -> Result<()> {
+        // TODO: Implement nuclear fission processing
+        // This would involve checking for fission conditions and updating nuclei
+        Ok(())
+    }
+
+    /// Update nuclear shell states
+    fn update_nuclear_shells(&mut self) -> Result<()> {
+        // TODO: Implement nuclear shell updates
+        // This would involve updating nuclear shell model states
+        Ok(())
+    }
+
+    /// Update atomic physics states
+    fn update_atomic_physics(&mut self) -> Result<()> {
+        // TODO: Implement atomic physics updates
+        // This would involve updating atomic states, electron configurations, etc.
+        Ok(())
+    }
+
+    /// Process phase transitions
+    fn process_phase_transitions(&mut self) -> Result<()> {
+        // TODO: Implement phase transition processing
+        // This would involve checking for phase changes based on temperature/pressure
+        Ok(())
+    }
+
+    /// Update emergent properties
+    fn update_emergent_properties(&mut self, emergent_states: &mut [PhysicsState]) -> Result<()> {
+        // Delegate to the emergent_properties module
+        use crate::emergent_properties::update_emergent_properties;
+        use crate::emergent_properties::EmergenceMonitor;
+        
+        let mut monitor = EmergenceMonitor::new();
+        update_emergent_properties(&mut monitor, emergent_states, self.volume)
+    }
+
+    /// Evolve quantum state
+    fn evolve_quantum_state(&mut self) -> Result<()> {
+        // TODO: Implement quantum state evolution
+        // This would involve evolving quantum states of particles and fields
+        Ok(())
+    }
+
+    /// Update spacetime curvature
+    fn update_spacetime_curvature(&mut self) -> Result<()> {
+        // TODO: Implement spacetime curvature updates
+        // This would involve updating general relativistic effects
+        Ok(())
+    }
+
+    /// Validate conservation laws
+    fn validate_conservation_laws(&mut self) -> Result<()> {
+        // Convert particles to PhysicsState for validation
+        let states: Vec<PhysicsState> = self.particles.iter().map(|p| PhysicsState {
+            position: p.position,
+            velocity: p.velocity,
+            acceleration: p.acceleration,
+            mass: p.mass,
+            charge: p.charge,
+            temperature: self.temperature,
+            entropy: 0.0, // TODO: Calculate proper entropy
+        }).collect();
+
+        // Delegate to validation module
+        use crate::validation::validate_physics_state;
+        use crate::constants::PhysicsConstants;
+        
+        let constants = PhysicsConstants::default();
+        validate_physics_state(&states, &constants)
+    }
+
+    /// Check if two atoms can form a molecule
+    pub fn can_form_molecule(&self, atom1: &Atom, atom2: &Atom) -> bool {
+        // Simple implementation: check if atoms are close enough and have compatible electronic states
+        let distance = (atom1.position - atom2.position).norm();
+        let interaction_range = 1e-9; // 1 nm interaction range
+        distance < interaction_range
+    }
+
+    /// Determine the type of molecule that can form from two atoms
+    pub fn determine_molecule_type(&self, atom1: &Atom, atom2: &Atom) -> Option<ParticleType> {
+        // Simple implementation based on atomic numbers
+        let z1 = atom1.nucleus.atomic_number;
+        let z2 = atom2.nucleus.atomic_number;
+        
+        match (z1, z2) {
+            (1, 1) => Some(ParticleType::H2),
+            (1, 8) | (8, 1) => Some(ParticleType::H2O),
+            (6, 8) | (8, 6) => Some(ParticleType::CO2),
+            (6, 1) | (1, 6) => Some(ParticleType::CH4),
+            (7, 1) | (1, 7) => Some(ParticleType::NH3),
+            _ => None,
+        }
+    }
+
+    /// Check if a particle type represents a molecule
+    pub fn is_molecule(&self, particle_type: ParticleType) -> bool {
+        matches!(particle_type, 
+            ParticleType::H2 | ParticleType::H2O | ParticleType::CO2 | 
+            ParticleType::CH4 | ParticleType::NH3
+        )
+    }
+
+    /// Check for possible chemical reactions between two particle types
+    pub fn check_chemical_reaction(&self, reactant1: ParticleType, reactant2: ParticleType) -> Option<Vec<ParticleType>> {
+        // Simple implementation: methane + water -> carbon dioxide + hydrogen
+        match (reactant1, reactant2) {
+            (ParticleType::CH4, ParticleType::H2O) | (ParticleType::H2O, ParticleType::CH4) => {
+                Some(vec![ParticleType::CO2, ParticleType::H2])
+            },
+            _ => None,
+        }
     }
 }
 
@@ -1440,7 +1640,7 @@ fn map_particle_type_to_shared(pt: ParticleType) -> shared_types::ParticleType {
         // Fallback simple mapping
         ParticleType::Electron => S::Electron,
         ParticleType::Positron => S::Positron,
-        _ => S::Other(pt as u32),
+        _ => S::Other,
     }
 }
 

@@ -930,7 +930,7 @@ mod tests {
             correction_strength: 0.1,
         };
         
-        let mut enforcer = ConservationEnforcer::new(constraints, enforcement_method);
+        let enforcer = ConservationEnforcer::new(constraints, enforcement_method);
         
         // Initial energy
         let initial_energy = enforcer.calculate_total_energy(&states, &constants);

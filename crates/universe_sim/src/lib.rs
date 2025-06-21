@@ -345,6 +345,7 @@ impl UniverseSimulation {
     }
 
     /// Update cosmic-scale processes based on current physical conditions
+    #[allow(dead_code)]
     fn update_cosmic_processes(&mut self, dt: f64) -> Result<()> {
         // Currently we model only stellar evolution and star formation.
         // Planet formation and other processes are stubbed for now.

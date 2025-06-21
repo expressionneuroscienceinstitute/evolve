@@ -230,12 +230,12 @@ mod tests {
                 ParticleType::Hydrogen,
                 1.67e-27,
                 Vector3::new(0.0, 0.0, 0.0)
-            ), 1e-8), // Smaller smoothing length for closer interaction
+            ), 1e-8, 0), // Smaller smoothing length for closer interaction, material_id=0 for hydrogen
             SphParticle::new(FundamentalParticle::new(
                 ParticleType::Hydrogen,
                 1.67e-27,
                 Vector3::new(1e-9, 0.0, 0.0) // Much closer particles
-            ), 1e-8),
+            ), 1e-8, 0), // material_id=0 for hydrogen
         ];
         
         // Set extremely high density and very low temperature to trigger collapse
@@ -265,12 +265,12 @@ mod tests {
                 ParticleType::Hydrogen,
                 1.67e-27,
                 Vector3::new(0.0, 0.0, 0.0)
-            ), 1e-6),
+            ), 1e-6, 0), // material_id=0 for hydrogen
             SphParticle::new(FundamentalParticle::new(
                 ParticleType::Hydrogen,
                 1.67e-27,
                 Vector3::new(1e-7, 0.0, 0.0)
-            ), 1e-6),
+            ), 1e-6, 0), // material_id=0 for hydrogen
         ];
         
         let collapse_regions = vec![vec![0, 1]];

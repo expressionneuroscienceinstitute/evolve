@@ -6,7 +6,7 @@
 use crate::*;
 use rand::{Rng, thread_rng};
 use anyhow::Result;
-use nalgebra::{Vector3, Complex};
+use nalgebra::Complex;
 
 /// Quantum mechanics solver
 pub struct QuantumSolver {

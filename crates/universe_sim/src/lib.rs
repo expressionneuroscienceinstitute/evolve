@@ -274,7 +274,7 @@ impl UniverseSimulation {
          let start_time = std::time::Instant::now();
          
          // Run physics simulation step
-         self.physics_engine.step()?;
+         self.physics_engine.step(self.physics_engine.time_step)?;
          
          // Update cosmic state from simulation results
          self.update_universe_state()?;
@@ -332,7 +332,7 @@ impl UniverseSimulation {
     #[allow(dead_code)]
     fn update_physics(&mut self) -> Result<()> {
         // Advance physics engine if available; ignore errors for placeholder
-        let _ = self.physics_engine.step();
+        let _ = self.physics_engine.step(self.physics_engine.time_step);
         Ok(())
     }
 

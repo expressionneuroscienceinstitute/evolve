@@ -9,6 +9,7 @@ use std::f64::consts::PI;
 use rayon::prelude::*;
 use anyhow::{anyhow, ensure};
 use nalgebra::{Cholesky, SymmetricEigen};
+use log::debug;
 use crate::quantum_math::{
     boys_function, gaussian_normalization, 
     gaussian_product_center,

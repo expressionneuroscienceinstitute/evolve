@@ -24,6 +24,7 @@ physics_types = { path = "../physics_types" }
 ffi_integration = { path = "../ffi_integration", default-features = false }
 itertools = "0.10"
 libm = "0.2"
+tracing.workspace = true
 
 [features]
 default = ["gpu-acceleration", "bevy"]

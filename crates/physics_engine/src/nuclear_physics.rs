@@ -9,6 +9,7 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 use crate::BOLTZMANN;
+use crate::endf_data::CrossSectionData;
 
 /// Global nuclear cross-section database singleton
 /// Initialized lazily when first accessed
@@ -63,6 +64,11 @@ impl NuclearDatabase {
         };
         database.populate_nuclear_data();
         database
+    }
+    
+    /// Add decay data for a specific isotope (used by ENDF integration)
+    pub fn add_decay_data(&mut self, z: u32, a: u32, decay_data: NuclearDecayData) {
+        self.decay_data.insert((z, a), decay_data);
     }
     
     /// Populate database with selected nuclear decay data
@@ -810,6 +816,8 @@ pub struct NuclearCrossSectionDatabase {
     pub reaction_data: HashMap<String, ReactionCrossSectionData>,
     /// Temperature and energy-dependent data tables
     pub temperature_grids: HashMap<String, Vec<(f64, f64)>>, // (temperature_K, cross_section_barns)
+    /// ENDF cross-section data indexed by (Z, A, MT)
+    pub endf_cross_sections: HashMap<(u32, u32, u32), CrossSectionData>,
 }
 
 /// Data for a specific fusion reaction, including its cross-section properties.
@@ -859,10 +867,11 @@ impl Default for NuclearCrossSectionDatabase {
 impl NuclearCrossSectionDatabase {
     /// Initializes the database and populates it with reaction data.
     pub fn new() -> Self {
-        let mut db = Self {
+        let mut db =         Self {
             fusion_data: HashMap::new(),
             reaction_data: HashMap::new(),
             temperature_grids: HashMap::new(),
+            endf_cross_sections: HashMap::new(),
         };
         db.populate_fusion_data();
         db.populate_reaction_data();
@@ -1113,6 +1122,45 @@ impl NuclearCrossSectionDatabase {
     /// Helper to add a general reaction to the map.
     fn add_reaction(&mut self, name: String, data: ReactionCrossSectionData) {
         self.reaction_data.insert(name, data);
+    }
+    
+    /// Add ENDF cross-section data to the database
+    pub fn add_endf_cross_section(&mut self, z: u32, a: u32, mt: u32, cross_data: CrossSectionData) {
+        self.endf_cross_sections.insert((z, a, mt), cross_data);
+    }
+    
+    /// Get ENDF cross-section data for a specific isotope and reaction
+    pub fn get_endf_cross_section(&self, z: u32, a: u32, mt: u32) -> Option<&CrossSectionData> {
+        self.endf_cross_sections.get(&(z, a, mt))
+    }
+    
+    /// Get cross-section at specific energy using ENDF data with interpolation
+    pub fn get_endf_cross_section_at_energy(&self, z: u32, a: u32, mt: u32, energy_ev: f64) -> Option<f64> {
+        let cross_data = self.get_endf_cross_section(z, a, mt)?;
+        
+        // Linear interpolation between energy points
+        for i in 0..cross_data.energies.len() - 1 {
+            let e1 = cross_data.energies[i];
+            let e2 = cross_data.energies[i + 1];
+            
+            if energy_ev >= e1 && energy_ev <= e2 {
+                let xs1 = cross_data.cross_sections[i];
+                let xs2 = cross_data.cross_sections[i + 1];
+                
+                // Linear interpolation
+                let fraction = (energy_ev - e1) / (e2 - e1);
+                return Some(xs1 + fraction * (xs2 - xs1));
+            }
+        }
+        
+        // Return boundary values if outside range
+        if energy_ev < cross_data.energies[0] {
+            Some(cross_data.cross_sections[0])
+        } else if energy_ev > cross_data.energies[cross_data.energies.len() - 1] {
+            Some(cross_data.cross_sections[cross_data.cross_sections.len() - 1])
+        } else {
+            None
+        }
     }
 }
 

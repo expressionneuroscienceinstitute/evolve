@@ -468,13 +468,11 @@ mod tests {
 
     #[test]
     fn test_sph_particle_creation() {
-        let particle = FundamentalParticle {
-            position: Vector3::new(0.0, 0.0, 0.0),
-            velocity: Vector3::new(1.0, 0.0, 0.0),
-            mass: 1.67e-27, // Proton mass
-            charge: 0.0,
-            particle_type: ParticleType::Hydrogen,
-        };
+        let particle = FundamentalParticle::new(
+            ParticleType::Hydrogen,
+            1.67e-27, // Proton mass
+            Vector3::new(0.0, 0.0, 0.0)
+        );
         
         let sph_particle = SphParticle::new(particle, 1e-6);
         assert_eq!(sph_particle.density, 1.0);
@@ -513,20 +511,16 @@ mod tests {
         
         // Create test particles
         let mut particles = vec![
-            SphParticle::new(FundamentalParticle {
-                position: Vector3::new(0.0, 0.0, 0.0),
-                velocity: Vector3::zeros(),
-                mass: 1.67e-27,
-                charge: 0.0,
-                particle_type: ParticleType::Hydrogen,
-            }, 1e-6),
-            SphParticle::new(FundamentalParticle {
-                position: Vector3::new(1e-7, 0.0, 0.0),
-                velocity: Vector3::zeros(),
-                mass: 1.67e-27,
-                charge: 0.0,
-                particle_type: ParticleType::Hydrogen,
-            }, 1e-6),
+            SphParticle::new(FundamentalParticle::new(
+                ParticleType::Hydrogen,
+                1.67e-27,
+                Vector3::new(0.0, 0.0, 0.0)
+            ), 1e-6),
+            SphParticle::new(FundamentalParticle::new(
+                ParticleType::Hydrogen,
+                1.67e-27,
+                Vector3::new(1e-7, 0.0, 0.0)
+            ), 1e-6),
         ];
         
         solver.compute_density(&mut particles).unwrap();

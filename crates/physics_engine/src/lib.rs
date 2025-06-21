@@ -56,7 +56,7 @@ use tracing::debug;
 use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
 use self::octree::{Octree, AABB};
-use self::sph::{SphSolver, SphParticle, KernelType}; // NEW: SPH imports
+use self::sph::SphSolver; // NEW: SPH imports
 // use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT, VACUUM_PERMITTIVITY};
 use physics_types as shared_types;
 
@@ -138,6 +138,96 @@ pub struct FundamentalParticle {
     pub interaction_history: Vec<InteractionEvent>,
     pub velocity: Vector3<f64>,
     pub charge: f64,
+}
+
+impl FundamentalParticle {
+    /// Create a new fundamental particle with minimal required information
+    pub fn new(particle_type: ParticleType, mass: f64, position: Vector3<f64>) -> Self {
+        let electric_charge = Self::get_standard_charge(particle_type);
+        
+        Self {
+            particle_type,
+            position,
+            momentum: Vector3::zeros(),
+            spin: Vector3::zeros(),
+            color_charge: Self::get_standard_color_charge(particle_type),
+            electric_charge,
+            mass,
+            energy: mass * constants::SPEED_OF_LIGHT.powi(2), // Rest energy
+            creation_time: 0.0,
+            decay_time: Self::get_standard_lifetime(particle_type),
+            quantum_state: QuantumState::new(),
+            interaction_history: Vec::new(),
+            velocity: Vector3::zeros(),
+            charge: electric_charge,
+        }
+    }
+    
+    /// Get standard electric charge for a particle type (in units of elementary charge)
+    fn get_standard_charge(particle_type: ParticleType) -> f64 {
+        use constants::ELEMENTARY_CHARGE;
+        
+        match particle_type {
+            // Quarks
+            ParticleType::Up | ParticleType::Charm | ParticleType::Top => 2.0/3.0 * ELEMENTARY_CHARGE,
+            ParticleType::Down | ParticleType::Strange | ParticleType::Bottom => -1.0/3.0 * ELEMENTARY_CHARGE,
+            
+            // Charged leptons
+            ParticleType::Electron | ParticleType::Muon | ParticleType::Tau => -ELEMENTARY_CHARGE,
+            ParticleType::Positron => ELEMENTARY_CHARGE,
+            
+            // Neutrinos
+            ParticleType::ElectronNeutrino | ParticleType::MuonNeutrino | ParticleType::TauNeutrino |
+            ParticleType::ElectronAntiNeutrino | ParticleType::MuonAntiNeutrino | ParticleType::TauAntiNeutrino => 0.0,
+            
+            // Gauge bosons
+            ParticleType::Photon | ParticleType::ZBoson | ParticleType::Gluon => 0.0,
+            ParticleType::WBoson => ELEMENTARY_CHARGE,
+            ParticleType::WBosonMinus => -ELEMENTARY_CHARGE,
+            
+            // Composite particles
+            ParticleType::Proton => ELEMENTARY_CHARGE,
+            ParticleType::Neutron => 0.0,
+            
+            // Everything else defaults to neutral
+            _ => 0.0,
+        }
+    }
+    
+    /// Get standard color charge for a particle type
+    fn get_standard_color_charge(particle_type: ParticleType) -> Option<ColorCharge> {
+        match particle_type {
+            ParticleType::Up | ParticleType::Down | ParticleType::Charm | 
+            ParticleType::Strange | ParticleType::Top | ParticleType::Bottom => {
+                // Quarks have color charge (randomly assigned for now)
+                Some(ColorCharge::Red) // In reality, would be assigned dynamically
+            },
+            ParticleType::Gluon => Some(ColorCharge::ColorSinglet),
+            _ => None, // Most particles are color-neutral
+        }
+    }
+    
+    /// Get standard lifetime for unstable particles
+    fn get_standard_lifetime(particle_type: ParticleType) -> Option<f64> {
+        match particle_type {
+            // Stable particles
+            ParticleType::Electron | ParticleType::Proton | ParticleType::ElectronNeutrino |
+            ParticleType::MuonNeutrino | ParticleType::TauNeutrino => None,
+            
+            // Unstable particles (approximate lifetimes in seconds)
+            ParticleType::Neutron => Some(879.4), // Free neutron lifetime
+            ParticleType::Muon => Some(2.197e-6),
+            ParticleType::Tau => Some(2.906e-13),
+            ParticleType::PionPlus | ParticleType::PionMinus => Some(2.603e-8),
+            ParticleType::PionZero => Some(8.52e-17),
+            
+            // Very short-lived particles
+            ParticleType::WBoson | ParticleType::WBosonMinus => Some(3.0e-25),
+            ParticleType::ZBoson => Some(2.6e-25),
+            
+            _ => None, // Unknown or effectively stable
+        }
+    }
 }
 
 /// Quantum state representation

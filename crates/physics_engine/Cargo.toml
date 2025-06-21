@@ -16,31 +16,23 @@ thiserror = { workspace = true }
 rayon = { workspace = true }
 ordered-float = { workspace = true }
 approx = { workspace = true }
-bevy_ecs = { workspace = true, optional = true }
 once_cell = { workspace = true }
 log = { workspace = true }
+tracing = { workspace = true }
 endf_parser = "0.2.0"
 physics_types = { path = "../physics_types" }
-ffi_integration = { path = "../ffi_integration", default-features = false }
 itertools = "0.10"
 libm = "0.2"
 tracing.workspace = true
 
 [features]
-default = ["gpu-acceleration", "bevy"]
+default = ["gpu-acceleration"]
 # Enable full scientific fidelity at the cost of performance.
-heavy = ["quantum-chemistry", "climate-sim", "geodynamics-sim", "amr", "gadget-gravity", "geant4-integration"]
+heavy = ["quantum-chemistry", "climate-sim", "geodynamics-sim", "amr"]
 gpu-acceleration = []
 simd = []
-bevy = ["dep:bevy_ecs"]
 quantum-chemistry = []
 climate-sim = []
 geodynamics-sim = []
 amr = []
-gadget-gravity = []
-geant4-integration = []
-gadget = []
-lammps = []
 FALSE = []
-
-[build-dependencies]

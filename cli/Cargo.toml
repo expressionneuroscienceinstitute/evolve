@@ -4,13 +4,17 @@ version = "0.1.0"
 edition = "2021"
 description = "Command-line interface for the Universe Simulation"
 
+[features]
+default = ["native_renderer"]
+native_renderer = ["dep:native_renderer"]
+
 [[bin]]
 name = "universectl"
 path = "src/main.rs"
 
 [dependencies]
 universe_sim = { path = "../crates/universe_sim" }
-native_renderer = { path = "../crates/native_renderer" }
+native_renderer = { path = "../crates/native_renderer", optional = true }
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 anyhow = { workspace = true }

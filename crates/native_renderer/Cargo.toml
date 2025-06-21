@@ -20,6 +20,7 @@ bytemuck = { workspace = true }
 
 # Math and utilities
 nalgebra = { workspace = true }
+cgmath = "0.18"
 rayon = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
@@ -36,6 +37,8 @@ rand = "0.8.5"
 
 [dev-dependencies]
 approx = "0.5"
+tokio = { version = "1.0", features = ["rt", "macros"] }
+futures = "0.3"
 
 [features]
 default = []

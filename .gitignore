@@ -11,3 +11,4 @@ endfb-viii.0-neutrons.zip
 .cursor/rules/*
 **/build/*
 agent_refactor_monitor.log
+sim_output.log

@@ -136,6 +136,7 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
             decay_time: Some(engine.current_time + sample_exponential_decay(interactions::neutron_lifetime(), &mut rng)),
             quantum_state: QuantumState::default(),
             interaction_history: Vec::new(),
+            acceleration: Vector3::zeros(),
         };
         engine.particles.push(neutron);
     }
@@ -165,6 +166,7 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
             decay_time: None,
             quantum_state: QuantumState::default(),
             interaction_history: Vec::new(),
+            acceleration: Vector3::zeros(),
         };
         engine.particles.push(electron);
     }
@@ -194,6 +196,7 @@ fn setup_weak_interaction_experiment(engine: &mut PhysicsEngine) -> Result<()> {
             decay_time: None,
             quantum_state: QuantumState::default(),
             interaction_history: Vec::new(),
+            acceleration: Vector3::zeros(),
         };
         engine.particles.push(neutrino);
     }

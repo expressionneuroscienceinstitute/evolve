@@ -41,5 +41,6 @@ fn simple_particle(ptype: ParticleType, charge: f64) -> FundamentalParticle {
         decay_time: None,
         quantum_state: QuantumState::default(),
         interaction_history: Vec::new(),
+        acceleration: Vector3::zeros(),
     }
 }

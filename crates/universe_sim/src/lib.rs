@@ -894,22 +894,27 @@ impl UniverseSimulation {
 
     pub fn get_map_data(&mut self, _zoom: f64, _layer: &str, width: usize, height: usize) -> Result<serde_json::Value> {
         use serde_json::json;
+        use log::debug;
         if width == 0 || height == 0 {
             return Err(anyhow!("Width and height must be positive"));
         }
-        let mut grid: Vec<Vec<f64>> = Vec::with_capacity(height);
+        let mut density_grid = Vec::with_capacity(width * height);
         for j in 0..height {
-            let mut row = Vec::with_capacity(width);
             for i in 0..width {
                 // Normalise coordinates to [-1,1]
                 let x = 2.0 * (i as f64 / (width - 1) as f64) - 1.0;
                 let y = 2.0 * (j as f64 / (height - 1) as f64) - 1.0;
                 let rho = self.calculate_total_density_at(x, y)?;
-                row.push(rho);
+                density_grid.push(rho);
             }
-            grid.push(row);
         }
-        Ok(json!({ "density_grid": grid }))
+        let result = json!({
+            "density_grid": density_grid,
+            "width": width,
+            "height": height
+        });
+        debug!("get_map_data returning: {}", result);
+        Ok(result)
     }
 
     #[allow(dead_code)]
@@ -945,6 +950,7 @@ impl UniverseSimulation {
                 interaction_history: Vec::new(),
                 velocity: vel,
                 charge,
+                acceleration: Vector3::zeros(),
             };
             self.physics_engine.particles.push(fp);
         }

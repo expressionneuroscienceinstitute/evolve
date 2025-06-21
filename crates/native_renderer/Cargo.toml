@@ -32,6 +32,7 @@ cfg-if = "1.0"
 
 # New dependencies
 glyphon = "0.5"
+rand = "0.8.5"
 
 [dev-dependencies]
 approx = "0.5"

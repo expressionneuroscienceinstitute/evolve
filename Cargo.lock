@@ -2306,6 +2306,7 @@ dependencies = [
  "nalgebra",
  "physics_engine",
  "pollster",
+ "rand",
  "rayon",
  "tracing",
  "universe_sim",

@@ -11,7 +11,7 @@
 
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
-use nalgebra::{Vector3, Point3, Matrix4};
+use nalgebra::{Vector3, Point3, Matrix4, Rotation3};
 // use rayon::prelude::*; // Unused for now
 use std::sync::{Arc, Mutex};
 use tracing::{info, error, warn, debug};
@@ -140,6 +140,66 @@ pub struct RenderMetrics {
     pub shader_switches: usize,
 }
 
+/// Interactive debug panel for comprehensive physics debugging
+#[derive(Debug, Default)]
+pub struct DebugPanel {
+    pub visible: bool,
+    pub simulation_stats: Option<universe_sim::SimulationStats>,
+    pub selected_particle_id: Option<usize>,
+    pub show_physics_details: bool,
+    pub show_performance_metrics: bool,
+    pub show_cosmological_data: bool,
+    pub show_chemistry_details: bool,
+    pub auto_follow_particle: bool,
+    pub debug_mode: DebugMode,
+}
+
+/// Different debug visualization modes
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DebugMode {
+    Overview,          // General simulation stats
+    Physics,           // Detailed physics interactions
+    Performance,       // Render and simulation performance
+    Particles,         // Individual particle inspection
+    Chemistry,         // Chemical composition and reactions
+    Cosmology,         // Universal evolution and structure
+}
+
+impl Default for DebugMode {
+    fn default() -> Self {
+        DebugMode::Overview
+    }
+}
+
+/// Mouse state for Unity 6.0+ style navigation (official Unity controls)
+#[derive(Debug, Default)]
+pub struct MouseState {
+    pub left_pressed: bool,
+    pub right_pressed: bool,
+    pub middle_pressed: bool,
+    pub last_position: (f64, f64),
+    pub current_position: (f64, f64),
+    pub is_orbiting: bool,           // Alt + Left mouse = orbit (Unity official)
+    pub is_panning: bool,            // Middle mouse = pan (Unity official)
+    pub is_alt_zooming: bool,        // Alt + Right mouse = zoom (Unity official)
+    pub is_flythrough: bool,         // Right mouse hold = flythrough mode (Unity official)
+    pub modifiers: winit::keyboard::ModifiersState,
+}
+
+impl MouseState {
+    pub fn update_position(&mut self, x: f64, y: f64) {
+        self.last_position = self.current_position;
+        self.current_position = (x, y);
+    }
+    
+    pub fn get_delta(&self) -> (f64, f64) {
+        (
+            self.current_position.0 - self.last_position.0,
+            self.current_position.1 - self.last_position.1,
+        )
+    }
+}
+
 /// High-performance renderer state with heavy mode enhancements
 pub struct NativeRenderer<'window> {
     surface: wgpu::Surface<'window>,
@@ -189,6 +249,18 @@ pub struct NativeRenderer<'window> {
     text_atlas: TextAtlas,
     text_cache: SwashCache,
     text_renderer: TextRenderer,
+    
+    // Debug panel and interaction
+    pub debug_panel: DebugPanel,
+    pub mouse_state: MouseState,
+    
+    // Enhanced camera controls
+    pub orbit_sensitivity: f32,
+    pub pan_sensitivity: f32,
+    pub zoom_sensitivity: f32,
+
+    // Keep text buffers alive until GPU is done with them to avoid destroyed-buffer validation errors
+    text_buffers: Vec<glyphon::Buffer>,
 }
 
 /// Uniform data sent to GPU with heavy mode extensions
@@ -248,32 +320,95 @@ impl Camera {
     
     /// Get combined view-projection matrix for GPU (4x4 array format)
     pub fn get_view_proj_matrix(&self) -> [[f32; 4]; 4] {
-        // WGPU expects the depth range in clip space to be 0..1, while nalgebra's
-        // `new_perspective` builds an OpenGL-style projection matrix that outputs
-        // depth in the −1..1 range.  We therefore need to apply the commonly
-        // used "OpenGL-to-WGPU" transform so that our geometry is not clipped
-        // out entirely (which is why only the clear colour was visible).
-
-        // Equivalent to the matrix used in the official wgpu examples:
-        //   [[ 1, 0, 0, 0 ],
-        //    [ 0, 1, 0, 0 ],
-        //    [ 0, 0, 0.5, 0 ],
-        //    [ 0, 0, 0.5, 1 ]]
-        let opengl_to_wgpu = Matrix4::new(
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 0.5, 0.0,
-            0.0, 0.0, 0.5, 1.0,
-        );
-
-        let vp = (opengl_to_wgpu * self.proj_matrix * self.view_matrix).transpose();
-
+        let view_proj = self.proj_matrix * self.view_matrix;
         [
-            [vp[(0, 0)], vp[(0, 1)], vp[(0, 2)], vp[(0, 3)]],
-            [vp[(1, 0)], vp[(1, 1)], vp[(1, 2)], vp[(1, 3)]],
-            [vp[(2, 0)], vp[(2, 1)], vp[(2, 2)], vp[(2, 3)]],
-            [vp[(3, 0)], vp[(3, 1)], vp[(3, 2)], vp[(3, 3)]],
+            [view_proj.m11, view_proj.m12, view_proj.m13, view_proj.m14],
+            [view_proj.m21, view_proj.m22, view_proj.m23, view_proj.m24],
+            [view_proj.m31, view_proj.m32, view_proj.m33, view_proj.m34],
+            [view_proj.m41, view_proj.m42, view_proj.m43, view_proj.m44],
         ]
+    }
+    
+    /// Orbital rotation around target (Unity-style: right mouse button)
+    pub fn orbit(&mut self, delta_x: f32, delta_y: f32, sensitivity: f32) {
+        let radius = (self.position - self.target).magnitude();
+        
+        // Convert position to spherical coordinates relative to target
+        let offset = self.position - self.target;
+        let mut theta = offset.z.atan2(offset.x); // Azimuth angle
+        let mut phi = (offset.y / radius).acos(); // Polar angle
+        
+        // Apply rotation with Unity-style sensitivity
+        theta -= delta_x * sensitivity * 0.005; // Horizontal rotation (inverted for Unity feel)
+        phi = (phi + delta_y * sensitivity * 0.005).clamp(0.01, std::f32::consts::PI - 0.01);
+        
+        // Convert back to Cartesian coordinates
+        let new_offset = Vector3::new(
+            radius * phi.sin() * theta.cos(),
+            radius * phi.cos(),
+            radius * phi.sin() * theta.sin(),
+        );
+        
+        self.position = self.target + new_offset;
+        self.update_view_matrix();
+    }
+
+    /// Pan camera (Unity-style: left mouse button)
+    pub fn pan(&mut self, delta_x: f32, delta_y: f32, sensitivity: f32) {
+        let forward = (self.target - self.position).normalize();
+        let right = forward.cross(&self.up).normalize();
+        let camera_up = right.cross(&forward).normalize();
+        
+        // Calculate pan distance based on distance to target
+        let distance = (self.position - self.target).magnitude();
+        let pan_scale = distance * sensitivity * 0.001;
+        
+        // Unity-style panning: move both camera and target together
+        let pan_offset = right * (-delta_x * pan_scale) + camera_up * (delta_y * pan_scale);
+        
+        self.position += pan_offset;
+        self.target += pan_offset;
+        self.update_view_matrix();
+    }
+    
+    /// Zoom camera in/out (Unity scroll wheel)
+    pub fn zoom(&mut self, delta: f32) {
+        let direction = (self.position - self.target).normalize();
+        let distance = (self.position - self.target).magnitude();
+        
+        // Scale zoom based on distance (closer = slower zoom)
+        let zoom_amount = delta * (distance * 0.1).max(0.1);
+        
+        let new_position = self.position - direction * zoom_amount;
+        let new_distance = (new_position - self.target).magnitude();
+        
+        // Prevent zooming too close or too far
+        if new_distance > 0.1 && new_distance < 1000.0 {
+            self.position = new_position;
+            self.update_view_matrix();
+        }
+    }
+    
+    /// Update view matrix from current camera state
+    pub fn update_view_matrix(&mut self) {
+        self.view_matrix = Matrix4::look_at_rh(&self.position, &self.target, &self.up);
+    }
+    
+    /// Focus camera on a specific point
+    pub fn focus_on(&mut self, point: Point3<f32>, distance: Option<f32>) {
+        let target_distance = distance.unwrap_or(10.0);
+        let direction = (self.position - self.target).normalize();
+        
+        self.target = point;
+        self.position = point + direction * target_distance;
+    }
+    
+    /// Reset camera to default view
+    pub fn reset_view(&mut self) {
+        *self = Camera::default();
+        self.update_view_matrix();
+        self.update_projection();
+        println!("🔄 Camera reset to default view");
     }
     
     /// Handle keyboard input for camera controls
@@ -335,6 +470,97 @@ impl Camera {
                 },
                 _ => {}
             }
+        }
+    }
+    
+    /// Flythrough mouse look (Unity 6.0+ official: right mouse hold)
+    pub fn flythrough_look(&mut self, delta_x: f32, delta_y: f32) {
+        // Convert current camera direction to yaw/pitch
+        let forward = (self.target - self.position).normalize();
+        let right = forward.cross(&self.up).normalize();
+        
+        // Apply mouse deltas to rotation (simple approach)
+        let yaw_amount = -delta_x; // Horizontal rotation
+        let pitch_amount = -delta_y; // Vertical rotation
+        
+        // Calculate new forward direction using unit vectors for rotation axes
+        let current_forward = forward;
+        let up_axis = nalgebra::Unit::new_normalize(self.up);
+        let right_axis = nalgebra::Unit::new_normalize(right);
+        
+        let up_rotation = Rotation3::from_axis_angle(&up_axis, yaw_amount);
+        let right_rotation = Rotation3::from_axis_angle(&right_axis, pitch_amount);
+        
+        // Apply rotations
+        let rotated_forward = right_rotation * up_rotation * current_forward;
+        
+        // Update target to maintain the direction but allow free-look
+        self.target = self.position + rotated_forward * (self.target - self.position).magnitude();
+        self.update_view_matrix();
+    }
+    
+    /// Flythrough movement (Unity 6.0+ official: WASD while right mouse held)
+    pub fn flythrough_move(&mut self, direction: Vector3<f32>, speed: f32) {
+        let forward = (self.target - self.position).normalize();
+        let right = forward.cross(&self.up).normalize();
+        let camera_up = right.cross(&forward).normalize();
+        
+        // Apply movement in camera-relative directions
+        let movement = right * direction.x + camera_up * direction.y + forward * direction.z;
+        let scaled_movement = movement * speed;
+        
+        self.position += scaled_movement;
+        self.target += scaled_movement;
+        self.update_view_matrix();
+    }
+
+    /// Focus camera on origin (Unity F key equivalent) 
+    pub fn focus_on_origin(&mut self) {
+        self.focus_on(Point3::new(0.0, 0.0, 0.0), Some(50.0));
+        println!("🎯 Camera focused on origin");
+    }
+
+    /// Get zoom level for LOD system - returns scale factor for detail level
+    pub fn get_zoom_level(&self) -> f32 {
+        let distance = (self.position - self.target).magnitude();
+        
+        // Scale levels:
+        // 0.01-0.1: Particle level (atoms, molecules)
+        // 0.1-10: Cell/organism level  
+        // 10-1000: Object level (rocks, trees)
+        // 1000-100k: Planetary level (continents, weather)
+        // 100k+: Stellar/galactic level (stars, planets as points)
+        
+        if distance < 0.1 {
+            0.0 // Microscope mode - individual particles
+        } else if distance < 10.0 {
+            1.0 // Biological scale
+        } else if distance < 1000.0 {
+            2.0 // Object scale
+        } else if distance < 100000.0 {
+            3.0 // Planetary scale
+        } else {
+            4.0 // Stellar scale
+        }
+    }
+
+    /// Get particle size multiplier based on zoom level for LOD
+    pub fn get_particle_size_multiplier(&self) -> f32 {
+        let distance = (self.position - self.target).magnitude();
+        
+        // Size scaling for visibility at different zoom levels
+        if distance < 0.01 {
+            1000.0  // Very close - make particles huge
+        } else if distance < 0.1 {
+            100.0   // Microscope level
+        } else if distance < 1.0 {
+            10.0    // Close inspection
+        } else if distance < 10.0 {
+            5.0     // Normal view
+        } else if distance < 100.0 {
+            2.0     // Medium zoom out
+        } else {
+            1.0     // Far zoom - default size
         }
     }
 }
@@ -434,10 +660,10 @@ impl<'window> NativeRenderer<'window> {
         });
         queue.write_buffer(&quad_vertex_buffer, 0, bytemuck::cast_slice(quad_vertices));
         
-        // Create instance buffer for particle data
+        // Create instance buffer for particle data (simple layout: position, color, size)
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Particle Instance Buffer"),
-            size: (max_particles * std::mem::size_of::<ParticleVertex>()) as u64,
+            size: (max_particles * std::mem::size_of::<SimpleParticleVertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -493,55 +719,25 @@ impl<'window> NativeRenderer<'window> {
                     },
                     // Particle data (per instance)
                     wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<ParticleVertex>() as u64,
+                        array_stride: std::mem::size_of::<SimpleParticleVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &[
-                            // Position
+                            // Position (vec3)
                             wgpu::VertexAttribute {
                                 offset: 0,
                                 shader_location: 1,
                                 format: wgpu::VertexFormat::Float32x3,
                             },
-                            // Velocity
+                            // Color (vec3)
                             wgpu::VertexAttribute {
                                 offset: std::mem::size_of::<[f32; 3]>() as u64,
                                 shader_location: 2,
                                 format: wgpu::VertexFormat::Float32x3,
                             },
-                            // Mass
+                            // Size (f32)
                             wgpu::VertexAttribute {
                                 offset: (std::mem::size_of::<[f32; 3]>() * 2) as u64,
                                 shader_location: 3,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Charge
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>()) as u64,
-                                shader_location: 4,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Temperature
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 2) as u64,
-                                shader_location: 5,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Particle Type
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 3) as u64,
-                                shader_location: 6,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Interaction Count
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 4) as u64,
-                                shader_location: 7,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Padding
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 5) as u64,
-                                shader_location: 8,
                                 format: wgpu::VertexFormat::Float32,
                             },
                         ],
@@ -627,139 +823,146 @@ impl<'window> NativeRenderer<'window> {
             text_atlas,
             text_cache,
             text_renderer,
+            
+            // Debug panel and interaction
+            debug_panel: DebugPanel::default(),
+            mouse_state: MouseState::default(),
+            
+            // Enhanced camera controls
+            orbit_sensitivity: 0.01,
+            pan_sensitivity: 0.01,
+            zoom_sensitivity: 0.01,
+
+            // Persistent text buffers (cleared each frame after rendering)
+            text_buffers: Vec::new(),
         })
     }
     
     /// Update particle data from simulation with zero-copy access
-    pub fn update_particles(&mut self, _simulation: &UniverseSimulation) -> Result<()> {
-        println!("🔬 DEBUG ROOM: Generating shader-driven color demo");
+    pub fn update_particles(&mut self, simulation: &mut UniverseSimulation) -> Result<()> {
+        println!("🔬 PHYSICS DATA: Syncing real simulation particles");
 
-        // Configuration - more samples to show full color ranges
-        const COLOR_SETS: usize = 6; // Number of ColorMode variants
-        const SAMPLES_PER_ROW: usize = 8; // More samples to show full range
-        const MASSES: [f32; 8] = [1.0, 1.4, 1.8, 2.2, 2.6, 3.0, 3.4, 3.8]; // Various masses for size variation
-        const SPACING_X: f32 = 1.5;
-        const SPACING_Y: f32 = 1.8;
+        // Update debug panel with latest stats
+        if let Ok(stats) = simulation.get_stats() {
+            self.debug_panel.simulation_stats = Some(stats);
+        }
 
-        let mut particles: Vec<ParticleVertex> = Vec::new();
-        let y_offset = (COLOR_SETS as f32 - 1.0) * 0.5 * SPACING_Y;
+        let mut particles: Vec<SimpleParticleVertex> = Vec::new();
+        
+        // Get particles from physics engine
+        let physics_particles = simulation.physics_engine.get_particles();
+        let store_particle_count = simulation.store.particles.count;
+        
+        println!("📊 Physics Engine: {} particles, Store: {} particles", 
+                 physics_particles.len(), store_particle_count);
 
-        for row in 0..COLOR_SETS {
-            let y = row as f32 * SPACING_Y - y_offset;
+        // Convert physics engine particles to renderer format
+        for (i, physics_particle) in physics_particles.iter().enumerate() {
+            if i >= self.max_particles {
+                warn!("Particle limit exceeded: {} > {}", physics_particles.len(), self.max_particles);
+                break;
+            }
+
+            // Map particle type to numeric value for shader
+            let particle_type_value = match physics_particle.particle_type {
+                physics_engine::ParticleType::Electron => 0.0,
+                physics_engine::ParticleType::Proton => 1.0,
+                physics_engine::ParticleType::Neutron => 2.0,
+                physics_engine::ParticleType::Photon => 3.0,
+                physics_engine::ParticleType::Hydrogen => 4.0,
+                physics_engine::ParticleType::Helium => 5.0,
+                _ => 6.0, // Other particles
+            };
+
+            // Calculate kinetic energy for temperature mapping
+            let velocity_magnitude = physics_particle.velocity.magnitude();
+            let kinetic_energy = 0.5 * physics_particle.mass * velocity_magnitude * velocity_magnitude;
             
-            for col in 0..SAMPLES_PER_ROW {
-                let x = col as f32 * SPACING_X - (SAMPLES_PER_ROW as f32 * SPACING_X * 0.5);
-                let mass = MASSES[col % MASSES.len()];
-                
-                // Generate particles with varying physics properties to demonstrate each color mode
-                let particle = match row {
-                    0 => {
-                        // ParticleType mode - different particle types
-                        let particle_type = (col % 6) as f32; // 0-5 for different types
-                        ParticleVertex {
-                            position: [x, y, 0.0],
-                            velocity: [0.0, 0.0, 0.0],
-                            mass,
-                            charge: 0.0,
-                            temperature: 300.0, // Room temperature
-                            particle_type,
-                            interaction_count: 0.0,
-                            _padding: 0.0,
-                        }
-                    },
-                    1 => {
-                        // Charge mode: various charge values from -2 to +2
-                        let charge_range = 4.0; // -2 to +2
-                        let charge = (col as f32 / (SAMPLES_PER_ROW-1) as f32) * charge_range - 2.0;
-                        ParticleVertex {
-                            position: [x, y, 0.0],
-                            velocity: [0.0, 0.0, 0.0],
-                            mass,
-                            charge,
-                            temperature: 300.0,
-                            particle_type: 0.0,
-                            interaction_count: 0.0,
-                            _padding: 0.0,
-                        }
-                    },
-                    2 => {
-                        // Temperature mode: range from 0K to 6000K
-                        let temp_max = 6000.0;
-                        let temperature = (col as f32 / (SAMPLES_PER_ROW-1) as f32) * temp_max;
-                        ParticleVertex {
-                            position: [x, y, 0.0],
-                            velocity: [0.0, 0.0, 0.0],
-                            mass,
-                            charge: 0.0,
-                            temperature,
-                            particle_type: 0.0,
-                            interaction_count: 0.0,
-                            _padding: 0.0,
-                        }
-                    },
-                    3 => {
-                        // Velocity mode: various velocity directions and magnitudes
-                        let (vx, vy, vz) = match col {
-                            0 => (0.0, 0.0, 0.0),      // Stationary
-                            1 => (1.0, 0.0, 0.0),      // +X direction
-                            2 => (0.0, 1.0, 0.0),      // +Y direction
-                            3 => (0.0, 0.0, 1.0),      // +Z direction
-                            4 => (0.7, 0.7, 0.0),      // XY diagonal
-                            5 => (0.7, 0.0, 0.7),      // XZ diagonal
-                            6 => (0.0, 0.7, 0.7),      // YZ diagonal
-                            _ => (2.0, 1.0, 0.5),      // Fast mixed motion
-                        };
-                        ParticleVertex {
-                            position: [x, y, 0.0],
-                            velocity: [vx, vy, vz],
-                            mass,
-                            charge: 0.0,
-                            temperature: 300.0,
-                            particle_type: 0.0,
-                            interaction_count: 0.0,
-                            _padding: 0.0,
-                        }
-                    },
-                    4 => {
-                        // Interactions mode: various interaction counts
-                        let interaction_count = col as f32 * 10.0; // 0 to 70 interactions
-                        ParticleVertex {
-                            position: [x, y, 0.0],
-                            velocity: [0.0, 0.0, 0.0],
-                            mass,
-                            charge: 0.0,
-                            temperature: 300.0,
-                            particle_type: 0.0,
-                            interaction_count,
-                            _padding: 0.0,
-                        }
-                    },
-                    _ => {
-                        // Scientific mode: mix of everything for complex visualization
-                        let charge = if col % 2 == 0 { 1.0 } else { -1.0 };
-                        let temperature = 300.0 + col as f32 * 400.0;
-                        let speed = col as f32 * 0.2;
-                        ParticleVertex {
-                            position: [x, y, 0.0],
-                            velocity: [speed, speed * 0.5, 0.0],
-                            mass,
-                            charge,
-                            temperature,
-                            particle_type: (col % 3) as f32,
-                            interaction_count: col as f32 * 5.0,
-                            _padding: 0.0,
-                        }
-                    }
+            // Convert to temperature using kinetic theory (E = 3/2 kT for monatomic)
+            let boltzmann_constant = 1.380649e-23; // J/K
+            let _temperature = if physics_particle.mass > 0.0 {
+                (2.0 * kinetic_energy) / (3.0 * boltzmann_constant)
+            } else {
+                300.0 // Default for massless particles
+            };
+
+            // Derive a simple color from particle type value (basic rainbow mapping)
+            let hue = particle_type_value / 6.0;
+            let (r, g, b) = hsv_to_rgb(hue, 1.0, 1.0);
+
+            // Apply LOD-based particle scaling for better visibility at different zoom levels
+            let base_size = 0.003;
+            let size_multiplier = self.camera.get_particle_size_multiplier();
+            let final_size = base_size * size_multiplier;
+
+            let render_particle = SimpleParticleVertex {
+                position: [
+                    physics_particle.position.x as f32 * 1e-12,
+                    physics_particle.position.y as f32 * 1e-12,
+                    physics_particle.position.z as f32 * 1e-12,
+                ],
+                color: [r, g, b],
+                size: final_size,
+            };
+
+            particles.push(render_particle);
+        }
+
+        // Also include particles from the universe store if they exist
+        for i in 0..store_particle_count.min(self.max_particles - particles.len()) {
+            if particles.len() >= self.max_particles {
+                break;
+            }
+
+            let (r, g, b) = (0.8, 0.8, 0.8);
+            let base_size = 0.003;
+            let size_multiplier = self.camera.get_particle_size_multiplier();
+            let final_size = base_size * size_multiplier;
+            
+            let store_particle = SimpleParticleVertex {
+                position: [
+                    simulation.store.particles.position[i].x as f32 * 1e-12,
+                    simulation.store.particles.position[i].y as f32 * 1e-12,
+                    simulation.store.particles.position[i].z as f32 * 1e-12,
+                ],
+                color: [r, g, b],
+                size: final_size,
+            };
+
+            particles.push(store_particle);
+        }
+
+        // If no physics particles, create a few demo particles for testing
+        if particles.is_empty() {
+            println!("⚠️ No physics particles found, creating demo particles for testing");
+            
+            let base_size = 0.01; // Make demo particles a bit larger to be visible
+            let size_multiplier = self.camera.get_particle_size_multiplier();
+            let final_size = base_size * size_multiplier;
+            
+            for i in 0..10 {
+                let demo_particle = SimpleParticleVertex {
+                    position: [
+                        (i as f32 - 5.0) * 0.1, // Bring them closer together for microscope view
+                        0.0,
+                        0.0,
+                    ],
+                    color: [1.0, 0.5, 0.0], // Orange for visibility
+                    size: final_size,
                 };
-                
-                particles.push(particle);
+                particles.push(demo_particle);
             }
         }
 
         // Upload to GPU
-        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&particles));
-        self.particle_count = particles.len();
-        println!("✅ Uploaded {} shader-demo particles", self.particle_count);
+        if !particles.is_empty() {
+            self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&particles));
+            self.particle_count = particles.len();
+            println!("✅ Uploaded {} real physics particles", self.particle_count);
+        } else {
+            println!("❌ No particles to render");
+        }
+
         Ok(())
     }
 
@@ -768,6 +971,9 @@ impl<'window> NativeRenderer<'window> {
         let frame_start = std::time::Instant::now();
         
         println!("🔥 RENDER START - Frame {}", self.frame_count);
+        
+        // Clear previous text buffers – GPU has finished with them once we reach a new frame
+        self.text_buffers.clear();
         
         // Update camera matrices
         self.camera.update_view();
@@ -797,9 +1003,7 @@ impl<'window> NativeRenderer<'window> {
         const SPACING_X: f32 = 1.5;
         const SPACING_Y: f32 = 1.8;
 
-        // Create all text buffers first to avoid borrowing conflicts
-        let mut label_buffers: Vec<Buffer> = Vec::with_capacity(ROW_LABELS.len() + COL_LABELS.len());
-        
+        // ---- helper: project world-space to screen-space ----
         let vp_mat = Matrix4::<f32>::from_row_slice(&[
             view_proj[0][0], view_proj[0][1], view_proj[0][2], view_proj[0][3],
             view_proj[1][0], view_proj[1][1], view_proj[1][2], view_proj[1][3],
@@ -810,85 +1014,67 @@ impl<'window> NativeRenderer<'window> {
         let world_to_screen = |pos: [f32; 3], size: (u32, u32)| -> Option<(f32, f32)> {
             let wp = nalgebra::Vector4::new(pos[0], pos[1], pos[2], 1.0);
             let clip = vp_mat * wp;
-            if clip.w.abs() < 1e-6 { return None; }
+            if clip.w.abs() < 1e-6 {
+                return None;
+            }
             let ndc = clip / clip.w;
-            let ndc_x = ndc.x;
-            let ndc_y = ndc.y;
-            if ndc_x.abs() > 1.0 || ndc_y.abs() > 1.0 { return None; }
-            let sx = (ndc_x + 1.0) * 0.5 * size.0 as f32;
-            let sy = (1.0 - (ndc_y + 1.0) * 0.5) * size.1 as f32;
-            Some((sx, sy))
+            if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 {
+                return None;
+            }
+            Some((
+                (ndc.x + 1.0) * 0.5 * size.0 as f32,
+                (1.0 - (ndc.y + 1.0) * 0.5) * size.1 as f32,
+            ))
         };
 
-        let y_offset = (COLOR_SETS as f32 - 1.0) * 0.5 * SPACING_Y;
+        // First pass: create and store all text buffers without creating TextAreas
+        // Clear old text buffers to prevent memory buildup
+        self.text_buffers.clear();
 
-        // Create buffers for row labels
-        for (row_idx, label) in ROW_LABELS.iter().enumerate() {
-            let y_world = row_idx as f32 * SPACING_Y - y_offset;
+        // Collect buffer creation info first
+        let mut buffer_info = Vec::new();
+
+        // Row labels buffer info
+        for (row_idx, _label) in ROW_LABELS.iter().enumerate() {
+            let y_world = row_idx as f32 * SPACING_Y - (COLOR_SETS as f32 - 1.0) * 0.5 * SPACING_Y;
             let x_world = -(SAMPLES_PER_ROW as f32 * SPACING_X * 0.5) - 1.5;
-            if world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)).is_some() {
-                let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(16.0, 20.0));
-                buffer.set_size(&mut self.font_system, 180.0, 24.0);
-                buffer.set_text(&mut self.font_system, label, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
-                label_buffers.push(buffer);
+            if let Some((sx, sy)) = world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)) {
+                buffer_info.push((ROW_LABELS[row_idx], sx, sy, Color::rgb(255, 255, 255), 16.0, 180.0, 24.0));
             }
         }
 
-        // Create buffers for column labels
-        let top_row_y_world = 0.0 - y_offset;
+        // Column labels buffer info
+        let top_row_y_world = 0.0 - (COLOR_SETS as f32 - 1.0) * 0.5 * SPACING_Y;
         let x_start = -(SAMPLES_PER_ROW as f32 * SPACING_X * 0.5);
         for (col_idx, label) in COL_LABELS.iter().enumerate() {
             let x_world = col_idx as f32 * SPACING_X + x_start;
             let y_world = top_row_y_world + SPACING_Y + 0.5;
-            if world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)).is_some() {
-                let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(14.0, 18.0));
-                buffer.set_size(&mut self.font_system, 80.0, 22.0);
-                buffer.set_text(&mut self.font_system, label, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
-                label_buffers.push(buffer);
+            if let Some((sx, sy)) = world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)) {
+                buffer_info.push((label, sx, sy, Color::rgb(255, 255, 0), 14.0, 80.0, 22.0));
             }
+        }
+
+        // Create all text buffers
+        for (text, _sx, _sy, _color, font_size, width, height) in &buffer_info {
+            let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(*font_size, font_size + 4.0));
+            buffer.set_size(&mut self.font_system, *width, *height);
+            buffer.set_text(&mut self.font_system, text, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            self.text_buffers.push(buffer);
         }
 
         // Now create text areas with references to the buffers
         let mut text_areas: Vec<TextArea> = Vec::new();
-        let mut buffer_idx = 0;
-
-        // Row labels text areas
-        for (row_idx, _label) in ROW_LABELS.iter().enumerate() {
-            let y_world = row_idx as f32 * SPACING_Y - y_offset;
-            let x_world = -(SAMPLES_PER_ROW as f32 * SPACING_X * 0.5) - 1.5;
-            if let Some((sx, sy)) = world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)) {
-                if buffer_idx < label_buffers.len() {
-                    let bounds = TextBounds { left: 0, top: 0, right: self.size.width as i32, bottom: self.size.height as i32 };
-                    text_areas.push(TextArea { 
-                        buffer: &label_buffers[buffer_idx], 
-                        left: sx, 
-                        top: sy, 
-                        scale: 1.0, 
-                        bounds, 
-                        default_color: Color::rgb(255,255,255) 
-                    });
-                    buffer_idx += 1;
-                }
-            }
-        }
-
-        // Column labels text areas
-        for (col_idx, _label) in COL_LABELS.iter().enumerate() {
-            let x_world = col_idx as f32 * SPACING_X + x_start;
-            let y_world = top_row_y_world + SPACING_Y + 0.5;
-            if let Some((sx, sy)) = world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)) {
-                if buffer_idx < label_buffers.len() {
-                    let bounds = TextBounds { left: 0, top: 0, right: self.size.width as i32, bottom: self.size.height as i32 };
-                    text_areas.push(TextArea { 
-                        buffer: &label_buffers[buffer_idx], 
-                        left: sx, 
-                        top: sy, 
-                        scale: 1.0, 
-                        bounds, 
-                        default_color: Color::rgb(255,255,0) 
-                    });
-                    buffer_idx += 1;
-                }
+        for (buffer_idx, (_text, sx, sy, color, _font_size, _width, _height)) in buffer_info.iter().enumerate() {
+            if buffer_idx < self.text_buffers.len() {
+                let bounds = TextBounds { left: 0, top: 0, right: self.size.width as i32, bottom: self.size.height as i32 };
+                text_areas.push(TextArea { 
+                    buffer: &self.text_buffers[buffer_idx], 
+                    left: *sx, 
+                    top: *sy, 
+                    scale: 1.0, 
+                    bounds, 
+                    default_color: *color 
+                });
             }
         }
 
@@ -969,10 +1155,10 @@ impl<'window> NativeRenderer<'window> {
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.0,
-                            g: 0.3,
+                            g: 0.0,
                             b: 0.0,
                             a: 1.0,
-                        }), // GREEN BACKGROUND - proves rendering works
+                        }), // BLACK SPACE-LIKE BACKGROUND for better particle visibility
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1024,9 +1210,34 @@ impl<'window> NativeRenderer<'window> {
             let _ = self.text_renderer.render(&self.text_atlas, &mut text_pass);
         } // text_pass is dropped here, releasing the borrow on encoder
 
+        // ---- Debug Panel Overlay ----
+        if let Err(e) = self.render_debug_panel(&mut encoder, &view) {
+            warn!("Debug panel rendering failed: {}", e);
+        }
+
         // Submit GPU commands and present the frame
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+
+        // === NEW: GPU lifecycle safeguard for debug resources ===
+        // When the debug panel is active we allocate and drop many text buffers
+        // every frame.  If any of those GPU buffers are freed while the GPU is
+        // still processing the previous frame wgpu will raise a validation
+        // error ("Buffer is destroyed").  To guarantee safety we synchronise
+        // with the GPU once per frame while the debug UI is visible.  In normal
+        // rendering mode we keep the previous non-blocking behaviour for
+        // performance.
+        if self.debug_panel.visible {
+            // Non-blocking poll every frame keeps the driver alive without stalling
+            // the CPU.  We now rely on an explicit poll-and-drop inside
+            // `render_debug_text` (added above) to guarantee safe destruction of
+            // old text buffers, so we can always use the lightweight mode here.
+            self.device.poll(wgpu::Maintain::Poll);
+        } else {
+            // Lightweight polling – just allow the driver to make progress.
+            self.device.poll(wgpu::Maintain::Poll);
+        }
+        // === END safeguard ===
 
         // ---- Metrics ----
         let frame_time = frame_start.elapsed();
@@ -1096,6 +1307,589 @@ impl<'window> NativeRenderer<'window> {
         self.camera.scale_mode = mode;
         debug!("Switched to scale mode: {:?}", mode);
     }
+    
+    /// Toggle debug panel visibility
+    pub fn toggle_debug_panel(&mut self) {
+        self.debug_panel.visible = !self.debug_panel.visible;
+        println!("🎛️ Debug panel: {}", if self.debug_panel.visible { "ON" } else { "OFF" });
+        
+        // When panel is turned off, clear any cached text buffers to prevent opacity issues
+        if !self.debug_panel.visible {
+            self.text_buffers.clear();
+            println!("🧹 Cleared debug panel text buffers");
+        }
+    }
+    
+    /// Cycle through debug panel modes
+    pub fn cycle_debug_mode(&mut self) {
+        self.debug_panel.debug_mode = match self.debug_panel.debug_mode {
+            DebugMode::Overview => DebugMode::Physics,
+            DebugMode::Physics => DebugMode::Performance,
+            DebugMode::Performance => DebugMode::Particles,
+            DebugMode::Particles => DebugMode::Chemistry,
+            DebugMode::Chemistry => DebugMode::Cosmology,
+            DebugMode::Cosmology => DebugMode::Overview,
+        };
+        println!("🔄 Debug mode: {:?}", self.debug_panel.debug_mode);
+    }
+    
+    /// Handle mouse button press/release (Unity 6.0+ official controls)
+    pub fn handle_mouse_button(&mut self, button: winit::event::MouseButton, state: ElementState) {
+        match button {
+            winit::event::MouseButton::Left => {
+                self.mouse_state.left_pressed = state == ElementState::Pressed;
+                if state == ElementState::Pressed && self.mouse_state.modifiers.alt_key() {
+                    self.mouse_state.is_orbiting = true;  // Unity: Alt + Left = Orbit
+                    println!("🖱️ Unity Navigation: ALT + LEFT - ORBIT MODE activated");
+                } else {
+                    self.mouse_state.is_orbiting = false;
+                }
+            },
+            winit::event::MouseButton::Right => {
+                self.mouse_state.right_pressed = state == ElementState::Pressed;
+                if state == ElementState::Pressed {
+                    if self.mouse_state.modifiers.alt_key() {
+                        self.mouse_state.is_alt_zooming = true;  // Unity: Alt + Right = Zoom
+                        println!("🖱️ Unity Navigation: ALT + RIGHT - ZOOM MODE activated");
+                    } else {
+                        self.mouse_state.is_flythrough = true;  // Unity: Right = Flythrough
+                        println!("🖱️ Unity Navigation: RIGHT HOLD - FLYTHROUGH MODE activated (use WASD)");
+                    }
+                } else {
+                    self.mouse_state.is_alt_zooming = false;
+                    self.mouse_state.is_flythrough = false;
+                }
+            },
+            winit::event::MouseButton::Middle => {
+                self.mouse_state.middle_pressed = state == ElementState::Pressed;
+                if state == ElementState::Pressed {
+                    self.mouse_state.is_panning = true;  // Unity: Middle = Pan
+                    println!("🖱️ Unity Navigation: MIDDLE - PAN MODE activated");
+                } else {
+                    self.mouse_state.is_panning = false;
+                }
+            },
+            _ => {}
+        }
+    }
+    
+    /// Handle mouse movement with Unity 6.0+ official navigation
+    pub fn handle_mouse_move(&mut self, x: f64, y: f64) {
+        self.mouse_state.update_position(x, y);
+        let (delta_x, delta_y) = self.mouse_state.get_delta();
+        
+        // Apply Unity 6.0+ official navigation based on modifier keys and mouse buttons
+        if self.mouse_state.is_orbiting && self.mouse_state.modifiers.alt_key() {
+            // Alt + Left mouse: Orbit around target (Unity official)
+            self.camera.orbit(
+                delta_x as f32, 
+                delta_y as f32, 
+                self.orbit_sensitivity
+            );
+            if delta_x.abs() > 1.0 || delta_y.abs() > 1.0 {
+                println!("🌀 Unity ORBIT (Alt+Left): delta({:.1}, {:.1})", delta_x, delta_y);
+            }
+        } else if self.mouse_state.is_panning {
+            // Middle mouse: Pan camera (Unity official)
+            self.camera.pan(
+                delta_x as f32, 
+                delta_y as f32, 
+                self.pan_sensitivity
+            );
+            if delta_x.abs() > 1.0 || delta_y.abs() > 1.0 {
+                println!("📐 Unity PAN (Middle): delta({:.1}, {:.1})", delta_x, delta_y);
+            }
+        } else if self.mouse_state.is_alt_zooming && self.mouse_state.modifiers.alt_key() {
+            // Alt + Right mouse: Zoom camera (Unity official alternative to scroll wheel)
+            let zoom_delta = delta_y as f32 * 0.01;
+            self.camera.zoom(zoom_delta);
+            if delta_y.abs() > 1.0 {
+                println!("🔍 Unity ZOOM (Alt+Right): delta_y({:.1})", delta_y);
+            }
+        } else if self.mouse_state.is_flythrough {
+            // Right mouse: Flythrough mode mouse look (Unity official)
+            self.camera.flythrough_look(
+                delta_x as f32 * 0.002, // Mouse sensitivity for look
+                delta_y as f32 * 0.002
+            );
+            if delta_x.abs() > 1.0 || delta_y.abs() > 1.0 {
+                println!("✈️ Unity FLYTHROUGH LOOK: delta({:.1}, {:.1})", delta_x, delta_y);
+            }
+        }
+    }
+    
+    /// Handle mouse wheel for zooming
+    pub fn handle_mouse_wheel(&mut self, delta: f32) {
+        self.camera.zoom(delta);
+        println!("🔍 Unity ZOOM (scroll): delta({:.1})", delta);
+    }
+    
+    /// Handle keyboard input for debug panel and camera controls
+    pub fn handle_debug_input(&mut self, key: KeyCode, state: ElementState) {
+        if state == ElementState::Pressed {
+            match key {
+                KeyCode::F1 => self.toggle_debug_panel(),
+                KeyCode::F2 => {
+                    self.debug_panel.debug_mode = match self.debug_panel.debug_mode {
+                        DebugMode::Overview => DebugMode::Physics,
+                        DebugMode::Physics => DebugMode::Performance,
+                        DebugMode::Performance => DebugMode::Particles,
+                        DebugMode::Particles => DebugMode::Chemistry,
+                        DebugMode::Chemistry => DebugMode::Cosmology,
+                        DebugMode::Cosmology => DebugMode::Overview,
+                    };
+                    println!("🔄 Debug mode: {:?}", self.debug_panel.debug_mode);
+                },
+                KeyCode::F3 => {
+                    self.debug_panel.show_physics_details = !self.debug_panel.show_physics_details;
+                },
+                KeyCode::F4 => {
+                    self.debug_panel.show_performance_metrics = !self.debug_panel.show_performance_metrics;
+                },
+                KeyCode::F5 => {
+                    self.camera_microscope_reset();
+                    println!("🔬 Microscope view reset - focusing on particle");
+                },
+                KeyCode::Space => {
+                    // Focus on center of particle system
+                    self.camera.focus_on(Point3::new(0.0, 0.0, 0.0), Some(20.0));
+                    println!("🎯 Camera focused on origin");
+                },
+                _ => {}
+            }
+        }
+    }
+    
+    /// Handle modifier keys
+    pub fn handle_modifiers(&mut self, modifiers: winit::keyboard::ModifiersState) {
+        self.mouse_state.modifiers = modifiers;
+        println!("🔧 Modifiers changed: {:?}", modifiers);
+    }
+
+    /// Render comprehensive debug panel overlay
+    pub fn render_debug_panel(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> Result<()> {
+        if !self.debug_panel.visible {
+            return Ok(());
+        }
+
+        let Some(ref stats) = self.debug_panel.simulation_stats else {
+            // If no stats available, show a placeholder message
+            let placeholder_text = "🔬 EVOLUTION Universe Simulation - Debug Panel [F1=Toggle]\n\
+                                   📊 Waiting for simulation data...\n\
+                                   \n\
+                                   🎮 Controls:\n\
+                                   • F1: Toggle debug panel\n\
+                                   • F2: Cycle debug modes\n\
+                                   • F5: Reset camera view";
+
+            return self.render_debug_text(encoder, view, placeholder_text);
+        };
+
+        // Create debug text content based on current mode
+        let debug_text = match self.debug_panel.debug_mode {
+            DebugMode::Overview => {
+                format!(
+                    "🔬 EVOLUTION Universe Simulation - Debug Panel [F1=Toggle F2=Mode F5=Reset]\n\
+                     📊 Overview Mode (F2 to cycle modes)\n\
+                     \n\
+                     🌌 Universe: Age {:.2} Gyr, Tick {}, Description: {}\n\
+                     ⚛️  Particles: {} total, {} rendered\n\
+                     ⭐ Stars: {} total, {} main sequence, {} evolved, {} remnants\n\
+                     🪐 Planets: {} total, {} habitable, {} Earth-like\n\
+                     👽 Lineages: {} active, {} extinct, {} immortal\n\
+                     \n\
+                     🎮 Controls:\n\
+                     • Left Mouse: Orbit camera around target\n\
+                     • Middle Mouse: Pan camera\n\
+                     • Scroll Wheel: Zoom in/out (LOD scaling)\n\
+                     • Space: Focus on origin\n\
+                     • F5: Microscope view (particle close-up)\n\
+                     • F3: Toggle physics details\n\
+                     • F4: Toggle performance metrics\n\
+                     \n\
+                     📈 Performance: {:.1} ms/step, {:.1} fps",
+                    stats.universe_age_gyr,
+                    stats.current_tick,
+                    stats.universe_description,
+                    stats.particle_count,
+                    self.particle_count,
+                    stats.star_count,
+                    stats.main_sequence_stars,
+                    stats.evolved_stars,
+                    stats.stellar_remnants,
+                    stats.planet_count,
+                    stats.habitable_planets,
+                    stats.earth_like_planets,
+                    stats.lineage_count,
+                    stats.extinct_lineages,
+                    stats.immortal_lineages,
+                    stats.physics_step_time_ms,
+                    self.metrics.fps
+                )
+            },
+            DebugMode::Physics => {
+                format!(
+                    "⚛️  Physics Engine Debug [F2 to change mode]\n\
+                     \n\
+                     🔬 Particle Interactions:\n\
+                     • Total interactions/step: {}\n\
+                     • Particle interactions/step: {}\n\
+                     • Physics step time: {:.3} ms\n\
+                     \n\
+                     🌡️  Thermodynamics:\n\
+                     • Average temperature: {:.1} K\n\
+                     • Total energy: {:.2e} J\n\
+                     • Kinetic energy: {:.2e} J\n\
+                     • Potential energy: {:.2e} J\n\
+                     • Radiation energy: {:.2e} J\n\
+                     • Nuclear binding energy: {:.2e} J\n\
+                     • Energy density: {:.2e} J/m³\n\
+                     \n\
+                     🧪 Chemical Composition:\n\
+                     • Hydrogen: {:.1}%\n\
+                     • Helium: {:.1}%\n\
+                     • Carbon: {:.1}%\n\
+                     • Oxygen: {:.1}%\n\
+                     • Iron: {:.1}%\n\
+                     • Heavy elements: {:.1}%\n\
+                     • Metallicity: {:.3}",
+                    stats.interactions_per_step,
+                    stats.particle_interactions_per_step,
+                    stats.physics_step_time_ms,
+                    stats.average_temperature,
+                    stats.total_energy,
+                    stats.kinetic_energy,
+                    stats.potential_energy,
+                    stats.radiation_energy,
+                    stats.nuclear_binding_energy,
+                    stats.energy_density,
+                    stats.hydrogen_fraction * 100.0,
+                    stats.helium_fraction * 100.0,
+                    stats.carbon_fraction * 100.0,
+                    stats.oxygen_fraction * 100.0,
+                    stats.iron_fraction * 100.0,
+                    stats.heavy_elements_fraction * 100.0,
+                    stats.metallicity
+                )
+            },
+            DebugMode::Performance => {
+                format!(
+                    "⚡ Performance Metrics [F2 to change mode]\n\
+                     \n\
+                     🖥️  Rendering:\n\
+                     • FPS: {:.1}\n\
+                     • Frame time: {:.2} ms\n\
+                     • Particles rendered: {}\n\
+                     • GPU memory: {:.1} MB\n\
+                     • Culled particles: {}\n\
+                     • Shader switches: {}\n\
+                     \n\
+                     🔬 Physics Simulation:\n\
+                     • Physics step time: {:.3} ms\n\
+                     • Interactions per step: {}\n\
+                     • Target UPS: {:.1}\n\
+                     \n\
+                     📊 System:\n\
+                     • Current tick: {}\n\
+                     • Tick span: {:.1} years\n\
+                     • Camera position: ({:.1}, {:.1}, {:.1})\n\
+                     • Camera target: ({:.1}, {:.1}, {:.1})\n\
+                     • Zoom level: {:.1} (distance: {:.4})\n\
+                     • Current color mode: {:?}",
+                    self.metrics.fps,
+                    self.metrics.frame_time_ms,
+                    self.metrics.particles_rendered,
+                    self.metrics.gpu_memory_mb,
+                    self.metrics.culled_particles,
+                    self.metrics.shader_switches,
+                    stats.physics_step_time_ms,
+                    stats.interactions_per_step,
+                    stats.target_ups,
+                    stats.current_tick,
+                    1e6, // Default tick span years
+                    self.camera.position.x,
+                    self.camera.position.y,
+                    self.camera.position.z,
+                    self.camera.target.x,
+                    self.camera.target.y,
+                    self.camera.target.z,
+                    self.camera.get_zoom_level(),
+                    (self.camera.position - self.camera.target).magnitude(),
+                    self.camera.color_mode
+                )
+            },
+            DebugMode::Particles => {
+                format!(
+                    "🎯 Particle Inspector [F2 to change mode]\n\
+                     \n\
+                     📊 Particle Count Summary:\n\
+                     • Total particles: {}\n\
+                     • Rendered particles: {}\n\
+                     • Max particles: {}\n\
+                     \n\
+                     🔍 Visualization Settings:\n\
+                     • Color mode: {:?}\n\
+                     • Scale mode: {:?}\n\
+                     • Filter threshold: {:.3}\n\
+                     \n\
+                     🎨 Color Modes Available:\n\
+                     • ParticleType: Color by particle type\n\
+                     • Charge: Color by electric charge\n\
+                     • Temperature: Thermal radiation colors\n\
+                     • Velocity: Doppler shift visualization\n\
+                     • Interactions: Activity-based coloring\n\
+                     • Scientific: Multi-channel visualization\n\
+                     \n\
+                     ⚡ Particle Selection:\n\
+                     {}",
+                    stats.particle_count,
+                    self.particle_count,
+                    self.max_particles,
+                    self.camera.color_mode,
+                    self.camera.scale_mode,
+                    self.camera.filter_threshold,
+                    if let Some(id) = self.debug_panel.selected_particle_id {
+                        format!("• Selected particle ID: {}", id)
+                    } else {
+                        "• No particle selected (click to select)".to_string()
+                    }
+                )
+            },
+            DebugMode::Chemistry => {
+                format!(
+                    "🧪 Chemistry & Nucleosynthesis [F2 to change mode]\n\
+                     \n\
+                     🌟 Stellar Evolution:\n\
+                     • Star formation rate: {:.2e} stars/year\n\
+                     • Average stellar mass: {:.1} M☉\n\
+                     • Main sequence stars: {}\n\
+                     • Evolved stars: {}\n\
+                     • Stellar remnants: {}\n\
+                     \n\
+                     🧬 Chemical Evolution:\n\
+                     • Hydrogen fraction: {:.3}\n\
+                     • Helium fraction: {:.3}\n\
+                     • Carbon fraction: {:.5}\n\
+                     • Oxygen fraction: {:.5}\n\
+                     • Iron fraction: {:.5}\n\
+                     • Heavy elements: {:.5}\n\
+                     • Metallicity [Fe/H]: {:.3}\n\
+                     \n\
+                     🌌 Planet Formation:\n\
+                     • Total planets: {}\n\
+                     • Planet formation rate: {:.2e} planets/year\n\
+                     • Average planet mass: {:.2e} kg\n\
+                     • Gas giants: {}",
+                    stats.stellar_formation_rate,
+                    stats.average_stellar_mass,
+                    stats.main_sequence_stars,
+                    stats.evolved_stars,
+                    stats.stellar_remnants,
+                    stats.hydrogen_fraction,
+                    stats.helium_fraction,
+                    stats.carbon_fraction,
+                    stats.oxygen_fraction,
+                    stats.iron_fraction,
+                    stats.heavy_elements_fraction,
+                    stats.metallicity,
+                    stats.planet_count,
+                    stats.planet_formation_rate,
+                    stats.average_planet_mass,
+                    stats.gas_giants
+                )
+            },
+            DebugMode::Cosmology => {
+                format!(
+                    "🌌 Cosmology & Structure [F2 to change mode]\n\
+                     \n\
+                     📐 Universal Structure:\n\
+                     • Universe radius: {:.2e} m\n\
+                     • Hubble constant: {:.1} km/s/Mpc\n\
+                     • Critical density: {:.2e} kg/m³\n\
+                     \n\
+                     🌑 Dark Sector:\n\
+                     • Dark matter fraction: {:.1}%\n\
+                     • Dark energy fraction: {:.1}%\n\
+                     • Ordinary matter fraction: {:.1}%\n\
+                     \n\
+                     ⏰ Cosmic Evolution:\n\
+                     • Universe age: {:.2} Gyr\n\
+                     • Current tick: {}\n\
+                     • Simulation speed: {:.1} UPS target\n\
+                     \n\
+                     🧬 Life & Intelligence:\n\
+                     • Extinct lineages: {}\n\
+                     • Average tech level: {:.2}\n\
+                     • Immortal lineages: {}\n\
+                     • Consciousness emergence rate: {:.2e}/year",
+                    stats.universe_radius,
+                    stats.hubble_constant,
+                    stats.critical_density,
+                    stats.dark_matter_fraction * 100.0,
+                    stats.dark_energy_fraction * 100.0,
+                    stats.ordinary_matter_fraction * 100.0,
+                    stats.universe_age_gyr,
+                    stats.current_tick,
+                    stats.target_ups,
+                    stats.extinct_lineages,
+                    stats.average_tech_level,
+                    stats.immortal_lineages,
+                    stats.consciousness_emergence_rate
+                )
+            },
+        };
+
+        self.render_debug_text(encoder, view, &debug_text)
+    }
+
+    /// Render debug text with proper buffer lifecycle management
+    fn render_debug_text(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, text: &str) -> Result<()> {
+        // Clean up old text buffers only after ensuring GPU has finished
+        // all previously submitted work that might still reference them.
+        // Waiting here guarantees we never destroy a buffer that is still
+        // in-flight, preventing the validation error we observed while the
+        // debug panel is active.
+        if self.text_buffers.len() > 5 {
+            // Block until GPU is idle before releasing old buffers.
+            self.device.poll(wgpu::Maintain::Wait);
+            self.text_buffers.clear();
+        }
+
+        // CRITICAL: Store buffer BEFORE creating TextArea to ensure proper lifecycle
+        let mut debug_buffer = Buffer::new(&mut self.font_system, Metrics::new(16.0, 20.0));
+        debug_buffer.set_size(&mut self.font_system, self.size.width as f32 * 0.4, self.size.height as f32 * 0.8);
+        debug_buffer.set_text(
+            &mut self.font_system,
+            text,
+            Attrs::new().family(Family::Monospace),
+            Shaping::Advanced
+        );
+        debug_buffer.shape_until_scroll(&mut self.font_system);
+
+        // Store buffer FIRST to ensure it stays alive during GPU operations
+        self.text_buffers.push(debug_buffer);
+        
+        // Get reference to the buffer we just stored
+        let buffer_ref = self.text_buffers.last().unwrap();
+
+        // Create text area with reference to stored buffer
+        let text_area = TextArea {
+            buffer: buffer_ref,
+            left: 20.0,
+            top: 20.0,
+            scale: 1.0,
+            bounds: TextBounds {
+                left: 20,
+                top: 20,
+                right: (self.size.width / 2) as i32,
+                bottom: (self.size.height - 20) as i32,
+            },
+            default_color: Color::rgb(255, 255, 255), // Bright white text for better visibility
+        };
+
+        // Prepare text rendering
+        if let Err(e) = self.text_renderer.prepare(
+            &self.device,
+            &self.queue,
+            &mut self.font_system,
+            &mut self.text_atlas,
+            Resolution {
+                width: self.size.width,
+                height: self.size.height,
+            },
+            [text_area],
+            &mut self.text_cache,
+        ) {
+            warn!("Text preparation failed: {}", e);
+            return Ok(()); // Don't crash, just skip text rendering
+        }
+
+        // Render the text
+        {
+            let mut text_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Debug Text Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            if let Err(e) = self.text_renderer.render(&self.text_atlas, &mut text_pass) {
+                warn!("Text rendering failed: {}", e);
+                // Don't return error, just log and continue
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle flythrough movement (Unity WASD controls when right mouse is held)
+    pub fn handle_flythrough_movement(&mut self, key_code: winit::keyboard::KeyCode, state: ElementState) {
+        if !self.mouse_state.is_flythrough {
+            return; // Only process WASD when in flythrough mode
+        }
+        
+        let is_pressed = state == ElementState::Pressed;
+        let speed = 0.5; // Flythrough movement speed
+        
+        if is_pressed {
+            let mut movement = Vector3::new(0.0, 0.0, 0.0);
+            
+            match key_code {
+                winit::keyboard::KeyCode::KeyW => movement.z = speed,     // Forward
+                winit::keyboard::KeyCode::KeyS => movement.z = -speed,    // Backward  
+                winit::keyboard::KeyCode::KeyA => movement.x = -speed,    // Left
+                winit::keyboard::KeyCode::KeyD => movement.x = speed,     // Right
+                winit::keyboard::KeyCode::KeyQ => movement.y = -speed,    // Down (Unity style)
+                winit::keyboard::KeyCode::KeyE => movement.y = speed,     // Up (Unity style)
+                _ => return,
+            }
+            
+            self.camera.flythrough_move(movement, 1.0);
+            println!("✈️ Unity Flythrough: {:?} pressed, movement: {:?}", key_code, movement);
+        }
+    }
+
+    /// Reset camera to microscope view - focus on a particle up close
+    pub fn camera_microscope_reset(&mut self) {
+        // Position camera very close to origin to see particles like through a microscope
+        self.camera.position = Point3::new(0.01, 0.01, 0.05); // Very close
+        self.camera.target = Point3::new(0.0, 0.0, 0.0);      // Looking at origin
+        self.camera.up = Vector3::new(0.0, 1.0, 0.0);         // Standard up vector
+        self.camera.fov = 45.0;                                // Good viewing angle
+        
+        // Update camera matrices
+        self.camera.update_view();
+        self.camera.update_projection();
+        
+        println!("🔬 MICROSCOPE MODE: Camera positioned at distance {:.4} for particle inspection", 
+                (self.camera.position - self.camera.target).magnitude());
+        println!("🔍 Use scroll wheel to zoom in/out, drag to pan around particles");
+    }
+}
+
+/// Convert HSV (0.0-1.0) to RGB (0.0-1.0)
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    let i = (h * 6.0).floor() as i32;
+    let f = h * 6.0 - i as f32;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - f * s);
+    let t = v * (1.0 - (1.0 - f) * s);
+    match i % 6 {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    }
 }
 
 /// Create and run the high-performance renderer with heavy mode support
@@ -1120,11 +1914,25 @@ pub async fn run_renderer(simulation: Arc<Mutex<UniverseSimulation>>) -> Result<
     let mut last_update = std::time::Instant::now();
     
     info!("🎮 Renderer Controls:");
-    info!("  WASD - Move camera");
-    info!("  Q/E - Move up/down");
-    info!("  1-6 - Switch color modes");
-    info!("  H - Toggle heavy mode (if enabled)");
-    info!("  ESC - Exit");
+    info!("  🎮 Camera (Unity 6.0+ Official):");
+    info!("    • Alt + Left Mouse - Orbit around target");
+    info!("    • Middle Mouse Drag - Pan camera");
+    info!("    • Alt + Right Mouse - Zoom (alternative to scroll wheel)");
+    info!("    • Right Mouse Hold + WASD - Flythrough mode (first-person)");
+    info!("    • Scroll Wheel - Zoom in/out");
+    info!("    • Space - Focus on origin");
+    info!("    • F5 - Microscope view reset (particle close-up)");
+    info!("  🎛️ Debug Panel:");
+    info!("    • F1 - Toggle debug panel");
+    info!("    • F2 - Cycle debug modes (Overview/Physics/Performance/Particles/Chemistry/Cosmology)");
+    info!("    • F3 - Toggle physics details");
+    info!("    • F4 - Toggle performance metrics");
+    info!("  ⚙️ Other:");
+    info!("    • WASD/QE - Manual camera movement");
+    info!("    • 1-6 - Switch color modes");
+    info!("    • H - Toggle heavy mode (if enabled)");
+    info!("    • R - Reset camera");
+    info!("    • ESC - Exit");
     
     println!("🔄 Starting event loop...");
     event_loop.run(move |event, elwt| {
@@ -1152,9 +1960,9 @@ pub async fn run_renderer(simulation: Arc<Mutex<UniverseSimulation>>) -> Result<
                         last_update = now;
                         
                         // Update particles from simulation (non-blocking)
-                        if let Ok(sim) = simulation.try_lock() {
+                        if let Ok(mut sim) = simulation.try_lock() {
                             println!("🔄 Updating particles from simulation...");
-                            if let Err(e) = renderer.update_particles(&sim) {
+                            if let Err(e) = renderer.update_particles(&mut sim) {
                                 error!("Failed to update particles: {}", e);
                             }
                         } else {
@@ -1183,23 +1991,44 @@ pub async fn run_renderer(simulation: Arc<Mutex<UniverseSimulation>>) -> Result<
                             // Handle camera controls
                             renderer.camera.handle_input(key_code, key_event.state);
                             
+                            // Handle debug panel controls
+                            renderer.handle_debug_input(key_code, key_event.state);
+                            
+                            // Handle flythrough movement (WASD when right mouse held)
+                            renderer.handle_flythrough_movement(key_code, key_event.state);
+                            
                             // Handle special keys
                             if key_event.state == ElementState::Pressed {
                                 match key_code {
-                                    KeyCode::Escape => elwt.exit(),
-                                    #[cfg(feature = "heavy")]
-                                    KeyCode::KeyH => renderer.toggle_heavy_mode(),
-                                    KeyCode::KeyR => {
-                                        // Reset camera
-                                        renderer.camera = Camera::default();
-                                        renderer.camera.aspect = renderer.size.width as f32 / renderer.size.height as f32;
-                                        renderer.camera.update_projection();
-                                        info!("Camera reset to default position");
+                                    winit::keyboard::KeyCode::Escape => {
+                                        println!("🔴 Escape pressed - Exiting renderer");
+                                        elwt.exit();
+                                    }
+                                    winit::keyboard::KeyCode::Space => {
+                                        println!("🎯 Space pressed - Focusing on origin");
+                                        renderer.camera.focus_on_origin();
                                     }
                                     _ => {}
                                 }
                             }
                         }
+                    }
+                    WindowEvent::MouseInput { button, state, .. } => {
+                        println!("🖱️ Mouse button: {:?} {:?}", button, state);
+                        renderer.handle_mouse_button(*button, *state);
+                    }
+                    WindowEvent::CursorMoved { position, .. } => {
+                        renderer.handle_mouse_move(position.x, position.y);
+                    }
+                    WindowEvent::MouseWheel { delta, .. } => {
+                        let scroll_delta = match delta {
+                            winit::event::MouseScrollDelta::LineDelta(_, y) => *y,
+                            winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
+                        };
+                        renderer.handle_mouse_wheel(scroll_delta);
+                    }
+                    WindowEvent::ModifiersChanged(modifiers) => {
+                        renderer.handle_modifiers(modifiers.state());
                     }
                     WindowEvent::ScaleFactorChanged { .. } => {
                         println!("🔍 Scale factor changed");

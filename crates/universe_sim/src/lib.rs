@@ -13,14 +13,12 @@ use physics_engine::{
 };
 use rand::Rng;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration};
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::collections::VecDeque;
-use serde_json::{json, Value};
-use crate::config::SimulationConfig;
+use serde_json::{json};
 use crate::storage::{Store, AgentLineage, CelestialBody};
-use crate::cosmic_era::{UniverseState, PhysicalTransition, TransitionType};
 // Agent config is now part of SimulationConfig
 
 pub mod config;
@@ -63,6 +61,7 @@ pub struct UniverseSimulation {
 }
 
 /// Maximum number of historical statistics points to keep in memory
+#[allow(dead_code)]
 const MAX_STATS_HISTORY: usize = 10_000;
 
 /// Performance tracking for simulation steps

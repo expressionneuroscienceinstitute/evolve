@@ -406,6 +406,7 @@ mod tests {
             interaction_history: Vec::new(),
             velocity: Vector3::zeros(),
             charge: -1.602e-19,
+            acceleration: Vector3::zeros(),
         }
     }
     

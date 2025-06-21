@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     // Run a short simulation and stream frames
     let steps = 600; // ~10 s at 60 FPS
     for _ in 0..steps {
-        engine.step(1e-19)?;
+        engine.step()?;
         // Export via websocket if flag on physics engine (omitted)
     }
     Ok(())

@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use serde_json::json;
+use std::time::Duration;
+use tokio::time::timeout;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
@@ -95,6 +97,7 @@ pub struct PlanetListResponse {
 pub struct RpcClient {
     client: reqwest::Client,
     url: String,
+    timeout: Duration,
 }
 
 impl RpcClient {
@@ -102,11 +105,16 @@ impl RpcClient {
         Self {
             client: reqwest::Client::new(),
             url: format!("http://127.0.0.1:{}/rpc", rpc_port),
+            timeout: Duration::from_secs(5), // Default 5 second timeout
         }
     }
 
-    #[allow(dead_code)]
-    async fn send_request(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub async fn send_request(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
         let req_body = json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -114,7 +122,13 @@ impl RpcClient {
             "id": 1
         });
 
-        let res = self.client.post(&self.url).json(&req_body).send().await?;
+        let request_future = self.client.post(&self.url).json(&req_body).send();
+        
+        // Apply timeout to the request
+        let res = match timeout(self.timeout, request_future).await {
+            Ok(res) => res?,
+            Err(_) => return Err(anyhow::anyhow!("RPC request timed out after {:?}", self.timeout)),
+        };
         
         if !res.status().is_success() {
             return Err(anyhow::anyhow!("HTTP error: {}", res.status()));
@@ -234,8 +248,14 @@ impl RpcClient {
     }
 }
 
-/// Make a generic RPC call to the server
+/// Make a generic RPC call to the server with timeout
 pub async fn call_rpc(method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
-    let client = RpcClient::new(9001); // Default port matches CLI
+    let client = RpcClient::new(9001).with_timeout(Duration::from_secs(3)); // 3 second timeout for CLI
+    client.send_request(method, params).await
+}
+
+/// Make a generic RPC call to the server with custom timeout
+pub async fn call_rpc_with_timeout(method: &str, params: serde_json::Value, timeout: Duration) -> Result<serde_json::Value> {
+    let client = RpcClient::new(9001).with_timeout(timeout);
     client.send_request(method, params).await
 } 

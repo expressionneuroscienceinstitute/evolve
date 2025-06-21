@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     // Run simulation for 1000 steps (1e-20 seconds total)
     for tick in 0..1000 {
         // Step the simulation
-        engine.step(dt)?;
+        engine.step()?;
         
         // Every 100 steps, output statistics
         if tick % 100 == 0 {

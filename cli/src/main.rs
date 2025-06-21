@@ -433,75 +433,75 @@ async fn cmd_start(
 
     let sim = Arc::new(Mutex::new(sim));
 
-    // Start RPC server
+    // Start RPC server with timeout
     info!("Starting RPC server on port {}", rpc_port);
     let shared_state = Arc::new(Mutex::new(SharedState { sim: sim.clone(), last_save_time: None }));
-    tokio::spawn(start_rpc_server(rpc_port, shared_state.clone()));
-
-    // Start native renderer if requested
-    #[cfg(all(feature = "native_renderer", not(target_os = "macos")))]
-    if native_render {
-        info!("Starting high-performance native renderer (non-macOS)");
-        let render_sim = sim.clone();
-        tokio::task::spawn_blocking(move || {
-            tokio::runtime::Handle::current().block_on(async {
-                if let Err(e) = native_renderer::run_renderer(render_sim).await {
-                    error!("Native renderer failed: {}", e);
+    
+    // Start RPC server in background
+    let _rpc_handle = tokio::spawn(start_rpc_server(rpc_port, shared_state.clone()));
+    
+    // Wait for RPC server to be ready with timeout
+    info!("Waiting for RPC server to be ready...");
+    let rpc_ready = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut attempts = 0;
+        while attempts < 50 { // Try for 5 seconds with 100ms intervals
+            match rpc::call_rpc_with_timeout("status", json!({}), Duration::from_millis(100)).await {
+                Ok(_) => {
+                    info!("✅ RPC server is ready");
+                    return Ok(());
+                },
+                Err(_) => {
+                    attempts += 1;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-            });
-        });
-    }
+            }
+        }
+        Err(anyhow::anyhow!("RPC server failed to start within timeout"))
+    }).await;
 
-    #[cfg(all(feature = "native_renderer", target_os = "macos"))]
-    if native_render {
-        if _silicon {
-            info!("Starting experimental native renderer on Apple Silicon");
-
-            // Spawn simulation loop on a background task so the main thread can own the EventLoop.
-            let sim_for_loop = sim.clone();
-            tokio::spawn(async move {
-                info!("Starting simulation loop on background thread");
-                loop {
-                    {
-                        let mut guard = sim_for_loop.lock().unwrap();
-                        if let Err(e) = guard.tick() {
-                            error!("Simulation tick failed: {}", e);
-                            break;
-                        }
-                    }
-                    sleep(Duration::from_millis(1)).await;
-                }
-                warn!("Simulation loop terminated");
-            });
-
-            // Run renderer on the current (main) thread – blocks until window closed.
-            native_renderer::run_renderer(sim.clone()).await?;
-            info!("Native renderer terminated");
-            return Ok(());
-        } else {
-            warn!("Native renderer requested on macOS without --silicon flag");
-            info!("Continuing with simulation-only mode (no native renderer)");
+    match rpc_ready {
+        Ok(Ok(())) => info!("RPC server started successfully"),
+        Ok(Err(e)) => {
+            error!("RPC server failed to start: {}", e);
+            return Err(e);
+        },
+        Err(_) => {
+            error!("RPC server startup timed out");
+            return Err(anyhow::anyhow!("RPC server startup timed out"));
         }
     }
 
-    #[cfg(not(feature = "native_renderer"))]
+    // Start native renderer if requested (but skip for now to focus on CLI)
     if native_render {
-        error!("Native renderer not available - CLI was built without native_renderer feature");
-        return Err(anyhow::anyhow!("Native renderer not available"));
+        warn!("Native renderer requested but skipping for CLI focus");
+        info!("Continuing with simulation-only mode (no native renderer)");
     }
 
-    // Main simulation loop
+    // Main simulation loop with timeout protection
     info!("Starting main simulation loop");
     let mut last_save = Instant::now();
     let save_interval = Duration::from_secs(300); // Save every 5 minutes
     
     loop {
-        // Run simulation tick
+        // Run simulation tick with timeout protection
         {
-            let mut guard = sim.lock().unwrap();
-            if let Err(e) = guard.tick() {
-                error!("Simulation tick failed: {}", e);
-                break;
+            let tick_result = tokio::time::timeout(Duration::from_secs(30), async {
+                let mut guard = sim.lock().unwrap();
+                guard.tick()
+            }).await;
+            
+            match tick_result {
+                Ok(Ok(())) => {
+                    // Tick successful
+                },
+                Ok(Err(e)) => {
+                    error!("Simulation tick failed: {}", e);
+                    break;
+                },
+                Err(_) => {
+                    error!("Simulation tick timed out after 30 seconds");
+                    break;
+                }
             }
         }
 
@@ -2536,21 +2536,30 @@ async fn handle_rpc_request(
                 layer: Option<String>,
             }
 
+            info!("🔍 MAP RPC: Received map request with params: {:?}", request.params);
+            
             match serde_json::from_value::<MapParams>(request.params) {
                 Ok(params) => {
                     let zoom = params.zoom.unwrap_or(1.0);
                     let layer = params.layer.as_deref().unwrap_or("stars");
+                    
+                    info!("🔍 MAP RPC: Parsed params - zoom: {}, layer: {}", zoom, layer);
                     
                     // Get real map data from simulation
                     let mut sim_guard = shared_state.sim.lock().unwrap();
                     let width = 60;
                     let height = 20;
                     
+                    info!("🔍 MAP RPC: Calling sim_guard.get_map_data({}, {}, {}, {})", zoom, layer, width, height);
+                    
                     let response_data = match sim_guard.get_map_data(zoom, layer, width, height) {
-                        Ok(map_data) => map_data,
+                        Ok(map_data) => {
+                            info!("🔍 MAP RPC: SUCCESS - get_map_data returned: {:?}", map_data);
+                            map_data
+                        },
                         Err(e) => {
                             // Fallback to synthetic data if real data fails
-                            warn!("Failed to get real map data: {}, using synthetic data", e);
+                            error!("🔍 MAP RPC: FAILED - get_map_data error: {}, using synthetic data", e);
                             let mut density_grid = Vec::new();
                             
                             for y in 0..height {
@@ -2580,7 +2589,7 @@ async fn handle_rpc_request(
                                 }
                             }
                             
-                            json!({
+                            let fallback_data = json!({
                                 "density_grid": density_grid,
                                 "width": width,
                                 "height": height,
@@ -2591,23 +2600,37 @@ async fn handle_rpc_request(
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap()
                                     .as_secs()
-                            })
+                            });
+                            
+                            info!("🔍 MAP RPC: Using fallback data: {:?}", fallback_data);
+                            fallback_data
                         }
                     };
                     
-                    let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
+                    info!("🔍 MAP RPC: Final response_data: {:?}", response_data);
+                    
+                    // Construct proper MapResponse struct
+                    let map_response = rpc::MapResponse {
+                        width: width,
+                        height: height,
+                        data: response_data,
+                    };
+                    
+                    let rpc_response: rpc::RpcResponse<rpc::MapResponse> = rpc::RpcResponse {
                         jsonrpc: "2.0".to_string(),
-                        result: Some(response_data),
+                        result: Some(map_response),
                         error: None,
                         id: response_id,
                     };
                     
+                    info!("🔍 MAP RPC: Sending response with id: {}", response_id);
                     Ok(warp::reply::json(&rpc_response))
                 }
-                Err(_) => {
+                Err(e) => {
+                    error!("🔍 MAP RPC: Failed to parse params: {}", e);
                     let error = rpc::RpcError {
                         code: rpc::INVALID_PARAMS,
-                        message: "Invalid map parameters".to_string(),
+                        message: format!("Invalid map parameters: {}", e),
                     };
                     let rpc_response: rpc::RpcResponse<serde_json::Value> = rpc::RpcResponse {
                         jsonrpc: "2.0".to_string(),

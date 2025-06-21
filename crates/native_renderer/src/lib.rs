@@ -416,6 +416,7 @@ impl MouseState {
 
 /// High-performance renderer state with heavy mode enhancements
 pub struct NativeRenderer<'window> {
+    instance: wgpu::Instance,
     surface: wgpu::Surface<'window>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -697,11 +698,23 @@ impl Camera {
                     self.focus_on_origin();
                 }
                 KeyCode::KeyR => {
+                    // Reset camera view
                     self.reset_view();
                 }
                 KeyCode::KeyM => {
                     println!("🔬 Microscope mode toggle requested");
                 }
+                KeyCode::F5 => {
+                    // Camera doesn't have microscope reset - this is handled by the renderer
+                },
+                KeyCode::F6 => {
+                    // Camera doesn't have debug panel - this is handled by the renderer
+                },
+                KeyCode::F7 => {
+                    // Force window redraw for testing resizing
+                    println!("🔄 FORCE REDRAW: Requesting window redraw for resize testing");
+                    // This will trigger a RedrawRequested event
+                },
                 _ => {}
             }
         }
@@ -797,11 +810,17 @@ impl<'window> NativeRenderer<'window> {
     pub async fn new(window: &'window Window) -> Result<Self> {
         // Initialize logging if it hasn't been set by the main application yet.
         let _ = env_logger::try_init();
-        info!("Initializing high-performance native renderer");
+        info!("🚀 Initializing high-performance native renderer");
         
         let size = window.inner_size();
+        info!("📐 Window size: {}x{}", size.width, size.height);
         
-        // Create WGPU instance
+        // Validate window size
+        if size.width == 0 || size.height == 0 {
+            return Err(anyhow::anyhow!("Invalid window size: {}x{}", size.width, size.height));
+        }
+        
+        // Create WGPU instance with fallback options
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             dx12_shader_compiler: Default::default(),
@@ -809,41 +828,94 @@ impl<'window> NativeRenderer<'window> {
             gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
         });
         
-        // Create surface
-        let surface = instance.create_surface(window)?;
+        info!("✅ WGPU instance created successfully");
         
-        // Request adapter (prefer high-performance GPU)
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to find suitable adapter"))?;
+        // Create surface with error handling
+        let surface = match instance.create_surface(window) {
+            Ok(s) => {
+                info!("✅ Surface created successfully");
+                s
+            },
+            Err(e) => {
+                error!("❌ Failed to create surface: {}", e);
+                return Err(anyhow::anyhow!("Surface creation failed: {}", e));
+            }
+        };
         
-        info!("Using GPU adapter: {:?}", adapter.get_info());
+        // Request adapter with fallback options
+        let adapter_options = wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        };
         
-        // Create device and queue
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    label: None,
-                },
-                None,
-            )
-            .await?;
+        let adapter = match instance.request_adapter(&adapter_options).await {
+            Some(adapter) => {
+                let info = adapter.get_info();
+                info!("✅ GPU adapter selected: {} ({:?})", info.name, info.backend);
+                adapter
+            },
+            None => {
+                error!("❌ No suitable GPU adapter found, trying fallback adapter");
+                // Try with fallback adapter
+                let fallback_options = wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: true,
+                };
+                
+                match instance.request_adapter(&fallback_options).await {
+                    Some(adapter) => {
+                        let info = adapter.get_info();
+                        info!("✅ Fallback GPU adapter selected: {} ({:?})", info.name, info.backend);
+                        adapter
+                    },
+                    None => {
+                        error!("❌ No GPU adapters available at all");
+                        return Err(anyhow::anyhow!("No GPU adapters available"));
+                    }
+                }
+            }
+        };
         
-        // Configure surface
+        // Create device and queue with conservative limits
+        let device_descriptor = wgpu::DeviceDescriptor {
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits {
+                max_buffer_size: 256 * 1024 * 1024, // 256MB max buffer size
+                max_storage_buffer_binding_size: 128 * 1024 * 1024, // 128MB max storage buffer
+                max_uniform_buffer_binding_size: 16 * 1024 * 1024, // 16MB max uniform buffer
+                ..wgpu::Limits::default()
+            },
+            label: Some("Universe Simulation Device"),
+        };
+        
+        let (device, queue) = match adapter.request_device(&device_descriptor, None).await {
+            Ok((device, queue)) => {
+                info!("✅ Device and queue created successfully");
+                (device, queue)
+            },
+            Err(e) => {
+                error!("❌ Failed to create device: {}", e);
+                return Err(anyhow::anyhow!("Device creation failed: {}", e));
+            }
+        };
+        
+        // Configure surface with error handling
         let surface_caps = surface.get_capabilities(&adapter);
+        if surface_caps.formats.is_empty() {
+            error!("❌ No supported surface formats found");
+            return Err(anyhow::anyhow!("No supported surface formats"));
+        }
+        
         let surface_format = surface_caps
             .formats
             .iter()
             .copied()
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
+        
+        info!("✅ Surface format selected: {:?}", surface_format);
         
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -855,18 +927,24 @@ impl<'window> NativeRenderer<'window> {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
+        
         surface.configure(&device, &config);
+        info!("✅ Surface configured successfully");
         
-        // ADVANCED PARTICLE SHADER WITH COLOR MODE SWITCHING
+        // Load and compile shader with error handling
         let shader_source = include_str!("shaders/particle.wgsl");
-        
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = match device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Particle Shader"),
             source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-        });
+        }) {
+            shader => {
+                info!("✅ Shader compiled successfully");
+                shader
+            }
+        };
         
-        // Create uniform buffer
-        let max_particles = 800_000; // Reduced from 1M to fit GPU buffer limits (800k * 6 * 48 = ~230MB)
+        // Create uniform buffer with conservative size
+        let max_particles = 400_000; // Reduced from 800k to 400k for better compatibility
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Uniform Buffer"),
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -874,7 +952,9 @@ impl<'window> NativeRenderer<'window> {
             mapped_at_creation: false,
         });
         
-        // Create quad vertex buffer (6 vertices per quad) - flattened array
+        info!("✅ Uniform buffer created ({} bytes)", std::mem::size_of::<Uniforms>());
+        
+        // Create quad vertex buffer
         let quad_vertices: &[f32] = &[
             -1.0, -1.0,  1.0, -1.0,  -1.0,  1.0,  // Triangle 1
              1.0, -1.0,  1.0,  1.0,  -1.0,  1.0,  // Triangle 2
@@ -887,13 +967,18 @@ impl<'window> NativeRenderer<'window> {
         });
         queue.write_buffer(&quad_vertex_buffer, 0, bytemuck::cast_slice(quad_vertices));
         
-        // Create instance buffer for particle data (simple layout: position, color, size)
+        info!("✅ Quad vertex buffer created ({} bytes)", quad_vertices.len() * std::mem::size_of::<f32>());
+        
+        // Create instance buffer for particle data with conservative size
+        let vertex_buffer_size = (max_particles * std::mem::size_of::<SimpleParticleVertex>()) as u64;
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Particle Instance Buffer"),
-            size: (max_particles * std::mem::size_of::<SimpleParticleVertex>()) as u64,
+            size: vertex_buffer_size,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        
+        info!("✅ Particle instance buffer created ({} MB)", vertex_buffer_size / 1024 / 1024);
         
         // Create bind group layout
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -920,14 +1005,16 @@ impl<'window> NativeRenderer<'window> {
             label: Some("Uniform Bind Group"),
         });
         
-        // Create render pipeline
+        info!("✅ Bind group created successfully");
+        
+        // Create render pipeline with error handling
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
         
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let render_pipeline = match device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Particle Render Pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
@@ -981,7 +1068,7 @@ impl<'window> NativeRenderer<'window> {
                 })],
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList, // Instanced triangles!
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: None,
@@ -996,22 +1083,44 @@ impl<'window> NativeRenderer<'window> {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-        });
+        }) {
+            pipeline => {
+                info!("✅ Render pipeline created successfully");
+                pipeline
+            }
+        };
         
         let mut camera = Camera::default();
         camera.aspect = size.width as f32 / size.height as f32;
-        camera.position = Point3::new(0.0, 0.0, 5.0); // Move camera back to see particles
+        camera.position = Point3::new(0.0, 0.0, 5.0); // Moved back from 0.1 to 5.0 for better visibility
         camera.target = Point3::new(0.0, 0.0, 0.0);
         camera.update_view();
         camera.update_projection();
         
-        // ---------------- Text renderer (glyphon) ----------------
+        info!("✅ Camera initialized at position ({:.1}, {:.1}, {:.1})", 
+              camera.position.x, camera.position.y, camera.position.z);
+        
+        // Initialize text renderer (glyphon) with error handling
         let font_system = FontSystem::new();
-        let mut text_atlas = TextAtlas::new(&device, &queue, config.format);
-        let text_renderer = TextRenderer::new(&mut text_atlas, &device, wgpu::MultisampleState::default(), None);
+        let mut text_atlas = match TextAtlas::new(&device, &queue, config.format) {
+            atlas => {
+                info!("✅ Text atlas created successfully");
+                atlas
+            }
+        };
+        
+        let text_renderer = match TextRenderer::new(&mut text_atlas, &device, wgpu::MultisampleState::default(), None) {
+            renderer => {
+                info!("✅ Text renderer created successfully");
+                renderer
+            }
+        };
         let text_cache = SwashCache::new();
         
+        info!("🎉 Native renderer initialization completed successfully!");
+        
         Ok(Self {
+            instance,
             surface,
             device,
             queue,
@@ -1131,12 +1240,12 @@ impl<'window> NativeRenderer<'window> {
             let (r, g, b) = hsv_to_rgb(hue, 1.0, 1.0);
 
             // Apply LOD-based particle scaling for better visibility at different zoom levels
-            let base_size = 0.003;
+            let base_size = 1.0; // Increased for visibility
             let size_multiplier = self.camera.get_particle_size_multiplier();
             let final_size = base_size * size_multiplier;
 
-            // Scale physics particles to be visible (1e-12 makes them invisible)
-            let scale_factor = 1e-9; // Still small but visible in microscope mode
+            // Scale physics particles to be visible (increased scale factor)
+            let scale_factor = 1e-1; // Increased from 1e-2 for much better visibility
             let render_particle = SimpleParticleVertex {
                 position: [
                     physics_particle.position.x as f32 * scale_factor,
@@ -1157,12 +1266,12 @@ impl<'window> NativeRenderer<'window> {
             }
 
             let (r, g, b) = (0.8, 0.8, 0.8);
-            let base_size = 0.003;
+            let base_size = 1.0; // Increased for visibility
             let size_multiplier = self.camera.get_particle_size_multiplier();
             let final_size = base_size * size_multiplier;
             
-            // Scale store particles to be visible (1e-12 makes them invisible)
-            let scale_factor = 1e-9; // Still small but visible in microscope mode
+            // Scale store particles to be visible (increased scale factor)
+            let scale_factor = 1e-1; // Increased from 1e-3 for much better visibility
             let store_particle = SimpleParticleVertex {
                 position: [
                     simulation.store.particles.position[i].x as f32 * scale_factor,
@@ -1180,7 +1289,7 @@ impl<'window> NativeRenderer<'window> {
         if particles.is_empty() {
             println!("🧪 DEV ROOM: No physics particles found, creating visible demo particles");
             
-            let base_size = 0.05; // Much larger for visibility
+            let base_size = 2.0; // Increased for demo particles
             let size_multiplier = self.camera.get_particle_size_multiplier();
             let final_size = base_size * size_multiplier;
             
@@ -1243,9 +1352,13 @@ impl<'window> NativeRenderer<'window> {
     
     /// Render frame with maximum performance and heavy mode enhancements
     pub fn render(&mut self, simulation_time: f32) -> Result<()> {
+        // --- NEW: Always check window size before rendering ---
+        let current_size = self.window.inner_size();
+        if current_size != self.size && current_size.width > 0 && current_size.height > 0 {
+            println!("🪟 Window size changed: {}x{} (was {}x{}), resizing surface...", current_size.width, current_size.height, self.size.width, self.size.height);
+            self.resize(current_size)?;
+        }
         let frame_start = std::time::Instant::now();
-        
-        println!("🔥 RENDER START - Frame {}", self.frame_count);
         
         // Wait for GPU to finish with previous text buffers before clearing them
         if !self.text_buffers.is_empty() {
@@ -1267,13 +1380,6 @@ impl<'window> NativeRenderer<'window> {
                 self.camera.position.x, self.camera.position.y, self.camera.position.z,
                 self.camera.target.x, self.camera.target.y, self.camera.target.z,
                 self.particle_count);
-            
-            // Debug view-projection matrix
-            let vp = view_proj;
-            info!("View-projection matrix [0]: [{:.3}, {:.3}, {:.3}, {:.3}]", vp[0][0], vp[0][1], vp[0][2], vp[0][3]);
-            info!("View-projection matrix [1]: [{:.3}, {:.3}, {:.3}, {:.3}]", vp[1][0], vp[1][1], vp[1][2], vp[1][3]);
-            info!("View-projection matrix [2]: [{:.3}, {:.3}, {:.3}, {:.3}]", vp[2][0], vp[2][1], vp[2][2], vp[2][3]);
-            info!("View-projection matrix [3]: [{:.3}, {:.3}, {:.3}, {:.3}]", vp[3][0], vp[3][1], vp[3][2], vp[3][3]);
         }
         
         // ===== Text label generation (row/col names) =====
@@ -1388,28 +1494,21 @@ impl<'window> NativeRenderer<'window> {
             _padding: [0.0; 4],
         };
         
-        println!("📤 Writing uniforms to GPU...");
         self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
         
         // Get surface texture
-        println!("🖼️ Getting surface texture...");
         let output = match self.surface.get_current_texture() {
-            Ok(output) => {
-                println!("✅ Surface texture obtained successfully");
-                output
-            }
+            Ok(output) => output,
             Err(e) => {
-                println!("❌ Failed to get surface texture: {:?}", e);
+                error!("Failed to get surface texture: {:?}", e);
                 return Err(e.into());
             }
         };
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        println!("✅ Texture view created");
         
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
-        println!("✅ Command encoder created");
         
         // Heavy mode: run compute shader for advanced effects first
         #[cfg(feature = "heavy")]
@@ -1425,8 +1524,7 @@ impl<'window> NativeRenderer<'window> {
             }
         }
         
-        // Main render pass
-        println!("🎨 Starting main render pass with GREEN background...");
+        // Main render pass with proper space background
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Main Render Pass"),
@@ -1435,11 +1533,11 @@ impl<'window> NativeRenderer<'window> {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
+                            r: 0.02,  // Very dark blue (space background)
+                            g: 0.02,
+                            b: 0.08,
                             a: 1.0,
-                        }), // BLACK SPACE-LIKE BACKGROUND for better particle visibility
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1447,32 +1545,23 @@ impl<'window> NativeRenderer<'window> {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            println!("✅ Render pass created with GREEN clear color");
+            
+            // Set the viewport to cover the entire window
+            render_pass.set_viewport(0.0, 0.0, self.size.width as f32, self.size.height as f32, 0.0, 1.0);
             
             render_pass.set_pipeline(&self.render_pipeline);
-            println!("✅ Pipeline set");
             render_pass.set_bind_group(0, &self.bind_group, &[]);
-            println!("✅ Bind group set");
             render_pass.set_vertex_buffer(0, self.quad_vertex_buffer.slice(..));
-            println!("✅ Quad vertex buffer set");
             render_pass.set_vertex_buffer(1, self.vertex_buffer.slice(..));
-            println!("✅ Instance vertex buffer set");
             
             // Draw 6 vertices per instance (2 triangles per particle quad)
             let instance_count = self.particle_count as u32;
             if instance_count > 0 {
-                println!("🎮 Drawing {} instanced quads for {} particles", instance_count, self.particle_count);
                 render_pass.draw(0..6, 0..instance_count);
-                println!("✅ Draw call completed");
-            } else {
-                println!("⚠️ No particles to draw! particle_count={}", self.particle_count);
-                // Even with no particles, we should still see the green background
-                println!("🟢 GREEN background should still be visible even without particles");
             }
         }
-        println!("✅ Render pass completed");
 
-        // ---- Text overlay pass ---- (Fix: Properly scope text_pass to release encoder borrow)
+        // ---- Text overlay pass ----
         {
             let mut text_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Text Overlay Pass"),
@@ -1489,7 +1578,7 @@ impl<'window> NativeRenderer<'window> {
                 timestamp_writes: None,
             });
             let _ = self.text_renderer.render(&self.text_atlas, &mut text_pass);
-        } // text_pass is dropped here, releasing the borrow on encoder
+        }
 
         // ---- Debug Panel Overlay ----
         if let Err(e) = self.render_debug_panel(&mut encoder, &view) {
@@ -1509,25 +1598,12 @@ impl<'window> NativeRenderer<'window> {
             }
         }
 
-        // === NEW: GPU lifecycle safeguard for debug resources ===
-        // When the debug panel is active we allocate and drop many text buffers
-        // every frame.  If any of those GPU buffers are freed while the GPU is
-        // still processing the previous frame wgpu will raise a validation
-        // error ("Buffer is destroyed").  To guarantee safety we synchronise
-        // with the GPU once per frame while the debug UI is visible.  In normal
-        // rendering mode we keep the previous non-blocking behaviour for
-        // performance.
+        // === GPU lifecycle safeguard for debug resources ===
         if self.debug_panel.visible {
-            // Non-blocking poll every frame keeps the driver alive without stalling
-            // the CPU.  We now rely on an explicit poll-and-drop inside
-            // `render_debug_text` (added above) to guarantee safe destruction of
-            // old text buffers, so we can always use the lightweight mode here.
             self.device.poll(wgpu::Maintain::Poll);
         } else {
-            // Lightweight polling – just allow the driver to make progress.
             self.device.poll(wgpu::Maintain::Poll);
         }
-        // === END safeguard ===
 
         // ---- Metrics ----
         let frame_time = frame_start.elapsed();
@@ -1547,20 +1623,48 @@ impl<'window> NativeRenderer<'window> {
             );
         }
 
-        println!("🏁 RENDER END - Frame completed in {:.2}ms\n", frame_time.as_secs_f32() * 1000.0);
-
         Ok(())
     }
     
     /// Handle window resize
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) -> Result<()> {
         if new_size.width > 0 && new_size.height > 0 {
+            info!("🔄 Resizing renderer to {}x{}", new_size.width, new_size.height);
+            
+            // Update internal size tracking
             self.size = new_size;
             self.config.width = new_size.width;
             self.config.height = new_size.height;
+
+            // Wait for GPU to finish all work before reconfiguring
+            self.device.poll(wgpu::Maintain::Wait);
+            
+            // Recreate surface (macOS compatibility)
+            match self.instance.create_surface(self.window) {
+                Ok(new_surface) => {
+                    self.surface = new_surface;
+                    info!("✅ Surface recreated successfully");
+                }
+                Err(e) => {
+                    error!("Failed to recreate surface: {}", e);
+                    return Err(anyhow::anyhow!("Surface recreation failed: {}", e));
+                }
+            }
+
+            // Configure the new surface
             self.surface.configure(&self.device, &self.config);
+            info!("✅ Surface configured with new dimensions");
+            
+            // Update camera aspect ratio and matrices
             self.camera.aspect = new_size.width as f32 / new_size.height as f32;
             self.camera.update_projection();
+            self.camera.update_view();
+            
+            info!("✅ Resize completed - aspect ratio: {:.3}", self.camera.aspect);
+            Ok(())
+        } else {
+            warn!("Invalid resize dimensions: {}x{}", new_size.width, new_size.height);
+            Err(anyhow::anyhow!("Invalid resize dimensions: {}x{}", new_size.width, new_size.height))
         }
     }
     
@@ -1582,6 +1686,27 @@ impl<'window> NativeRenderer<'window> {
     /// Get buffer pool statistics for debugging
     pub fn get_buffer_pool_stats(&self) -> BufferPoolStats {
         self.buffer_pool.get_stats()
+    }
+    
+    /// Test function to verify renderer is working
+    pub fn test_renderer(&self) -> String {
+        format!(
+            "Renderer Test Results:\n\
+            - Window size: {}x{}\n\
+            - Camera position: ({:.2}, {:.2}, {:.2})\n\
+            - Camera target: ({:.2}, {:.2}, {:.2})\n\
+            - Camera aspect: {:.3}\n\
+            - Particle count: {}\n\
+            - Frame count: {}\n\
+            - FPS: {:.1}",
+            self.size.width, self.size.height,
+            self.camera.position.x, self.camera.position.y, self.camera.position.z,
+            self.camera.target.x, self.camera.target.y, self.camera.target.z,
+            self.camera.aspect,
+            self.particle_count,
+            self.frame_count,
+            self.metrics.fps
+        )
     }
     
     /// Toggle heavy mode rendering
@@ -1719,8 +1844,10 @@ impl<'window> NativeRenderer<'window> {
     
     /// Handle mouse wheel for zooming
     pub fn handle_mouse_wheel(&mut self, delta: f32) {
-        self.camera.zoom(delta);
-        println!("🔍 Unity ZOOM (scroll): delta({:.1})", delta);
+        // Apply zoom with proper sensitivity
+        let zoom_delta = delta * 0.1; // Scale the delta for better control
+        self.camera.zoom(zoom_delta);
+        info!("🔍 Mouse wheel zoom: delta={:.3}, zoom_delta={:.3}", delta, zoom_delta);
     }
     
     /// Handle keyboard input for debug panel and camera controls
@@ -1743,11 +1870,23 @@ impl<'window> NativeRenderer<'window> {
                     self.debug_panel.show_physics_details = !self.debug_panel.show_physics_details;
                 },
                 KeyCode::F4 => {
-                    self.debug_panel.show_performance_metrics = !self.debug_panel.show_performance_metrics;
+                    // Reset camera to default position for debugging
+                    self.camera.position = Point3::new(0.0, 0.0, 2.0);
+                    self.camera.target = Point3::new(0.0, 0.0, 0.0);
+                    self.camera.update_view();
+                    self.camera.update_projection();
+                    println!("🔄 Camera reset to default position for debugging");
                 },
                 KeyCode::F5 => {
-                    self.camera_microscope_reset();
-                    println!("🔬 Microscope view reset - focusing on particle");
+                    // Camera doesn't have microscope reset - this is handled by the renderer
+                },
+                KeyCode::F6 => {
+                    // Camera doesn't have debug panel - this is handled by the renderer
+                },
+                KeyCode::F7 => {
+                    // Force window redraw for testing resizing
+                    println!("🔄 FORCE REDRAW: Requesting window redraw for resize testing");
+                    // This will trigger a RedrawRequested event
                 },
                 KeyCode::Space => {
                     // Focus camera on origin
@@ -1758,8 +1897,6 @@ impl<'window> NativeRenderer<'window> {
                     self.camera.reset_view();
                 }
                 KeyCode::KeyM => {
-                    // Toggle microscope mode (close-up particle view)
-                    // This will be handled by the renderer, not the camera
                     println!("🔬 Microscope mode toggle requested");
                 }
                 KeyCode::KeyC => {
@@ -1801,291 +1938,55 @@ impl<'window> NativeRenderer<'window> {
             return Ok(());
         }
 
-        // Temporarily disable simulation stats since we commented out the field
-        // let Some(ref stats) = self.debug_panel.simulation_stats else {
-            // If no stats available, show a placeholder message
-            let stats = self.get_buffer_pool_stats();
-            let formatted_text = format!(
-                "🔬 EVOLUTION Universe Simulation - Debug Panel [F1=Toggle]\n\
-                📊 Buffer Pool Testing Mode...\n\
-                \n\
-                🎮 Controls:\n\
-                • F1: Toggle debug panel\n\
-                • F2: Cycle debug modes\n\
-                \n\
-                🔧 Buffer Pool Stats:\n\
-                • Active buffers: {}\n\
-                • Retired buffers: {}\n\
-                • Active memory: {:.2} MB\n\
-                • Total allocated: {:.2} MB\n\
-                • Peak memory: {:.2} MB",
-                stats.active_buffers,
-                stats.retired_buffers,
-                stats.active_memory_mb,
-                stats.total_allocated_mb,
-                stats.peak_memory_mb
-            );
-            return self.render_debug_text(encoder, view, &formatted_text);
-        // };
-
-        // Create debug text content based on current mode
-        // TEMPORARILY COMMENTED OUT - stats not available
-        /*
-        let debug_text = match self.debug_panel.debug_mode {
-            DebugMode::Overview => {
-                format!(
-                    "🔬 EVOLUTION Universe Simulation - Debug Panel [F1=Toggle F2=Mode F5=Reset]\n\
-                     📊 Overview Mode (F2 to cycle modes)\n\
-                     \n\
-                     🌌 Universe: Age {:.2} Gyr, Tick {}, Description: {}\n\
-                     ⚛️  Particles: {} total, {} rendered\n\
-                     ⭐ Stars: {} total, {} main sequence, {} evolved, {} remnants\n\
-                     🪐 Planets: {} total, {} habitable, {} Earth-like\n\
-                     👽 Lineages: {} active, {} extinct, {} immortal\n\
-                     \n\
-                     🎮 Controls:\n\
-                     • Left Mouse: Orbit camera around target\n\
-                     • Middle Mouse: Pan camera\n\
-                     • Scroll Wheel: Zoom in/out (LOD scaling)\n\
-                     • Space: Focus on origin\n\
-                     • F5: Microscope view (particle close-up)\n\
-                     • F3: Toggle physics details\n\
-                     • F4: Toggle performance metrics\n\
-                     \n\
-                     📈 Performance: {:.1} ms/step, {:.1} fps",
-                    stats.universe_age_gyr,
-                    stats.current_tick,
-                    stats.universe_description,
-                    stats.particle_count,
-                    self.particle_count,
-                    stats.star_count,
-                    stats.main_sequence_stars,
-                    stats.evolved_stars,
-                    stats.stellar_remnants,
-                    stats.planet_count,
-                    stats.habitable_planets,
-                    stats.earth_like_planets,
-                    stats.lineage_count,
-                    stats.extinct_lineages,
-                    stats.immortal_lineages,
-                    stats.physics_step_time_ms,
-                    self.metrics.fps
-                )
-            },
-            DebugMode::Physics => {
-                format!(
-                    "⚛️  Physics Engine Debug [F2 to change mode]\n\
-                     \n\
-                     🔬 Particle Interactions:\n\
-                     • Total interactions/step: {}\n\
-                     • Particle interactions/step: {}\n\
-                     • Physics step time: {:.3} ms\n\
-                     \n\
-                     🌡️  Thermodynamics:\n\
-                     • Average temperature: {:.1} K\n\
-                     • Total energy: {:.2e} J\n\
-                     • Kinetic energy: {:.2e} J\n\
-                     • Potential energy: {:.2e} J\n\
-                     • Radiation energy: {:.2e} J\n\
-                     • Nuclear binding energy: {:.2e} J\n\
-                     • Energy density: {:.2e} J/m³\n\
-                     \n\
-                     🧪 Chemical Composition:\n\
-                     • Hydrogen: {:.1}%\n\
-                     • Helium: {:.1}%\n\
-                     • Carbon: {:.1}%\n\
-                     • Oxygen: {:.1}%\n\
-                     • Iron: {:.1}%\n\
-                     • Heavy elements: {:.1}%\n\
-                     • Metallicity: {:.3}",
-                    stats.interactions_per_step,
-                    stats.particle_interactions_per_step,
-                    stats.physics_step_time_ms,
-                    stats.average_temperature,
-                    stats.total_energy,
-                    stats.kinetic_energy,
-                    stats.potential_energy,
-                    stats.radiation_energy,
-                    stats.nuclear_binding_energy,
-                    stats.energy_density,
-                    stats.hydrogen_fraction * 100.0,
-                    stats.helium_fraction * 100.0,
-                    stats.carbon_fraction * 100.0,
-                    stats.oxygen_fraction * 100.0,
-                    stats.iron_fraction * 100.0,
-                    stats.heavy_elements_fraction * 100.0,
-                    stats.metallicity
-                )
-            },
-            DebugMode::Performance => {
-                format!(
-                    "⚡ Performance Metrics [F2 to change mode]\n\
-                     \n\
-                     🖥️  Rendering:\n\
-                     • FPS: {:.1}\n\
-                     • Frame time: {:.2} ms\n\
-                     • Particles rendered: {}\n\
-                     • GPU memory: {:.1} MB\n\
-                     • Culled particles: {}\n\
-                     • Shader switches: {}\n\
-                     \n\
-                     🔬 Physics Simulation:\n\
-                     • Physics step time: {:.3} ms\n\
-                     • Interactions per step: {}\n\
-                     • Target UPS: {:.1}\n\
-                     \n\
-                     📊 System:\n\
-                     • Current tick: {}\n\
-                     • Tick span: {:.1} years\n\
-                     • Camera position: ({:.1}, {:.1}, {:.1})\n\
-                     • Camera target: ({:.1}, {:.1}, {:.1})\n\
-                     • Zoom level: {:.1} (distance: {:.4})\n\
-                     • Current color mode: {:?}",
-                    self.metrics.fps,
-                    self.metrics.frame_time_ms,
-                    self.metrics.particles_rendered,
-                    self.metrics.gpu_memory_mb,
-                    self.metrics.culled_particles,
-                    self.metrics.shader_switches,
-                    stats.physics_step_time_ms,
-                    stats.interactions_per_step,
-                    stats.target_ups,
-                    stats.current_tick,
-                    1e6, // Default tick span years
-                    self.camera.position.x,
-                    self.camera.position.y,
-                    self.camera.position.z,
-                    self.camera.target.x,
-                    self.camera.target.y,
-                    self.camera.target.z,
-                    self.camera.get_zoom_level(),
-                    (self.camera.position - self.camera.target).magnitude(),
-                    self.camera.color_mode
-                )
-            },
-            DebugMode::Particles => {
-                format!(
-                    "🎯 Particle Inspector [F2 to change mode]\n\
-                     \n\
-                     📊 Particle Count Summary:\n\
-                     • Total particles: {}\n\
-                     • Rendered particles: {}\n\
-                     • Max particles: {}\n\
-                     \n\
-                     🔍 Visualization Settings:\n\
-                     • Color mode: {:?}\n\
-                     • Scale mode: {:?}\n\
-                     • Filter threshold: {:.3}\n\
-                     \n\
-                     🎨 Color Modes Available:\n\
-                     • ParticleType: Color by particle type\n\
-                     • Charge: Color by electric charge\n\
-                     • Temperature: Thermal radiation colors\n\
-                     • Velocity: Doppler shift visualization\n\
-                     • Interactions: Activity-based coloring\n\
-                     • Scientific: Multi-channel visualization\n\
-                     \n\
-                     ⚡ Particle Selection:\n\
-                     {}",
-                    stats.particle_count,
-                    self.particle_count,
-                    self.max_particles,
-                    self.camera.color_mode,
-                    self.camera.scale_mode,
-                    self.camera.filter_threshold,
-                    if let Some(id) = self.debug_panel.selected_particle_id {
-                        format!("• Selected particle ID: {}", id)
-                    } else {
-                        "• No particle selected (click to select)".to_string()
-                    }
-                )
-            },
-            DebugMode::Chemistry => {
-                format!(
-                    "🧪 Chemistry & Nucleosynthesis [F2 to change mode]\n\
-                     \n\
-                     🌟 Stellar Evolution:\n\
-                     • Star formation rate: {:.2e} stars/year\n\
-                     • Average stellar mass: {:.1} M☉\n\
-                     • Main sequence stars: {}\n\
-                     • Evolved stars: {}\n\
-                     • Stellar remnants: {}\n\
-                     \n\
-                     🧬 Chemical Evolution:\n\
-                     • Hydrogen fraction: {:.3}\n\
-                     • Helium fraction: {:.3}\n\
-                     • Carbon fraction: {:.5}\n\
-                     • Oxygen fraction: {:.5}\n\
-                     • Iron fraction: {:.5}\n\
-                     • Heavy elements: {:.5}\n\
-                     • Metallicity [Fe/H]: {:.3}\n\
-                     \n\
-                     🌌 Planet Formation:\n\
-                     • Total planets: {}\n\
-                     • Planet formation rate: {:.2e} planets/year\n\
-                     • Average planet mass: {:.2e} kg\n\
-                     • Gas giants: {}",
-                    stats.stellar_formation_rate,
-                    stats.average_stellar_mass,
-                    stats.main_sequence_stars,
-                    stats.evolved_stars,
-                    stats.stellar_remnants,
-                    stats.hydrogen_fraction,
-                    stats.helium_fraction,
-                    stats.carbon_fraction,
-                    stats.oxygen_fraction,
-                    stats.iron_fraction,
-                    stats.heavy_elements_fraction,
-                    stats.metallicity,
-                    stats.planet_count,
-                    stats.planet_formation_rate,
-                    stats.average_planet_mass,
-                    stats.gas_giants
-                )
-            },
-            DebugMode::Cosmology => {
-                format!(
-                    "🌌 Cosmology & Structure [F2 to change mode]\n\
-                     \n\
-                     📐 Universal Structure:\n\
-                     • Universe radius: {:.2e} m\n\
-                     • Hubble constant: {:.1} km/s/Mpc\n\
-                     • Critical density: {:.2e} kg/m³\n\
-                     \n\
-                     🌑 Dark Sector:\n\
-                     • Dark matter fraction: {:.1}%\n\
-                     • Dark energy fraction: {:.1}%\n\
-                     • Ordinary matter fraction: {:.1}%\n\
-                     \n\
-                     ⏰ Cosmic Evolution:\n\
-                     • Universe age: {:.2} Gyr\n\
-                     • Current tick: {}\n\
-                     • Simulation speed: {:.1} UPS target\n\
-                     \n\
-                     🧬 Life & Intelligence:\n\
-                     • Extinct lineages: {}\n\
-                     • Average tech level: {:.2}\n\
-                     • Immortal lineages: {}\n\
-                     • Consciousness emergence rate: {:.2e}/year",
-                    stats.universe_radius,
-                    stats.hubble_constant,
-                    stats.critical_density,
-                    stats.dark_matter_fraction * 100.0,
-                    stats.dark_energy_fraction * 100.0,
-                    stats.ordinary_matter_fraction * 100.0,
-                    stats.universe_age_gyr,
-                    stats.current_tick,
-                    stats.target_ups,
-                    stats.extinct_lineages,
-                    stats.average_tech_level,
-                    stats.immortal_lineages,
-                    stats.consciousness_emergence_rate
-                )
-            },
-        };
-
-        self.render_debug_text(encoder, view, &debug_text)
-        */
+        let stats = self.get_buffer_pool_stats();
+        let formatted_text = format!(
+            "🔬 EVOLUTION Universe Simulation - Debug Panel [F1=Toggle]\n\
+            📊 Renderer Status\n\
+            \n\
+            🎮 Controls:\n\
+            • F1: Toggle debug panel\n\
+            • F2: Cycle debug modes\n\
+            • F4: Reset camera position\n\
+            • Space: Focus on origin\n\
+            • R: Reset camera view\n\
+            • Mouse wheel: Zoom in/out\n\
+            • Alt+Left: Orbit camera\n\
+            • Middle mouse: Pan camera\n\
+            • Right mouse: Flythrough mode\n\
+            \n\
+            📈 Performance:\n\
+            • FPS: {:.1}\n\
+            • Frame time: {:.2} ms\n\
+            • Particles rendered: {}\n\
+            • Window size: {}x{}\n\
+            \n\
+            📷 Camera:\n\
+            • Position: ({:.2}, {:.2}, {:.2})\n\
+            • Target: ({:.2}, {:.2}, {:.2})\n\
+            • Aspect ratio: {:.3}\n\
+            • Zoom level: {:.2}\n\
+            \n\
+            🔧 Buffer Pool Stats:\n\
+            • Active buffers: {}\n\
+            • Retired buffers: {}\n\
+            • Active memory: {:.2} MB\n\
+            • Total allocated: {:.2} MB\n\
+            • Peak memory: {:.2} MB",
+            self.metrics.fps,
+            self.metrics.frame_time_ms,
+            self.particle_count,
+            self.size.width, self.size.height,
+            self.camera.position.x, self.camera.position.y, self.camera.position.z,
+            self.camera.target.x, self.camera.target.y, self.camera.target.z,
+            self.camera.aspect,
+            self.camera.get_zoom_level(),
+            stats.active_buffers,
+            stats.retired_buffers,
+            stats.active_memory_mb,
+            stats.total_allocated_mb,
+            stats.peak_memory_mb
+        );
+        self.render_debug_text(encoder, view, &formatted_text)
     }
 
     /// Render debug text with proper buffer lifecycle management
@@ -2262,17 +2163,48 @@ pub async fn run_renderer(sim: std::sync::Arc<std::sync::Mutex<universe_sim::Uni
     use winit::event_loop::{ControlFlow, EventLoop};
     use winit::window::WindowBuilder;
 
-    // Create the winit event loop – the new API returns a Result.
-    let event_loop: EventLoop<()> = EventLoop::new()?;
+    info!("🚀 Starting native renderer event loop");
+    
+    // Create the winit event loop with error handling
+    let event_loop: EventLoop<()> = match EventLoop::new() {
+        Ok(loop_) => {
+            info!("✅ Event loop created successfully");
+            loop_
+        },
+        Err(e) => {
+            error!("❌ Failed to create event loop: {}", e);
+            return Err(anyhow::anyhow!("Event loop creation failed: {}", e));
+        }
+    };
 
-    // Build the window that will host our renderer.
-    let window = WindowBuilder::new()
+    // Build the window with error handling
+    let window = match WindowBuilder::new()
         .with_title("EVOLUTION – Native Renderer")
-        .build(&event_loop)?;
+        .with_inner_size(winit::dpi::LogicalSize::new(1200.0, 800.0))
+        .with_resizable(true)
+        .build(&event_loop) {
+            Ok(window) => {
+                info!("✅ Window created successfully");
+                window
+            },
+            Err(e) => {
+                error!("❌ Failed to create window: {}", e);
+                return Err(anyhow::anyhow!("Window creation failed: {}", e));
+            }
+        };
 
-    // Initialise the renderer (async) – we block on the future here since the
-    // outer function is already async.
-    let mut renderer = pollster::block_on(NativeRenderer::new(&window))?;
+    // Initialise the renderer with comprehensive error handling
+    info!("🔧 Initializing renderer...");
+    let mut renderer = match pollster::block_on(NativeRenderer::new(&window)) {
+        Ok(renderer) => {
+            info!("✅ Renderer initialized successfully");
+            renderer
+        },
+        Err(e) => {
+            error!("❌ Renderer initialization failed: {}", e);
+            return Err(anyhow::anyhow!("Renderer initialization failed: {}", e));
+        }
+    };
 
     // Clone the simulation Arc so we can move it into the event loop closure.
     let sim_arc = sim.clone();
@@ -2282,9 +2214,10 @@ pub async fn run_renderer(sim: std::sync::Arc<std::sync::Mutex<universe_sim::Uni
     let window_id = window.id();
     let mut window_size = window.inner_size();
 
-    // Main event loop – ownership of window and renderer is moved into the
-    // closure so their lifetimes outlive the loop itself.
-    event_loop.run(move |event, elwt| {
+    info!("🎬 Starting main render loop...");
+
+    // Main event loop with comprehensive error handling
+    let result = event_loop.run(move |event, elwt| {
         use winit::event::{Event, WindowEvent, MouseScrollDelta};
         use tracing::error;
         
@@ -2293,62 +2226,81 @@ pub async fn run_renderer(sim: std::sync::Arc<std::sync::Mutex<universe_sim::Uni
             Event::WindowEvent { window_id: win_id, event } if win_id == window_id => {
                 match event {
                     WindowEvent::CloseRequested => {
+                        info!("👋 Window close requested");
                         elwt.exit();
                     }
                     WindowEvent::Resized(size) => {
+                        info!("📐 Window resized to {}x{}", size.width, size.height);
                         window_size = size;
-                        renderer.resize(size);
+                        if let Err(e) = renderer.resize(size) {
+                            error!("❌ Resize failed: {}", e);
+                        }
+                        // Note: We can't call window.request_redraw() here due to borrowing
                     }
                     WindowEvent::ScaleFactorChanged { .. } => {
-                        renderer.resize(window_size);
+                        if let Err(e) = renderer.resize(window_size) {
+                            error!("❌ Scale factor change resize failed: {}", e);
+                        }
+                        // Note: We can't call window.request_redraw() here due to borrowing
                     }
                     WindowEvent::RedrawRequested => {
-                        // --- Simulation update ---
+                        debug!("🔄 RedrawRequested event");
+                        // --- Simulation update with error handling ---
                         let now = std::time::Instant::now();
                         let _dt = (now - last_frame_inst).as_secs_f64();
                         last_frame_inst = now;
 
-                        // Tick the simulation inside a critical section.
+                        // Tick the simulation inside a critical section with error handling
                         if let Ok(mut sim) = sim_arc.lock() {
                             if let Err(e) = sim.tick() {
-                                error!("Simulation tick failed: {}", e);
+                                error!("❌ Simulation tick failed: {}", e);
                             }
                             
                             // Update particle data from simulation before rendering
                             if let Err(e) = renderer.update_particles(&mut *sim) {
-                                error!("Failed to update particles: {}", e);
+                                error!("❌ Failed to update particles: {}", e);
                             }
                             
                             // Use universe age as a time parameter in seconds for the renderer.
                             let sim_time = sim.universe_age_years() as f32;
                             if let Err(e) = renderer.render(sim_time) {
-                                error!("Render error: {}", e);
+                                error!("❌ Render error: {}", e);
                             }
+                        } else {
+                            error!("❌ Failed to acquire simulation lock");
                         }
+                        // Note: We can't call window.request_redraw() here due to borrowing
                     }
                     WindowEvent::KeyboardInput { event: key_event, .. } => {
-                        // Convert physical key to `KeyCode` where possible and forward to renderer.
+                        debug!("⌨️ KeyboardInput: {:?}", key_event);
                         if let winit::keyboard::PhysicalKey::Code(code) = key_event.physical_key {
                             renderer.handle_debug_input(code, key_event.state);
                             renderer.handle_flythrough_movement(code, key_event.state);
                         }
+                        // Note: We can't call window.request_redraw() here due to borrowing
                     }
                     WindowEvent::ModifiersChanged(mods) => {
+                        debug!("🪟 ModifiersChanged: {:?}", mods);
                         renderer.handle_modifiers(mods.state());
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
+                        debug!("🖱️ MouseInput: {:?} {:?}", button, state);
                         renderer.handle_mouse_button(button, state);
+                        // Note: We can't call window.request_redraw() here due to borrowing
                     }
                     WindowEvent::CursorMoved { position, .. } => {
+                        debug!("🖱️ CursorMoved: ({}, {})", position.x, position.y);
                         renderer.handle_mouse_move(position.x, position.y);
+                        // Note: We can't call window.request_redraw() here due to borrowing
                     }
                     WindowEvent::MouseWheel { delta, .. } => {
-                        // Normalise the wheel delta to a single float for simplicity.
+                        debug!("🖱️ MouseWheel: {:?}", delta);
                         let scroll_amount = match delta {
                             MouseScrollDelta::LineDelta(_x, y) => y * 32.0,
                             MouseScrollDelta::PixelDelta(p) => p.y as f32,
                         };
                         renderer.handle_mouse_wheel(scroll_amount);
+                        // Note: We can't call window.request_redraw() here due to borrowing
                     }
                     _ => {}
                 }
@@ -2356,12 +2308,30 @@ pub async fn run_renderer(sim: std::sync::Arc<std::sync::Mutex<universe_sim::Uni
 
             // === Event loop is about to sleep – ensure we redraw continuously ===
             Event::AboutToWait => {
+                debug!("⏳ AboutToWait: setting ControlFlow::Poll");
                 elwt.set_control_flow(ControlFlow::Poll);
+                // Note: We can't call window.request_redraw() here due to borrowing
             }
 
             _ => {}
         }
-    })?;
+    });
 
-    Ok(())
-} 
+    match result {
+        Ok(_) => {
+            info!("✅ Renderer event loop completed successfully");
+            Ok(())
+        },
+        Err(e) => {
+            error!("❌ Renderer event loop failed: {}", e);
+            Err(anyhow::anyhow!("Event loop failed: {}", e))
+        }
+    }
+}
+
+// Helper struct to hold renderer state
+struct RendererState {
+    window: winit::window::Window,
+    renderer: NativeRenderer<'static>,
+    window_size: winit::dpi::PhysicalSize<u32>,
+}

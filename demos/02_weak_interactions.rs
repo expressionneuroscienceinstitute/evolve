@@ -37,7 +37,7 @@ fn main() -> Result<()> {
     // Run simulation for longer time to see beta decays
     let total_steps = 10000;
     for tick in 0..total_steps {
-        engine.step(dt)?;
+        engine.step()?;
         
         // Output every 1000 steps
         if tick % 1000 == 0 {

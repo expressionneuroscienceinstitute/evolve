@@ -255,6 +255,7 @@ pub fn pair_produce(
         quantum_state: Default::default(),
         interaction_history: vec![],
         velocity: electron_dir * (electron_ke * 2.0 / ELECTRON_MASS).sqrt(),
+        acceleration: Vector3::zeros(),
     };
     
     let positron = FundamentalParticle {
@@ -276,6 +277,7 @@ pub fn pair_produce(
         quantum_state: Default::default(),
         interaction_history: vec![],
         velocity: positron_dir * (positron_ke * 2.0 / ELECTRON_MASS).sqrt(),
+        acceleration: Vector3::zeros(),
     };
     
     Some((electron, positron))

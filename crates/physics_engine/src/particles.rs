@@ -112,6 +112,7 @@ pub fn spawn_rest(pt: crate::ParticleType) -> FundamentalParticle {
         quantum_state: QuantumState::default(),
         interaction_history: Vec::new(),
         velocity: Vector3::zeros(),
+        acceleration: Vector3::zeros(),
     }
 }
 

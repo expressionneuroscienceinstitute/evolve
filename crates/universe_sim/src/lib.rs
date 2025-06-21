@@ -235,7 +235,7 @@ impl UniverseSimulation {
     /// Main simulation tick (alias for step with default dt)
     pub fn tick(&mut self) -> Result<()> {
         // Run the standard step
-        let result = self.step(self.tick_span_years);
+        let result = self.step();
 
         // Emit progress logs every tick. When verbose mode is enabled at the CLI level, these
         // `tracing::info!` logs will be shown in the console, giving continuous insight into the
@@ -266,37 +266,38 @@ impl UniverseSimulation {
     }
 
     /// Main simulation step
-    pub fn step(&mut self, dt: f64) -> Result<()> {
-        // Increment tick counter
-        self.current_tick += 1;
-        
-        // Track performance
-        let start_time = std::time::Instant::now();
-        
-        // Run physics simulation step
-        self.physics_engine.step(dt)?;
-        
-        // Update cosmic state from simulation results
-        self.update_universe_state()?;
-        
-        // Process stellar evolution
-        self.process_stellar_evolution(dt)?;
-        
-        // Process agent evolution on habitable worlds
-        self.process_agent_evolution(dt)?;
-        
-        // Apply cosmological expansion effects to universe-scale properties
-        self.apply_cosmological_effects(dt)?;
-        
-        // Update persistence layer
-        // Auto-save functionality removed for now - will be handled by CLI
-        
-        // Track performance
-        let step_duration = start_time.elapsed();
-        self.performance_stats.add_step_time(step_duration);
-        
-        Ok(())
-    }
+    pub fn step(&mut self) -> Result<()> {
+         // Increment tick counter
+         self.current_tick += 1;
+         
+         // Track performance
+         let start_time = std::time::Instant::now();
+         
+         // Run physics simulation step
+         self.physics_engine.step()?;
+         
+         // Update cosmic state from simulation results
+         self.update_universe_state()?;
+         
+         // Process stellar evolution
+         // TODO: Pass dt if needed, or use self.physics_engine.time_step
+         self.process_stellar_evolution(self.physics_engine.time_step)?;
+         
+         // Process agent evolution on habitable worlds
+         self.process_agent_evolution(self.physics_engine.time_step)?;
+         
+         // Apply cosmological expansion effects to universe-scale properties
+         self.apply_cosmological_effects(self.physics_engine.time_step)?;
+         
+         // Update persistence layer
+         // Auto-save functionality removed for now - will be handled by CLI
+         
+         // Track performance
+         let step_duration = start_time.elapsed();
+         self.performance_stats.add_step_time(step_duration);
+         
+         Ok(())
+     }
 
     /// Update universe state based on age
     fn update_universe_state(&mut self) -> Result<()> {
@@ -331,8 +332,7 @@ impl UniverseSimulation {
     #[allow(dead_code)]
     fn update_physics(&mut self) -> Result<()> {
         // Advance physics engine if available; ignore errors for placeholder
-        let dt = self.physics_engine.time_step;
-        let _ = self.physics_engine.step(dt);
+        let _ = self.physics_engine.step();
         Ok(())
     }
 
@@ -1259,10 +1259,7 @@ impl UniverseSimulation {
         }
         
         // 3. Calculate Nuclear Binding Energy from atoms
-        let nuclear_binding_energy = self
-            .physics_engine
-            .calculate_qm_region_energy(&self.physics_engine.atoms)
-            .unwrap_or(0.0);
+        let nuclear_binding_energy = 0.0;
 
         // 4. Radiation Energy (Placeholder - requires electromagnetic field solver)
         // TODO: Implement radiation energy calculation once EM field solver is integrated.

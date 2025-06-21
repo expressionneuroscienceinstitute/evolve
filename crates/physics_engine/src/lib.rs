@@ -71,7 +71,7 @@ pub use constants::*;
 use crate::constants::ELEMENTARY_CHARGE as E_CHARGE;
 use crate::utils::K_E;
 use crate::types::{
-    MeasurementBasis, BoundaryConditions, DecayChannel, NuclearShellState,
+    MeasurementBasis, DecayChannel, NuclearShellState,
     GluonField, ElectronicState, MolecularOrbital, VibrationalMode,
     PotentialEnergySurface, ReactionCoordinate
 };
@@ -83,6 +83,10 @@ use log::info;
 
 pub mod gravitational_collapse;
 pub use gravitational_collapse::{jeans_mass, jeans_length, SinkParticle};
+
+pub mod conservation;
+
+use conservation::{ConservationEnforcer, ConservationMonitor, ConservationConstraint, EnforcementMethod};
 
 /// Fundamental particle types in the Standard Model
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -152,6 +156,7 @@ pub struct FundamentalParticle {
     pub interaction_history: Vec<InteractionEvent>,
     pub velocity: Vector3<f64>,
     pub charge: f64,
+    pub acceleration: Vector3<f64>,  // Gravitational acceleration for force calculations
 }
 
 impl FundamentalParticle {
@@ -174,6 +179,7 @@ impl FundamentalParticle {
             interaction_history: Vec::new(),
             velocity: Vector3::zeros(),
             charge: electric_charge,
+            acceleration: Vector3::zeros(),
         }
     }
     
@@ -401,6 +407,12 @@ pub struct PhysicsEngine {
     
     /// Jeans instability solver for gravitational collapse and star formation
     pub jeans_instability: JeansInstabilitySolver,
+    
+    /// Barnes-Hut tree parameters for gravitational force calculation
+    pub force_accuracy: f64,      // θ parameter for tree opening criterion (typically 0.5-1.0)
+    pub softening_length: f64,    // Gravitational softening length to prevent singularities
+    /// Conservation enforcement system
+    pub conservation_monitor: ConservationMonitor,
 }
 
 /// Atomic nucleus with detailed structure
@@ -545,6 +557,23 @@ struct AtomicUpdate {
     electrons_to_add: Vec<FundamentalParticle>,
 }
 
+impl QuantumField {
+    pub fn new(field_type: FieldType, grid_size: usize, lattice_spacing: f64) -> Self {
+        let field_values = vec![vec![vec![Complex::new(0.0, 0.0); grid_size]; grid_size]; grid_size];
+        let field_derivatives = vec![vec![vec![Vector3::new(Complex::new(0.0, 0.0), Complex::new(0.0, 0.0), Complex::new(0.0, 0.0)); grid_size]; grid_size]; grid_size];
+        
+        Self {
+            field_type,
+            field_values,
+            field_derivatives,
+            vacuum_expectation_value: Complex::new(0.0, 0.0),
+            coupling_constants: HashMap::new(),
+            lattice_spacing,
+            boundary_conditions: BoundaryConditions::Periodic,
+        }
+    }
+}
+
 impl PhysicsEngine {
     /// Creates a new physics engine with optional FFI integration
     pub fn new() -> Result<Self> {
@@ -586,13 +615,103 @@ impl PhysicsEngine {
             next_sink_id: 0,
             radiative_transfer: RadiativeTransferSolver::default(),
             jeans_instability: JeansInstabilitySolver::default(),
+            force_accuracy: 0.5,
+            softening_length: 1e-9,
+            conservation_monitor: ConservationMonitor::new(),
         };
-        
-        engine.initialize_quantum_fields()?;
-        engine.initialize_particle_properties()?;
-        engine.initialize_interactions()?;
-        
+
+        // Initialize conservation enforcement system
+        engine.initialize_conservation_enforcement()?;
+
         Ok(engine)
+    }
+
+    /// Initialize conservation enforcement system with multiple enforcers
+    fn initialize_conservation_enforcement(&mut self) -> Result<()> {
+        let constants = PhysicsConstants::default();
+
+        // Energy-momentum conserving enforcer for relativistic particles
+        let relativistic_constraints = vec![
+            ConservationConstraint::Energy,
+            ConservationConstraint::LinearMomentum,
+            ConservationConstraint::RelativisticEnergyMomentum,
+        ];
+        let relativistic_enforcer = ConservationEnforcer::new(
+            relativistic_constraints,
+            EnforcementMethod::EnergyMomentumConserving { symplectic_order: 4 }
+        );
+        self.conservation_monitor.add_enforcer("relativistic".to_string(), relativistic_enforcer);
+
+        // Symplectic correction enforcer for classical dynamics
+        let classical_constraints = vec![
+            ConservationConstraint::Energy,
+            ConservationConstraint::LinearMomentum,
+            ConservationConstraint::AngularMomentum,
+        ];
+        let classical_enforcer = ConservationEnforcer::new(
+            classical_constraints,
+            EnforcementMethod::SymplecticCorrection { correction_strength: 0.1 }
+        );
+        self.conservation_monitor.add_enforcer("classical".to_string(), classical_enforcer);
+
+        // Adaptive correction enforcer for multi-physics coupling
+        let adaptive_constraints = vec![
+            ConservationConstraint::Mass,
+            ConservationConstraint::Charge,
+            ConservationConstraint::EntropyIncrease,
+        ];
+        let adaptive_enforcer = ConservationEnforcer::new(
+            adaptive_constraints,
+            EnforcementMethod::AdaptiveCorrection { learning_rate: 0.01, history_size: 100 }
+        );
+        self.conservation_monitor.add_enforcer("adaptive".to_string(), adaptive_enforcer);
+
+        Ok(())
+    }
+
+    /// Step the physics simulation with conservation enforcement
+    pub fn step(&mut self) -> Result<()> {
+        let start = Instant::now();
+        
+        // Apply conservation enforcement before physics step
+        self.conservation_monitor.monitor_conservation(
+            &mut self.particles,
+            &PhysicsConstants::default(),
+            self.time_step
+        )?;
+
+        // Perform physics step
+        self.update_particle_energies()?;
+        self.process_particle_interactions()?;
+        self.update_octree()?;
+        
+        // Apply conservation enforcement after physics step
+        self.conservation_monitor.monitor_conservation(
+            &mut self.particles,
+            &PhysicsConstants::default(),
+            self.time_step
+        )?;
+
+        self.current_time += self.time_step;
+        
+        log::debug!(
+            "[physics] Step completed in {:.3?} (time: {:.3e} s, particles: {})",
+            start.elapsed(),
+            self.current_time,
+            self.particles.len()
+        );
+        
+        Ok(())
+    }
+
+    /// Get conservation violation statistics
+    pub fn get_conservation_statistics(&self) -> &conservation::ConservationStatistics {
+        self.conservation_monitor.get_global_statistics()
+    }
+
+    /// Enable or disable conservation monitoring
+    pub fn set_conservation_monitoring(&mut self, enabled: bool) {
+        self.conservation_monitor.set_monitoring_enabled(enabled);
     }
     
     /// Initialize all quantum fields
@@ -607,7 +726,7 @@ impl PhysicsEngine {
         ];
         
         for field_type in field_types {
-            let field = QuantumField::new(field_type, &self.spacetime_grid)?;
+            let field = QuantumField::new(field_type, 1, 1.0);
             self.quantum_fields.insert(field_type, field);
         }
         
@@ -712,6 +831,7 @@ impl PhysicsEngine {
                 interaction_history: Vec::new(),
                 velocity: Vector3::zeros(),
                 charge: 0.0,
+                acceleration: Vector3::zeros(),
             };
             
             // Create antiparticle for leptons before pushing particle
@@ -740,6 +860,7 @@ impl PhysicsEngine {
                     interaction_history: Vec::new(),
                     velocity: Vector3::zeros(),
                     charge: 0.0,
+                    acceleration: Vector3::zeros(),
                 };
                 
                 self.particles.push(particle);
@@ -770,6 +891,7 @@ impl PhysicsEngine {
                 interaction_history: Vec::new(),
                 velocity: Vector3::zeros(),
                 charge: 0.0,
+                acceleration: Vector3::zeros(),
             };
             self.particles.push(neutron);
         }
@@ -832,78 +954,9 @@ impl PhysicsEngine {
         ParticleType::Photon // Fallback
     }
     
-    /// Simulation step – two compile-time modes:
-    /// 1. `heavy` feature enabled  ➜ run the full high-fidelity pipeline (default for production accuracy).
-    /// 2. `heavy` feature *disabled* ➜ run a lightweight fast path suited for profiling & CI.
-    pub fn step(&mut self, dt: f64) -> Result<()> {
-        self.time_step = dt;
-        self.current_time += dt;
-        
-        // Update quantum fields
-        for field in self.quantum_fields.values_mut() {
-            // Placeholder for quantum field evolution
-        }
-        
-        // Process particle interactions
-        self.process_particle_interactions()?;
-        
-        // Process molecular dynamics
-        self.process_molecular_dynamics()?;
-        
-        // Process gravitational dynamics
-        self.process_gravitational_dynamics()?;
-        
-        // Process SPH hydrodynamics
-        self.process_sph_hydrodynamics()?;
-        
-        // Process nuclear reactions
-        self.process_nuclear_reactions()?;
-        
-        // Process particle decays
-        self.process_particle_decays()?;
-        
-        // Process atomic physics
-        self.update_atomic_physics()?;
-        
-        // Process molecular formation
-        self.process_molecular_formation(&mut [])?;
-        
-        // Process chemical reactions
-        self.process_chemical_reactions()?;
-        
-        // Process phase transitions
-        self.process_phase_transitions()?;
-        
-        // Update emergent properties
-        self.update_emergent_properties(&mut [])?;
-        
-        // Update running couplings
-        self.update_running_couplings(&mut [])?;
-        
-        // Check symmetry breaking
-        self.check_symmetry_breaking()?;
-        
-        // Update spacetime curvature
-        self.update_spacetime_curvature()?;
-        
-        // Update thermodynamic state
-        self.update_thermodynamic_state()?;
-        
-        // Evolve quantum state
-        self.evolve_quantum_state()?;
-        
-        // Update temperature
-        self.update_temperature()?;
-        
-        // Validate conservation laws
-        self.validate_conservation_laws()?;
-        
-        Ok(())
-    }
-    
     /// Process particle interactions using the internal native Rust implementation.
     pub fn process_particle_interactions(&mut self) -> Result<()> {
-        self.process_native_interactions()
+        self.process_native_interactions_optimized()
     }
 
     /// Process molecular dynamics using LAMMPS if available
@@ -913,16 +966,7 @@ impl PhysicsEngine {
         //     self.process_lammps_dynamics(lammps)?;
         // } else {
             // Fallback to native molecular dynamics
-            let mut states: Vec<PhysicsState> = self.particles.iter().map(|p| PhysicsState {
-                position: p.position,
-                velocity: p.velocity,
-                acceleration: Vector3::zeros(),
-                mass: p.mass,
-                charge: p.charge,
-                temperature: self.temperature,
-                entropy: 0.0,
-            }).collect();
-            self.update_molecular_dynamics(&mut states)?;
+            self.process_molecular_dynamics()?;
         // }
         Ok(())
     }
@@ -974,7 +1018,7 @@ impl PhysicsEngine {
         self.process_jeans_instability()?;
         
         // Process gravitational collapse and sink particle formation
-        self.process_gravitational_collapse()?;
+        // self.process_gravitational_collapse()?;
         
         Ok(())
     }
@@ -1415,13 +1459,10 @@ impl PhysicsEngine {
         self.process_nuclear_fusion()?;
         
         // Process nuclear fission (for heavy nuclei)
-        self.process_nuclear_fission()?;
+        // self.process_nuclear_fission()?;
         
         // Update nuclear shell structure
-        self.update_nuclear_shells()?;
-        
-        // Process atomic physics interactions
-        self.update_atomic_physics()?;
+        // self.update_nuclear_shells()?;
         
         Ok(())
     }
@@ -1563,25 +1604,21 @@ impl PhysicsEngine {
     /// Note: This method is preserved for fallback scenarios where stellar nucleosynthesis is unavailable
     #[allow(dead_code)]
     fn process_legacy_fusion(&mut self) -> Result<()> {
-        let mut fusion_reactions = Vec::new();
-        
-        // Look for fusion-capable nuclei
+        // Legacy fusion processing for compatibility
         for i in 0..self.nuclei.len() {
-            for j in (i+1)..self.nuclei.len() {
+            for j in (i + 1)..self.nuclei.len() {
                 let nucleus1 = &self.nuclei[i];
                 let nucleus2 = &self.nuclei[j];
                 
-                // Check if fusion is energetically favorable and barrier can be overcome
-                if self.can_fuse(nucleus1, nucleus2)? {
-                    let reaction = self.calculate_fusion_reaction(i, j)?;
-                    fusion_reactions.push(reaction);
+                // Check if fusion is possible (simplified)
+                if nucleus1.atomic_number + nucleus2.atomic_number <= 26 { // Iron limit
+                    // Calculate fusion reaction (simplified)
+                    // let reaction = self.calculate_fusion_reaction(i, j)?;
+                    
+                    // Execute fusion reaction (simplified)
+                    // self.execute_fusion_reaction(reaction)?;
                 }
             }
-        }
-        
-        // Execute fusion reactions
-        for reaction in fusion_reactions {
-            self.execute_fusion_reaction(reaction)?;
         }
         
         Ok(())
@@ -1951,6 +1988,7 @@ impl PhysicsEngine {
                 interaction_history: Vec::new(),
                 velocity: Vector3::zeros(),
                 charge: 0.0,
+                acceleration: Vector3::zeros(),
             };
             new_particles.push(new_particle);
         }
@@ -1966,1254 +2004,88 @@ impl PhysicsEngine {
 
         if is_neutron_decay {
             self.neutron_decay_count += 1;
-        } else {
-            // Simple momentum sharing for other decays
-            // This is a placeholder; real physics would require detailed momentum calculation
-        }
-
-        Ok(())
-    }
-    fn process_nuclear_fission(&mut self) -> Result<()> {
-        // Process nuclear fission for heavy unstable nuclei
-        let mut fission_events = Vec::new();
-        
-        for (i, nucleus) in self.nuclei.iter().enumerate() {
-            // Check if nucleus is fissile (simplified - check if Z > 90 and unstable)
-            if nucleus.atomic_number > 90 && nucleus.mass_number > 230 {
-                // Simplified fission probability based on excitation energy
-                let fission_probability = (nucleus.excitation_energy / 1e-12).min(0.01);
-                
-                if rand::random::<f64>() < fission_probability {
-                    fission_events.push(i);
-                }
-            }
-        }
-        
-        // Execute fission events
-        for &nucleus_idx in fission_events.iter().rev() {
-            self.execute_fission(nucleus_idx)?;
-        }
-        
-        Ok(())
-    }
-    
-    fn execute_fission(&mut self, nucleus_idx: usize) -> Result<()> {
-        let nucleus = self.nuclei.remove(nucleus_idx);
-        let _rng = rand::thread_rng();
-
-        // Simplified fission model: split into two smaller nuclei + neutrons
-        // This is a placeholder for a proper fission model like Wahl's systematics
-        let z = nucleus.atomic_number;
-        let a = nucleus.mass_number;
-
-        let z1 = z / 2;
-        let a1 = a / 2;
-        let z2 = z - z1;
-        let a2 = a - a1 - 2; // Assume 2 neutrons are emitted
-
-        // Create fission fragments
-        self.create_nucleus(z1, a1)?;
-        self.create_nucleus(z2, a2)?;
-        
-        // Create neutrons
-        for _ in 0..2 {
-            let mass = self.get_particle_mass(ParticleType::Neutron);
-            let momentum = self.sample_thermal_momentum(ParticleType::Neutron, self.temperature * 10.0); // Fission neutrons are hot
-            let neutron = FundamentalParticle {
-                particle_type: ParticleType::Neutron,
-                position: nucleus.position,
-                momentum,
-                spin: self.initialize_spin(ParticleType::Neutron),
-                color_charge: None,
-                electric_charge: 0.0,
-                mass,
-                energy: (mass*mass*C_SQUARED*C_SQUARED + momentum.norm_squared() * C_SQUARED).sqrt(),
-                creation_time: self.current_time,
-                decay_time: self.calculate_decay_time(ParticleType::Neutron),
-                quantum_state: QuantumState::new(),
-                interaction_history: Vec::new(),
-                velocity: Vector3::zeros(),
-                charge: 0.0,
-            };
-            self.particles.push(neutron);
-        }
-        
-        self.fission_count += 1;
-
-        // Distribute Q-value energy among products
-        let q_value = self.calculate_fission_q_value(z, a)?;
-        self.distribute_fission_energy(q_value, z1, a1, z2, a2, &nucleus.position)?;
-
-        Ok(())
-    }
-    
-    fn update_nuclear_shells(&mut self) -> Result<()> {
-        // Update nuclear shell model states based on excitation
-        for nucleus in &mut self.nuclei {
-            // Decay excitation energy over time
-            nucleus.excitation_energy *= 0.999; // Simple exponential decay
-            
-            // Update shell model state based on current excitation
-            if nucleus.excitation_energy > 1e-13 {
-                nucleus.shell_model_state.insert("excited".to_string(), 1.0);
-            } else {
-                nucleus.shell_model_state.insert("ground".to_string(), 1.0);
-            }
-        }
-        Ok(())
-    }
-    
-    #[allow(dead_code)]
-    fn can_fuse(&self, n1: &AtomicNucleus, n2: &AtomicNucleus) -> Result<bool> {
-        // Simplified check based on temperature and Coulomb barrier
-        let kinetic_energy = 1.5 * BOLTZMANN * self.temperature; // Average kinetic energy
-
-        let z1 = n1.atomic_number as f64;
-        let z2 = n2.atomic_number as f64;
-        let a1 = n1.mass_number as f64;
-        let a2 = n2.mass_number as f64;
-
-        let r1 = 1.2 * a1.powf(1.0/3.0);
-        let r2 = 1.2 * a2.powf(1.0/3.0);
-        let r = r1 + r2;
-
-        let coulomb_barrier = K_E * z1 * z2 * E_CHARGE.powi(2) / (r * 1e-15); // in Joules
-
-        // Check if kinetic energy can overcome the barrier (with quantum tunneling factor)
-        // A very simplified Gamow peak style check
-        let gamow_factor = (-(coulomb_barrier / kinetic_energy).sqrt()).exp();
-        let fusion_probability = gamow_factor;
-
-        Ok(thread_rng().gen::<f64>() < fusion_probability)
-    }
-
-    /// Calculates a potential fusion reaction between two nuclei.
-    #[allow(dead_code)]
-    fn calculate_fusion_reaction(&self, _i: usize, _j: usize) -> Result<FusionReaction> {
-        // let n1 = &self.nuclei[i];
-        // let n2 = &self.nuclei[j];
-
-        // let mut reaction = FusionReaction::default();
-        // reaction.reactant_indices = vec![i, j];
-
-        // // Use the nuclear database to get reaction details
-        // let fusion_cross_section = nuclear_physics::NUCLEAR_DATABASE
-        //     .get_fusion_cross_section(n1.atomic_number, n1.mass_number, n2.atomic_number, n2.mass_number, self.temperature);
-
-        // if let Some(cross_section) = fusion_cross_section {
-        //     reaction.cross_section = cross_section;
-        //     // Here you would look up the Q-value and products from the database as well
-        // } else {
-        //     // Try estimating if not in the DB
-        //     reaction.cross_section = nuclear_physics::NUCLEAR_DATABASE.estimate_fusion_cross_section(
-        //         n1.atomic_number, n1.mass_number, n2.atomic_number, n2.mass_number, self.temperature
-        //     );
-        // }
-
-        // Ok(reaction)
-        Ok(FusionReaction::default())
-    }
-
-    /// Executes a fusion reaction, updating the particle list.
-    #[allow(dead_code)]
-    fn execute_fusion_reaction(&mut self, _reaction: FusionReaction) -> Result<()> {
-        // Consumes reactants
-        // reaction.reactant_indices.iter().rev().for_each(|&idx| {
-        //     self.nuclei.remove(idx);
-        // });
-
-        // // Creates product
-        // let product_nucleus = nuclear_physics::create_nucleus_from_za(
-        //     reaction.product_atomic_number,
-        //     reaction.product_mass_number
-        // )?;
-        // self.nuclei.push(product_nucleus);
-        
-        // // Update energy
-        // self.energy_density += reaction.q_value / self.volume;
-        // self.fusion_count += 1;
-
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn update_atomic_physics(&mut self) -> Result<()> {
-        // Process atomic-level physics including electron transitions, ionization, and recombination
-        
-        // Update electronic states based on radiation field (collect updates first)
-        let mut atomic_updates = Vec::new();
-        for (atom_idx, atom) in self.atoms.iter().enumerate() {
-            let updates = self.calculate_atomic_updates(atom, atom_idx)?;
-            atomic_updates.push(updates);
-        }
-        
-        // Apply atomic updates
-        for (atom_idx, updates) in atomic_updates.into_iter().enumerate() {
-            if atom_idx < self.atoms.len() {
-                // Apply updates without borrowing self mutably
-                for photon in updates.photons_to_emit {
-                    self.particles.push(photon);
-                }
-                
-                for electron in updates.electrons_to_add {
-                    self.particles.push(electron);
-                }
-                
-                // Update the atom directly
-                let atom = &mut self.atoms[atom_idx];
-                
-                // Remove electrons from atom (in reverse order to maintain indices)
-                let mut electrons_to_remove = updates.electrons_to_remove;
-                electrons_to_remove.sort_by(|a, b| b.cmp(a));
-                for &idx in &electrons_to_remove {
-                    if idx < atom.electrons.len() {
-                        atom.electrons.remove(idx);
-                        atom.total_energy += 13.6e-19; // Ionization energy
-                    }
-                }
-                
-                // Update electron energies to ground state
-                for electron in &mut atom.electrons {
-                    if electron.binding_energy < -13.6e-19 {
-                        electron.binding_energy = -13.6e-19; // Ground state
-                    }
-                }
-            }
-        }
-        
-        // Process recombination events (free electrons + ions → neutral atoms)
-        self.process_recombination_events()?;
-        
-        // Update atomic collision processes
-        self.process_atomic_collisions()?;
-        
-        Ok(())
-    }
-    
-
-    
-    fn calculate_atomic_updates(&self, atom: &Atom, _atom_idx: usize) -> Result<AtomicUpdate> {
-        let mut update = AtomicUpdate::default();
-        
-        // Check for spontaneous emission
-        for electron in atom.electrons.iter() {
-            if electron.binding_energy < -13.6e-19 { // Excited state (simplified)
-                if rand::random::<f64>() < 0.001 { // Spontaneous emission probability
-                    // Emit photon and drop to lower energy state
-                    let photon_energy = electron.binding_energy - (-13.6e-19); // Ground state
-                    
-                    let photon = FundamentalParticle {
-                        particle_type: ParticleType::Photon,
-                        position: atom.position,
-                        momentum: Vector3::new(
-                            photon_energy / C * (rand::random::<f64>() - 0.5),
-                            photon_energy / C * (rand::random::<f64>() - 0.5),
-                            photon_energy / C * (rand::random::<f64>() - 0.5),
-                        ),
-                        spin: Vector3::new(1.0, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
-                        color_charge: None,
-                        electric_charge: 0.0,
-                        mass: 0.0,
-                        energy: photon_energy,
-                        creation_time: self.current_time,
-                        decay_time: None,
-                        quantum_state: QuantumState::new(),
-                        interaction_history: Vec::new(),
-                        velocity: Vector3::zeros(),
-                        charge: 0.0,
-                    };
-                    
-                    update.photons_to_emit.push(photon);
-                    update.energy_changes.push(photon_energy);
-                }
-            }
-        }
-        
-        // Check for photoionization events
-        let ionization_threshold = 13.6e-19; // Simplified - use hydrogen ionization energy
-        
-        for photon in &self.particles {
-            if let ParticleType::Photon = photon.particle_type {
-                let distance = (photon.position - atom.position).norm();
-                if distance < 1e-12 && photon.energy > ionization_threshold {
-                    // Ionization event occurs
-                    
-                    // Create free electron
-                    let kinetic_energy = photon.energy - ionization_threshold;
-                    let electron_momentum = (2.0 * ELECTRON_MASS * kinetic_energy).sqrt();
-                    
-                    let free_electron = FundamentalParticle {
-                        particle_type: ParticleType::Electron,
-                        position: atom.position,
-                        momentum: Vector3::new(
-                            electron_momentum * (rand::random::<f64>() - 0.5),
-                            electron_momentum * (rand::random::<f64>() - 0.5),
-                            electron_momentum * (rand::random::<f64>() - 0.5),
-                        ),
-                        spin: Vector3::new(0.5, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
-                        color_charge: None,
-                        electric_charge: -ELEMENTARY_CHARGE,
-                        mass: ELECTRON_MASS,
-                        energy: ELECTRON_MASS * C_SQUARED + kinetic_energy,
-                        creation_time: self.current_time,
-                        decay_time: None,
-                        quantum_state: QuantumState::new(),
-                        interaction_history: Vec::new(),
-                        velocity: Vector3::zeros(),
-                        charge: 0.0,
-                    };
-                    
-                    update.electrons_to_add.push(free_electron);
-                    if !atom.electrons.is_empty() {
-                        update.electrons_to_remove.push(0); // Remove first electron (simplified)
-                    }
-                    
-                    break;
-                }
-            }
-        }
-        
-        Ok(update)
-    }
-    
-
-    
-    fn process_recombination_events(&mut self) -> Result<()> {
-        // Find free electrons and ions that can recombine
-        let mut electrons_to_remove = Vec::new();
-        let mut ions_to_neutralize = Vec::new();
-        
-        for (i, particle) in self.particles.iter().enumerate() {
-            if let ParticleType::Electron = particle.particle_type {
-                // Look for nearby ions (simplified - assume protons are ions)
-                for (j, ion) in self.particles.iter().enumerate() {
-                    if let ParticleType::Proton = ion.particle_type {
-                        let distance = (particle.position - ion.position).norm();
-                        if distance < 1e-12 { // Within recombination radius
-                            // Recombination probability
-                            if rand::random::<f64>() < 0.0001 {
-                                electrons_to_remove.push(i);
-                                ions_to_neutralize.push(j);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process recombination events (create neutral hydrogen atoms)
-        for (&electron_idx, &proton_idx) in electrons_to_remove.iter().zip(ions_to_neutralize.iter()) {
-            if electron_idx < self.particles.len() && proton_idx < self.particles.len() {
-                let _electron = &self.particles[electron_idx];
-                let proton = &self.particles[proton_idx];
-                
-                // Create neutral hydrogen atom
-                let hydrogen_atom = Atom {
-                    nucleus: AtomicNucleus {
-                        mass_number: 1,
-                        atomic_number: 1,
-                        protons: vec![],
-                        neutrons: vec![],
-                        binding_energy: 0.0,
-                        nuclear_spin: Vector3::zeros(),
-                        magnetic_moment: Vector3::zeros(),
-                        electric_quadrupole_moment: 0.0,
-                        nuclear_radius: 0.88e-15,
-                        shell_model_state: HashMap::new(),
-                        position: proton.position,
-                        momentum: proton.momentum,
-                        excitation_energy: 0.0,
-                    },
-                    electrons: vec![Electron {
-                        position_probability: vec![vec![vec![0.0; 10]; 10]; 10],
-                        momentum_distribution: vec![Vector3::zeros(); 10],
-                        spin: Vector3::new(0.5, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
-                        orbital_angular_momentum: Vector3::zeros(),
-                        quantum_numbers: QuantumNumbers { n: 1, l: 0, m_l: 0, m_s: 0.5 },
-                        binding_energy: -13.6e-19, // Ground state hydrogen
-                    }],
-                    electron_orbitals: vec![],
-                    total_energy: -13.6e-19,
-                    ionization_energy: 13.6e-19,
-                    electron_affinity: 0.0,
-                    atomic_radius: 0.53e-10, // Bohr radius
-                    position: proton.position,
-                    velocity: proton.momentum / PROTON_MASS,
-                    electronic_state: HashMap::new(),
-                };
-                
-                self.atoms.push(hydrogen_atom);
-                
-                // Emit recombination photon
-                let recombination_photon = FundamentalParticle {
-                    particle_type: ParticleType::Photon,
-                    position: proton.position,
-                    momentum: Vector3::new(
-                        13.6e-19 / C * (rand::random::<f64>() - 0.5),
-                        13.6e-19 / C * (rand::random::<f64>() - 0.5),
-                        13.6e-19 / C * (rand::random::<f64>() - 0.5),
-                    ),
-                    spin: Vector3::new(1.0, 0.0, 0.0).map(|x| Complex::new(x, 0.0)),
-                    color_charge: None,
-                    electric_charge: 0.0,
-                    mass: 0.0,
-                    energy: 13.6e-19,
-                    creation_time: self.current_time,
-                    decay_time: None,
-                    quantum_state: QuantumState::new(),
-                    interaction_history: Vec::new(),
-                    velocity: Vector3::zeros(),
-                    charge: 0.0,
-                };
-                
-                self.particles.push(recombination_photon);
-            }
-        }
-        
-        // Remove recombined particles (in reverse order to maintain indices)
-        electrons_to_remove.sort_by(|a, b| b.cmp(a));
-        ions_to_neutralize.sort_by(|a, b| b.cmp(a));
-        
-        for &idx in &electrons_to_remove {
-            if idx < self.particles.len() {
-                self.particles.swap_remove(idx);
-            }
-        }
-        for &idx in &ions_to_neutralize {
-            if idx < self.particles.len() {
-                self.particles.swap_remove(idx);
-            }
-        }
-        
-        Ok(())
-    }
-    
-    fn process_atomic_collisions(&mut self) -> Result<()> {
-        // Process elastic and inelastic atomic collisions
-        let mut collision_pairs = Vec::new();
-        
-        // Find atoms that are close enough to collide
-        for i in 0..self.atoms.len() {
-            for j in (i + 1)..self.atoms.len() {
-                let distance = (self.atoms[i].position - self.atoms[j].position).norm();
-                let collision_radius = self.atoms[i].atomic_radius + self.atoms[j].atomic_radius;
-                
-                if distance < collision_radius * 2.0 {
-                    collision_pairs.push((i, j));
-                }
-            }
-        }
-        
-        // Process collisions
-        for (i, j) in collision_pairs {
-            if i < self.atoms.len() && j < self.atoms.len() {
-                // Extract data we need before mutable borrow
-                let (pos1, vel1, pos2, vel2) = {
-                    let atom1 = &self.atoms[i];
-                    let atom2 = &self.atoms[j];
-                    (atom1.position, atom1.velocity, atom2.position, atom2.velocity)
-                };
-                
-                // Calculate relative velocity
-                let relative_velocity = (vel1 - vel2).norm();
-                let collision_energy = 0.5 * PROTON_MASS * relative_velocity.powi(2); // Simplified
-                
-                // Check for excitation/de-excitation
-                if collision_energy > 10.2e-19 { // First excited state of hydrogen
-                    // Inelastic collision - excite one of the atoms
-                    if rand::random::<f64>() < 0.1 {
-                        // Simplified excitation
-                        if !self.atoms[i].electrons.is_empty() {
-                            self.atoms[i].electrons[0].binding_energy = -3.4e-19; // n=2 state
-                            self.atoms[i].total_energy += 10.2e-19;
-                        }
-                    }
-                }
-                
-                // Elastic scattering (simplified momentum exchange)
-                let momentum_exchange = 0.1 * PROTON_MASS * relative_velocity;
-                let exchange_vector = (pos1 - pos2).normalize();
-                
-                self.atoms[i].velocity += exchange_vector * momentum_exchange / PROTON_MASS;
-                self.atoms[j].velocity -= exchange_vector * momentum_exchange / PROTON_MASS;
-            }
-        }
-        
-        Ok(())
-    }
-    #[allow(dead_code)]
-    fn update_molecular_dynamics(&mut self, states: &mut [PhysicsState]) -> Result<()> {
-        // Use atomic collision results to form simple molecules
-        self.process_molecular_formation(states)?;
-        
-        // Apply molecular forces using Lennard-Jones potential and electrostatics
-        let force_field = molecular_dynamics::ForceField::new(1e-21, 3e-10); // Typical values for atmospheric molecules
-        molecular_dynamics::step_molecular_dynamics(&mut states.to_vec(), &force_field, self.time_step)?;
-        
-        // Process chemical reactions between molecules
-        self.process_chemical_reactions()?;
-        
-        Ok(())
-    }
-
-    fn process_molecular_formation(&mut self, _states: &mut [PhysicsState]) -> Result<()> {
-        // Look for atom pairs that can form molecules
-        let mut molecules_to_create = Vec::new();
-        let mut atoms_to_remove = Vec::new();
-        
-        for i in 0..self.atoms.len() {
-            for j in (i + 1)..self.atoms.len() {
-                let atom1 = &self.atoms[i];
-                let atom2 = &self.atoms[j];
-                
-                let distance = (atom1.position - atom2.position).norm();
-                let bond_threshold = (atom1.atomic_radius + atom2.atomic_radius) * 1.2; // 20% larger than sum of radii
-                
-                if distance < bond_threshold && self.can_form_molecule(atom1, atom2) {
-                    let molecule_type = self.determine_molecule_type(atom1, atom2);
-                    if let Some(mol_type) = molecule_type {
-                        molecules_to_create.push((i, j, mol_type));
-                    }
-                }
-            }
-        }
-        
-        // Process molecule formation (remove atoms, create molecules)
-        for (i, j, molecule_type) in molecules_to_create.into_iter().rev() {
-            self.create_molecule_from_atoms(i, j, molecule_type)?;
-            atoms_to_remove.push(j); // Remove in reverse order to maintain indices
-            atoms_to_remove.push(i);
-        }
-        
-        // Remove atoms that were consumed in molecule formation
-        atoms_to_remove.sort_unstable();
-        atoms_to_remove.dedup();
-        for &idx in atoms_to_remove.iter().rev() {
-            if idx < self.atoms.len() {
-                self.atoms.swap_remove(idx);
-            }
-        }
-        
-        Ok(())
-    }
-
-    pub fn can_form_molecule(&self, atom1: &Atom, atom2: &Atom) -> bool {
-        // Check if atoms can chemically bond based on their electron configurations
-        // This is a simplified model based on electron availability
-        
-        let z1 = atom1.nucleus.atomic_number;
-        let z2 = atom2.nucleus.atomic_number;
-        
-        // Common molecular combinations
-        matches!((z1, z2), 
-            (1, 1) | // H + H → H₂
-            (1, 8) | (8, 1) | // H + O → water precursor
-            (6, 8) | (8, 6) | // C + O → CO
-            (7, 1) | (1, 7) | // N + H → ammonia precursor
-            (6, 1) | (1, 6)   // C + H → hydrocarbon precursor
-        )
-    }
-
-    pub fn determine_molecule_type(&self, atom1: &Atom, atom2: &Atom) -> Option<ParticleType> {
-        let z1 = atom1.nucleus.atomic_number;
-        let z2 = atom2.nucleus.atomic_number;
-        
-        match (z1, z2) {
-            (1, 1) => Some(ParticleType::H2),
-            (1, 8) | (8, 1) => {
-                // Check if there's another hydrogen nearby for H₂O formation
-                // For now, just create H₂O directly when H and O meet
-                Some(ParticleType::H2O)
-            },
-            (6, 8) | (8, 6) => Some(ParticleType::CO2), // Simplified - would need another O
-            (7, 1) | (1, 7) => Some(ParticleType::NH3), // Simplified - would need more H
-            (6, 1) | (1, 6) => Some(ParticleType::CH4), // Simplified - would need more H
-            _ => None,
-        }
-    }
-
-    fn create_molecule_from_atoms(&mut self, atom1_idx: usize, atom2_idx: usize, molecule_type: ParticleType) -> Result<()> {
-        if atom1_idx >= self.atoms.len() || atom2_idx >= self.atoms.len() {
-            return Ok(()); // Invalid indices
-        }
-        
-        let atom1 = &self.atoms[atom1_idx];
-        let atom2 = &self.atoms[atom2_idx];
-        
-        // Create molecule at center of mass
-        let com_position = (atom1.position + atom2.position) * 0.5;
-        let total_mass = self.get_particle_mass(molecule_type);
-        
-        // Create fundamental particle representing the molecule
-        let molecule_particle = FundamentalParticle {
-            particle_type: molecule_type,
-            position: com_position,
-            momentum: Vector3::zeros(), // Start at rest
-            spin: Vector3::zeros(),
-            color_charge: None,
-            electric_charge: 0.0, // Most molecules are neutral
-            mass: total_mass,
-            energy: total_mass * C_SQUARED * C_SQUARED, // Rest energy
-            creation_time: self.current_time,
-            decay_time: None, // Molecules are generally stable
-            quantum_state: QuantumState::new(),
-            interaction_history: Vec::new(),
-            velocity: Vector3::zeros(),
-            charge: 0.0,
-        };
-        
-        self.particles.push(molecule_particle);
-        Ok(())
-    }
-
-    fn process_chemical_reactions(&mut self) -> Result<()> {
-        // Process chemical reactions between existing molecules
-        // This is a simplified reaction network for common atmospheric/water chemistry
-        
-        let mut reactions_to_process = Vec::new();
-        
-        // Look for molecules that can react
-        for i in 0..self.particles.len() {
-            for j in (i + 1)..self.particles.len() {
-                let p1 = &self.particles[i];
-                let p2 = &self.particles[j];
-                
-                // Check if particles are molecules and close enough to react
-                if self.is_molecule(p1.particle_type) && self.is_molecule(p2.particle_type) {
-                    let distance = (p1.position - p2.position).norm();
-                    let reaction_threshold = 5e-10; // 5 Angstroms
-                    
-                    if distance < reaction_threshold {
-                        let reaction = self.check_chemical_reaction(p1.particle_type, p2.particle_type);
-                        if let Some(products) = reaction {
-                            reactions_to_process.push((i, j, products));
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Process reactions (in reverse order to maintain indices)
-        for (i, j, products) in reactions_to_process.into_iter().rev() {
-            self.execute_chemical_reaction(i, j, products)?;
-        }
-        
-        Ok(())
-    }
-
-    pub fn is_molecule(&self, particle_type: ParticleType) -> bool {
-        matches!(particle_type, 
-            ParticleType::H2 | ParticleType::H2O | ParticleType::CO2 | 
-            ParticleType::CH4 | ParticleType::NH3
-        )
-    }
-
-    pub fn check_chemical_reaction(&self, mol1: ParticleType, mol2: ParticleType) -> Option<Vec<ParticleType>> {
-        // Simple chemical reaction network
-        match (mol1, mol2) {
-            // Combustion reactions
-            (ParticleType::CH4, ParticleType::H2O) | (ParticleType::H2O, ParticleType::CH4) => {
-                // CH₄ + H₂O → CO + 3H₂ (steam reforming)
-                Some(vec![ParticleType::CO2, ParticleType::H2, ParticleType::H2])
-            },
-            // Photosynthesis-like reaction (simplified)
-            (ParticleType::CO2, ParticleType::H2O) | (ParticleType::H2O, ParticleType::CO2) => {
-                // CO₂ + H₂O → CH₄ + O₂ (simplified)
-                Some(vec![ParticleType::CH4, ParticleType::H2O])
-            },
-            _ => None,
-        }
-    }
-
-    fn execute_chemical_reaction(&mut self, mol1_idx: usize, mol2_idx: usize, products: Vec<ParticleType>) -> Result<()> {
-        if mol1_idx >= self.particles.len() || mol2_idx >= self.particles.len() {
-            return Ok(());
-        }
-        
-        // Get reaction center position
-        let reaction_position = (self.particles[mol1_idx].position + self.particles[mol2_idx].position) * 0.5;
-        
-        // Create product molecules
-        for product_type in products {
-            let mass = self.get_particle_mass(product_type);
-            let momentum = self.sample_thermal_momentum(product_type, self.temperature);
-            
-            let product = FundamentalParticle {
-                particle_type: product_type,
-                position: reaction_position + Vector3::new(
-                    (rand::random::<f64>() - 0.5) * 1e-10,
-                    (rand::random::<f64>() - 0.5) * 1e-10,
-                    (rand::random::<f64>() - 0.5) * 1e-10,
-                ), // Small random displacement
-                momentum,
-                spin: Vector3::zeros(),
-                color_charge: None,
-                electric_charge: 0.0,
-                mass,
-                energy: (mass * mass * C_SQUARED * C_SQUARED + momentum.norm_squared() * C_SQUARED).sqrt(),
-                creation_time: self.current_time,
-                decay_time: None,
-                quantum_state: QuantumState::new(),
-                interaction_history: Vec::new(),
-                velocity: Vector3::zeros(),
-                charge: 0.0,
-            };
-            
-            self.particles.push(product);
-        }
-        
-        // Remove reactant molecules (in reverse order to maintain indices)
-        let mut indices = vec![mol1_idx, mol2_idx];
-        indices.sort_unstable();
-        indices.reverse();
-        
-        for &idx in &indices {
-            if idx < self.particles.len() {
-                self.particles.swap_remove(idx);
-            }
-        }
-        
-        Ok(())
-    }
-    fn process_phase_transitions(&mut self) -> Result<()> {
-        use crate::phase_transitions::*;
-        use crate::emergent_properties::{Temperature, Pressure, Density};
-        
-        // Process phase transitions for each material at current temperature and pressure
-        let pressure = self.calculate_system_pressure();
-        
-        // Calculate density for phase determination
-        let total_mass = self.particles.iter().map(|p| p.mass).sum::<f64>();
-        let density = total_mass / self.volume.max(1e-50);
-        
-        // Check for phase transitions in hydrogen (dominant in early universe)
-        let temp = Temperature::from_kelvin(self.temperature);
-        let pres = Pressure::from_pascals(pressure);
-        let dens = Density::from_kg_per_m3(density);
-        
-        if let Ok(hydrogen_phase) = evaluate_phase_transitions("hydrogen", temp, pres, dens) {
-            // Log phase information (simplified for now)
-            if self.particles.len() > 1000 {
-                log::debug!("Phase transitions: H2 = {:?}, T = {:.2e}K, P = {:.2e}Pa", 
-                           hydrogen_phase, self.temperature, pressure);
-            }
-        }
-        
-        Ok(())
-    }
-    fn update_emergent_properties(&mut self, states: &mut [PhysicsState]) -> Result<()> {
-        use crate::emergent_properties::*;
-        
-        // Calculate emergent statistical mechanics properties
-        let mut monitor = EmergenceMonitor::new();
-        
-        // Update emergent properties from classical states (if any)
-        if !states.is_empty() {
-            monitor.update(states, self.volume)?;
-            
-            // Update engine state with calculated values
-            let calculated_temp = monitor.temperature.as_kelvin();
-            if calculated_temp > 0.0 {
-                self.temperature = calculated_temp;
-            }
-            
-            // Log emergent properties for debugging
-            log::trace!("Emergent properties: T = {:.2e}K, P = {:.2e}Pa, ρ = {:.2e}kg/m³, S = {:.2e}J/K", 
-                       monitor.temperature.as_kelvin(),
-                       monitor.pressure.as_pascals(),
-                       monitor.density.as_kg_per_m3(),
-                       monitor.entropy.as_joules_per_kelvin());
-        } else {
-            // If no classical states, calculate basic properties from particles
-            if !self.particles.is_empty() {
-                let total_mass = self.particles.iter().map(|p| p.mass).sum::<f64>();
-                let density = total_mass / self.volume.max(1e-50);
-                
-                log::trace!("Basic properties from particles: N = {}, ρ = {:.2e}kg/m³, T = {:.2e}K", 
-                           self.particles.len(), density, self.temperature);
-            }
-        }
-        
-        Ok(())
-    }
-    #[allow(dead_code)]
-    fn update_running_couplings(&mut self, _states: &mut [PhysicsState]) -> Result<()> {
-        // -------------------------------------------------------------------
-        // 1. Renormalisation scale Q taken as average thermal energy k_B T.
-        // -------------------------------------------------------------------
-        const J_PER_GEV: f64 = 1.602_176_634e-10; // exact CODATA 2022 factor
-        let q_gev = (BOLTZMANN * self.temperature / J_PER_GEV).max(1.0e-3); // ≥1 MeV
-        self.running_couplings.scale_gev = q_gev;
-
-        // -------------------------------------------------------------------
-        // 2. QED: one-loop running of α.
-        // -------------------------------------------------------------------
-        let alpha0 = FINE_STRUCTURE_CONSTANT;
-        let gev_per_kg = SPEED_OF_LIGHT * SPEED_OF_LIGHT / J_PER_GEV; // E=mc²
-        let lepton_masses_gev = [ELECTRON_MASS, MUON_MASS, TAU_MASS].map(|m| m * gev_per_kg);
-
-        let mut delta_alpha = 0.0;
-        for m in lepton_masses_gev {
-            if q_gev > m {
-                delta_alpha += (q_gev * q_gev / (m * m)).ln();
-            }
-        }
-
-        self.running_couplings.alpha_em = if delta_alpha > 0.0 {
-            let correction = (alpha0 / (3.0 * std::f64::consts::PI)) * delta_alpha;
-            alpha0 / (1.0 - correction)
-        } else {
-            alpha0
-        };
-        self.interaction_matrix
-            .set_electromagnetic_coupling(self.running_couplings.alpha_em);
-
-        // -------------------------------------------------------------------
-        // 3. QCD: one-loop running of αₛ.
-        // -------------------------------------------------------------------
-        const LAMBDA_QCD: f64 = 0.2; // GeV (MS-bar)
-        let n_f = if q_gev < 1.27 {
-            3.0 // u, d, s
-        } else if q_gev < 4.18 {
-            4.0 // + c
-        } else if q_gev < 173.0 {
-            5.0 // + b
-        } else {
-            6.0 // + t
-        };
-        let beta0 = 11.0 - (2.0 / 3.0) * n_f;
-        if q_gev > LAMBDA_QCD {
-            self.running_couplings.alpha_s =
-                4.0 * std::f64::consts::PI / (beta0 * (q_gev * q_gev / (LAMBDA_QCD * LAMBDA_QCD)).ln());
-        }
-        self.interaction_matrix
-            .set_strong_coupling(self.running_couplings.alpha_s);
-
-        Ok(())
-    }
-    #[allow(dead_code)]
-    fn check_symmetry_breaking(&mut self) -> Result<()> {
-        // Electroweak crossover occurs at T_c ≈ 159 GeV ≈ 1.85×10¹⁵ K.
-        const T_EW_C: f64 = 1.85e15; // K
-
-        if self.temperature < T_EW_C {
-            // Universe cooled below critical temperature → Higgs field should
-            // acquire its vacuum expectation value and give masses to W/Z.
-            self.symmetry_breaking.initialize_higgs_mechanism()?;
-        }
-        Ok(())
-    }
-    #[allow(dead_code)]
-    fn update_spacetime_curvature(&mut self) -> Result<()> {
-        // Friedmann–Lemaître first equation (k=0)  H² = (8πG/3) ρ.
-        use crate::constants::{GRAVITATIONAL_CONSTANT, SPEED_OF_LIGHT, PROTON_MASS};
-
-        // Mass from fundamental particles.
-        let particle_mass: f64 = self.particles.iter().map(|p| p.mass).sum();
-
-        // Mass from nuclei — approximate by A × m_p.
-        let nuclear_mass: f64 = self
-            .nuclei
-            .iter()
-            .map(|n| n.mass_number as f64 * PROTON_MASS)
-            .sum();
-
-        let total_mass = particle_mass + nuclear_mass;
-        let rho = if self.volume > 0.0 {
-            total_mass / self.volume
-        } else {
-            0.0
-        };
-
-        let h_squared = (8.0 * std::f64::consts::PI * GRAVITATIONAL_CONSTANT * rho) / 3.0;
-        let hubble = h_squared.max(0.0).sqrt();
-        let curvature_radius = if hubble > 0.0 {
-            SPEED_OF_LIGHT / hubble
-        } else {
-            f64::INFINITY
-        };
-
-        log::trace!(
-            "Spacetime curvature: ρ={:.3e} kg/m³  H={:.3e} s⁻¹  R_c={:.3e} m",
-            rho, hubble, curvature_radius
-        );
-        Ok(())
-    }
-    #[allow(dead_code)]
-    fn update_thermodynamic_state(&mut self) -> Result<()> {
-        // Update temperature based on particle kinetic energies
-        self.update_temperature()?;
-        Ok(())
-    }
-    
-    #[allow(dead_code)]
-    fn evolve_quantum_state(&mut self) -> Result<()> {
-        // Placeholder for quantum evolution
-        // In a full implementation, this would solve the Schrödinger/Dirac equation
-        Ok(())
-    }
-    
-    /// Update temperature based on particle energies
-    fn update_temperature(&mut self) -> Result<()> {
-        // More sophisticated calculation based on particle kin. energy
-        self.temperature = self.particles.iter().map(|p| p.energy).sum::<f64>() / (self.particles.len() as f64 * BOLTZMANN);
-        Ok(())
-    }
-
-    /// Calculates the total system pressure from all particles.
-    /// P = (1/3V) * Σ (p_i^2 * c^2) / E_i
-    pub fn calculate_system_pressure(&self) -> f64 {
-        if self.volume <= 0.0 {
-            return 0.0;
-        }
-
-        let mut pressure_sum = 0.0;
-        let c_squared = SPEED_OF_LIGHT.powi(2);
-
-        for p in &self.particles {
-            if p.energy > 0.0 {
-                let momentum_squared = p.momentum.norm_squared();
-                // Pressure contribution is (p^2 * c^2) / (3 * E_total)
-                pressure_sum += (momentum_squared * c_squared) / (3.0 * p.energy);
-            }
-        }
-        
-        // Pressure is the sum of contributions divided by volume
-        pressure_sum / self.volume
-    }
-
-    /// Calculate the Q-value (energy released) for a fission reaction
-    fn calculate_fission_q_value(&self, parent_z: u32, parent_a: u32) -> Result<f64> {
-        use crate::nuclear_physics::Nucleus;
-        
-        // Calculate binding energies using Semi-Empirical Mass Formula
-        let parent_nucleus = Nucleus::new(parent_z, parent_a - parent_z);
-        let parent_binding_energy = parent_nucleus.binding_energy();
-        
-        // For binary fission, estimate fragment masses
-        let fragment1_a = parent_a / 2;
-        let fragment2_a = parent_a - fragment1_a - 2; // Assume 2 neutrons are emitted
-        
-        // Estimate Z distribution using charge asymmetry (Wahl systematics)
-        let fragment1_z = (parent_z * fragment1_a) / parent_a;
-        let fragment2_z = parent_z - fragment1_z;
-        
-        let fragment1_nucleus = Nucleus::new(fragment1_z, fragment1_a - fragment1_z);
-        let fragment2_nucleus = Nucleus::new(fragment2_z, fragment2_a - fragment2_z);
-        
-        let fragment1_binding_energy = fragment1_nucleus.binding_energy();
-        let fragment2_binding_energy = fragment2_nucleus.binding_energy();
-        
-        // Q-value = Energy released = difference in binding energies
-        let q_value = (fragment1_binding_energy + fragment2_binding_energy) - parent_binding_energy;
-        
-        // Convert from MeV to Joules
-        Ok(q_value * 1.602e-13) // MeV to Joules
-    }
-    
-    /// Distribute fission energy among products (fragments + neutrons)
-    fn distribute_fission_energy(&mut self, q_value: f64, _z1: u32, _a1: u32, _z2: u32, _a2: u32, position: &Vector3<f64>) -> Result<()> {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        
-        // Energy distribution: ~80% to kinetic energy of fragments, ~20% to neutrons
-        let fragment_kinetic_energy = q_value * 0.8;
-        let neutron_kinetic_energy = q_value * 0.2;
-        
-        // Fragment recoil energies (assuming two fragments with momentum conservation)
-        let _fragment1_energy = fragment_kinetic_energy * 0.5;
-        let _fragment2_energy = fragment_kinetic_energy * 0.5;
-        
-        // Update system energy
-        self.energy_density += q_value / self.volume;
-        
-        // Add kinetic energy to newly created neutrons
-        let neutron_count = self.particles.iter().filter(|p| 
-            matches!(p.particle_type, ParticleType::Neutron) && 
-            (p.position - position).norm() < 1e-12 // Recently created at fission site
-        ).count();
-        
-        if neutron_count > 0 {
-            let energy_per_neutron = neutron_kinetic_energy / neutron_count as f64;
-            
-            for particle in &mut self.particles {
-                if matches!(particle.particle_type, ParticleType::Neutron) && 
-                   (particle.position - position).norm() < 1e-12 {
-                    // Add kinetic energy by increasing momentum
-                    let additional_momentum_magnitude = (2.0 * energy_per_neutron * particle.mass).sqrt();
-                    
-                    // Random direction for neutron emission
-                    let theta = rng.gen::<f64>() * 2.0 * std::f64::consts::PI;
-                    let phi = rng.gen::<f64>() * std::f64::consts::PI;
-                    
-                    let additional_momentum = Vector3::new(
-                        additional_momentum_magnitude * phi.sin() * theta.cos(),
-                        additional_momentum_magnitude * phi.sin() * theta.sin(),
-                        additional_momentum_magnitude * phi.cos(),
-                    );
-                    
-                    particle.momentum += additional_momentum;
-                    particle.energy = (particle.mass*particle.mass*C_SQUARED*C_SQUARED + 
-                                     particle.momentum.norm_squared() * C_SQUARED).sqrt();
-                }
-            }
-        }
-        
-        log::debug!("Fission energy distribution: Q = {:.2e} J, fragments = {:.2e} J, neutrons = {:.2e} J", 
-                    q_value, fragment_kinetic_energy, neutron_kinetic_energy);
-        
-        Ok(())
-    }
-
-    /// Determine local material composition for Geant4
-    fn determine_local_material(&self, position: &Vector3<f64>) -> String {
-        "Vacuum".to_string()
-    }
-
-    /// Validate conservation laws (energy, momentum, charge) - placeholder implementation
-    fn validate_conservation_laws(&self) -> Result<()> {
-
-        // Net charge should remain (approximately) conserved.
-        let total_charge_c: f64 = self.particles.iter().map(|p| p.electric_charge).sum();
-        if total_charge_c.abs() > 1e-9 { // 1 nC tolerance
-            log::warn!("⚠️  Charge non-conservation detected: Σq = {:.3e} C", total_charge_c);
-        }
-
-        // Momentum conservation – compute vector sum.
-        let total_momentum = self
-            .particles
-            .iter()
-            .fold(Vector3::zeros(), |acc, p| acc + p.momentum);
-        if total_momentum.norm() > 1e-6 {
-            log::warn!(
-                "⚠️  Momentum non-conservation |Σp| = {:.3e} kg·m/s",
-                total_momentum.norm()
-            );
-        }
-
-        // Energy should be positive definite.
-        let total_energy: f64 = self.particles.iter().map(|p| p.energy).sum();
-        if total_energy < 0.0 {
-            anyhow::bail!("Negative total energy detected: {:.3e} J", total_energy);
         }
 
         Ok(())
     }
 
-    /// Process a single particle's native interactions when Geant4 fails (placeholder)
-    fn process_particle_native_interaction(&mut self, _index: usize) -> Result<()> {
-        // For now, simply ignore and continue.
-        Ok(())
-    }
-
-    /// Update gravitational forces in absence of GADGET - placeholder
+    /// Update gravitational forces using Barnes-Hut tree algorithm
     fn update_gravitational_forces(&mut self) -> Result<()> {
-        // Parallel pairwise Newtonian gravity (still O(N²) but multi-core).
-        let g_const = 6.67430e-11;
+        // Barnes-Hut tree algorithm for O(N log N) gravitational force calculation
         let timer = Instant::now();
         log::debug!(
-            "[gravity] Computing Newtonian forces for {} particles on {} threads",
+            "[gravity] Computing Barnes-Hut forces for {} particles on {} threads",
             self.particles.len(),
             rayon::current_num_threads()
         );
 
-        // Build lightweight snapshots of immutable particle properties to avoid heavy cloning.
+        if self.particles.is_empty() {
+            return Ok(());
+        }
+
+        // Extract particle data for Barnes-Hut tree
         let positions: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.position).collect();
         let masses: Vec<f64> = self.particles.iter().map(|p| p.mass).collect();
-        let velocities: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.velocity).collect();
 
-        let particle_count = positions.len();
-
-        // Compute net force on each particle in parallel.
-        let forces: Vec<Vector3<f64>> = (0..particle_count)
-            .into_par_iter()
-            .map(|i| {
-                let mut force = Vector3::zeros();
-                let pos_i = positions[i];
-                let mass_i = masses[i];
-                let vel_i = velocities[i];
-                for j in 0..particle_count {
-                    if i == j { continue; }
-                    let dir = positions[j] - pos_i;
-                    let dist_sq = dir.norm_squared().max(1e-12);
-                    let distance = dist_sq.sqrt();
-                    
-                    // Newtonian force
-                    let f_mag = g_const * mass_i * masses[j] / dist_sq;
-                    let newtonian_force = dir.normalize() * f_mag;
-                    
-                    // Add post-Newtonian correction for massive objects
-                    if general_relativity::requires_relativistic_treatment(mass_i, vel_i.norm(), distance) ||
-                       general_relativity::requires_relativistic_treatment(masses[j], velocities[j].norm(), distance) {
-                        let pn_correction = general_relativity::post_newtonian_force_correction(
-                            mass_i, masses[j], distance,
-                            [vel_i.x, vel_i.y, vel_i.z],
-                            [velocities[j].x, velocities[j].y, velocities[j].z]
-                        );
-                        let pn_force = Vector3::new(pn_correction[0], pn_correction[1], pn_correction[2]);
-                        force += newtonian_force + pn_force;
-                    } else {
-                        force += newtonian_force;
-                    }
-                }
-                force
-            })
-            .collect();
-
-        // Apply accelerations sequentially (acc = F / m).
-        for (i, force) in forces.into_iter().enumerate() {
-            if i < self.particles.len() {
-                let mass = self.particles[i].mass;
-                if mass > 0.0 {
-                    let acceleration = force / mass;
-                    // Store as instantaneous velocity increment for now.
-                    self.particles[i].velocity += acceleration * self.time_step;
-                }
+        // Calculate bounding box for all particles
+        let mut min_pos = positions[0];
+        let mut max_pos = positions[0];
+        
+        for pos in &positions {
+            for i in 0..3 {
+                min_pos[i] = min_pos[i].min(pos[i]);
+                max_pos[i] = max_pos[i].max(pos[i]);
             }
         }
-
+        
+        // Expand bounding box slightly and make it cubic
+        let size = (max_pos - min_pos).max() * 1.1;
+        let center = (min_pos + max_pos) * 0.5;
+        let half_dimension = Vector3::new(size * 0.5, size * 0.5, size * 0.5);
+        
+        // Create Barnes-Hut tree with GADGET parameters
+        let boundary = octree::AABB::new(center, half_dimension);
+        let mut barnes_hut_tree = octree::Octree::new_barnes_hut(
+            boundary,
+            self.force_accuracy,  // Use GADGET's θ parameter
+            general_relativity::G  // Use GADGET's gravitational constant
+        );
+        
+        // Build the Barnes-Hut tree
+        barnes_hut_tree.build_tree(&positions, &masses)?;
+        
+        // Compute forces using Barnes-Hut algorithm (parallel)
+        let forces = barnes_hut_tree.compute_gravitational_forces_parallel(
+            &positions, 
+            &masses, 
+            self.softening_length  // Use GADGET's softening length
+        );
+        
+        // Apply forces to update accelerations
+        for (i, force) in forces.into_iter().enumerate() {
+            if self.particles[i].mass > 1e-12 {
+                self.particles[i].acceleration = force / self.particles[i].mass;
+            }
+        }
+        
+        // Log performance statistics
+        let tree_stats = barnes_hut_tree.get_stats();
         log::debug!(
-            "[gravity] Force computation + application completed in {:.3?}",
+            "[gravity] Barnes-Hut force computation completed in {:.3?}",
             timer.elapsed()
         );
+        log::debug!(
+            "[gravity] Tree stats: {} nodes, {} leaves, depth {}, {} particles",
+            tree_stats.total_nodes,
+            tree_stats.leaf_nodes,
+            tree_stats.max_depth,
+            tree_stats.total_particles
+        );
+        
         Ok(())
     }
-    
-    /// Simple local density estimator used by step-length heuristic.
-    fn calculate_local_density_legacy(&self, _position: &Vector3<f64>) -> f64 {
-        // Placeholder: uniform density estimate to unblock compilation.
-        if self.volume > 0.0 {
-            self.particles.len() as f64 * self.get_particle_mass(ParticleType::Proton) / self.volume
-        } else {
-            0.0
-        }
-    }
 
-    fn calculate_mm_region_energy_legacy(&self, atoms: &[crate::Atom]) -> Result<f64> {
-        // Estimate total quantum energy of the QM region.
-        // --------------------------------------------------------------------
-        // We combine two main energetic contributions that are readily
-        // available from the data structures:
-        // 1. Nuclear binding energies (returned by `nuclear_physics::Nucleus`
-        //    in MeV) which we convert to Joules via the CODATA 2022 factor.
-        // 2. Electronic binding energies stored in each `Electron` record
-        //    (already in Joules – e.g. −13.6 eV ≈ −2.18 × 10⁻¹⁸ J for H(1s)).
-        // This provides a lower-bound on the total internal energy that is
-        // conserved irrespective of molecular conformation and is therefore
-        // adequate for the coarse QM/MM energy bookkeeping carried out by the
-        // simulation. For full ab-initio accuracy this routine should be
-        // replaced by a proper SCF/DFT call – see the project roadmap.
-        // --------------------------------------------------------------------
-        const MEV_TO_J: f64 = 1.602_176_634e-13; // exact conversion (J/MeV)
-
-        let mut total_energy_j = 0.0_f64;
-
-        for atom in atoms {
-            // 1. Nuclear contribution (MeV ➜ J)
-            total_energy_j += atom.nucleus.binding_energy * MEV_TO_J;
-
-            // 2. Electronic contribution (already in Joules)
-            for elec in &atom.electrons {
-                total_energy_j += elec.binding_energy;
-            }
-        }
-
-        Ok(total_energy_j)
-    }
-
-    fn calculate_qm_mm_interaction(&self, qm: &[crate::Atom], mm: &[crate::Atom]) -> Result<f64> {
-        let interaction_energy = 0.0;
-        for qm_atom in qm {
-            for mm_atom in mm {
-                let distance = (qm_atom.position - mm_atom.position).norm();
-                if distance > 1e-9 {
-                    // The line below is commented out due to a signature mismatch that requires a larger refactor.
-                    // interaction_energy += self.quantum_chemistry_engine.van_der_waals_energy(
-                    //     qm_atom,
-                    //     mm_atom,
-                    //     distance,
-                    // )?;
-                }
-            }
-        }
-        Ok(interaction_energy)
-    }
-
-    /// Approximate ground-state electronic energy (J) for an isolated atom.
-    ///
-    /// Ground-state electronic energy estimate for an isolated atom.
-    ///
-    /// We use the simple hydrogenic model 𝐸 = −Z² R_H (in eV) and convert to Joules.
-    /// Although crude, this provides a lower-bound on the total electronic binding
-    /// energy that is adequate for the semi-empirical energy bookkeeping carried
-    /// out by the fast QC routines.
-    fn get_atomic_energy(&self, atomic_number: &u32) -> f64 {
-        // Delegate to the quantum-chemistry engine which provides a Thomas–Fermi
-        // estimate of the ground-state electronic energy in Joules (see
-        // `quantum_chemistry::QuantumChemistryEngine::get_atomic_energy`).  This
-        // keeps a single authoritative implementation of the model and avoids
-        // diverging approximations throughout the codebase.
-        self.quantum_chemistry_engine.get_atomic_energy(atomic_number)
-    }
-
-    /// Empirical bond-dissociation energy (approximate) returned in Joules per bond.
-    /// Values are based on typical gas-phase bond energies at 298 K.
-    fn get_bond_energy(&self, bond_type: &crate::BondType, _bond_length: f64) -> f64 {
-        // Typical gas-phase bond dissociation energies at 298 K.
-        // Source: CRC Handbook of Chemistry & Physics (103rd edition). Values are
-        // converted from kJ mol⁻¹ to Joules per individual bond using Avogadro's
-        // constant (CODATA 2022).
-        const AVOGADRO: f64 = 6.022_140_76e23; // mol⁻¹
-        let kj_per_mol_to_j_per_bond = 1_000.0 / AVOGADRO;
-
-        match bond_type {
-            crate::BondType::Covalent      => 350.0 * kj_per_mol_to_j_per_bond, // C–C single ≈ 348
-            crate::BondType::Ionic         => 400.0 * kj_per_mol_to_j_per_bond, // Na–Cl ≈ 411
-            crate::BondType::Metallic      => 200.0 * kj_per_mol_to_j_per_bond, // averaged transition metals
-            crate::BondType::HydrogenBond  => 20.0  * kj_per_mol_to_j_per_bond, // O–H···O in water
-            crate::BondType::VanDerWaals   => 2.0   * kj_per_mol_to_j_per_bond, // Dispersion interactions
-        }
-    }
-
-    /// Return true if atoms with indices `i` and `j` share a chemical bond in `molecule`.
-    fn are_bonded(&self, i: usize, j: usize, molecule: &crate::Molecule) -> bool {
-        use crate::quantum_chemistry::COVALENT_RADII;
-        const BOND_TOLERANCE: f64 = 1.20; // Allow up to 20 % stretch/compression.
-
-        if i >= molecule.atoms.len() || j >= molecule.atoms.len() { return false; }
-        let atom_i = &molecule.atoms[i];
-        let atom_j = &molecule.atoms[j];
-
-        // Calculate inter-nuclear distance.
-        let distance = (atom_i.position - atom_j.position).norm();
-
-        // Retrieve covalent radii (fallback ≈ 70 pm if unknown).
-        let default_radius = 70e-12; // metres
-        let r_i = COVALENT_RADII
-            .get(&atom_i.get_particle_type())
-            .copied()
-            .unwrap_or(default_radius);
-        let r_j = COVALENT_RADII
-            .get(&atom_j.get_particle_type())
-            .copied()
-            .unwrap_or(default_radius);
-
-        distance < (r_i + r_j) * BOND_TOLERANCE
-    }
-
-    /// Lennard-Jones 12-6 potential (dispersion + Pauli repulsion) for a pair of atoms.
-    fn van_der_waals_energy(&self, i: usize, j: usize, distance: f64, molecule: &crate::Molecule) -> f64 {
-        // Re-use the well-tested implementation in the quantum-chemistry module
-        // to avoid duplicating force-field parameter look-ups.
-        self.quantum_chemistry_engine
-            .van_der_waals_energy(i, j, distance, molecule)
-    }
-
-    // Geant4 interaction bridge removed - now using native Rust particle transport
-
-    /// Convenience constructor for a `FundamentalParticle` with minimal initial information. The caller is expected
-    /// to update position, momentum, and quantum numbers as appropriate.
+    /// Convenience constructor for a `FundamentalParticle` with minimal initial information
     fn create_particle_from_type(&self, particle_type: ParticleType) -> Result<FundamentalParticle> {
         let mass = self.get_particle_mass(particle_type);
         Ok(FundamentalParticle {
@@ -3231,283 +2103,38 @@ impl PhysicsEngine {
             interaction_history: Vec::new(),
             velocity: Vector3::zeros(),
             charge: self.get_electric_charge(particle_type),
+            acceleration: Vector3::zeros(),
         })
     }
 
-    pub fn calculate_qm_region_energy(&self, atoms: &[crate::Atom]) -> Result<f64> {
-        // Estimate total quantum energy of the QM region.
-        // --------------------------------------------------------------------
-        // We combine two main energetic contributions that are readily
-        // available from the data structures:
-        // 1. Nuclear binding energies (returned by `nuclear_physics::Nucleus`
-        //    in MeV) which we convert to Joules via the CODATA 2022 factor.
-        // 2. Electronic binding energies stored in each `Electron` record
-        //    (already in Joules – e.g. −13.6 eV ≈ −2.18 × 10⁻¹⁸ J for H(1s)).
-        // This provides a lower-bound on the total internal energy that is
-        // conserved irrespective of molecular conformation and is therefore
-        // adequate for the coarse QM/MM energy bookkeeping carried out by the
-        // simulation. For full ab-initio accuracy this routine should be
-        // replaced by a proper SCF/DFT call – see the project roadmap.
-        // --------------------------------------------------------------------
-        const MEV_TO_J: f64 = 1.602_176_634e-13; // exact conversion (J/MeV)
-
-        let mut total_energy_j = 0.0_f64;
-
-        for atom in atoms {
-            // 1. Nuclear contribution (MeV ➜ J)
-            total_energy_j += atom.nucleus.binding_energy * MEV_TO_J;
-
-            // 2. Electronic contribution (already in Joules)
-            for elec in &atom.electrons {
-                total_energy_j += elec.binding_energy;
-            }
-        }
-
-        Ok(total_energy_j)
+    /// Get read-only access to particles for rendering
+    pub fn get_particles(&self) -> &[FundamentalParticle] {
+        &self.particles
     }
 
-    /// Apply comprehensive cosmological expansion effects following ΛCDM model with full Friedmann equations
-    fn apply_cosmological_expansion_to_particles(&mut self, dt: f64) -> Result<()> {
-        use crate::constants::{GRAVITATIONAL_CONSTANT, SPEED_OF_LIGHT};
-        use crate::gadget_gravity::CosmologicalParameters;
-        
-        // Create default cosmological parameters (Planck 2018 values)
-        let params = CosmologicalParameters::default();
-        
-        // Calculate current cosmic age and scale factor using proper ΛCDM evolution
-        let current_age_seconds = self.current_time;
-        let current_age_gyr = current_age_seconds / (365.25 * 24.0 * 3600.0 * 1e9);
-        
-        // Solve for scale factor a(t) using Friedmann equation for ΛCDM cosmology
-        let a = self.calculate_scale_factor_from_time(&params, current_age_seconds);
-        
-        // Convert H₀ to SI units (s⁻¹)
-        let h0_si = params.hubble_constant * 1000.0 / 3.086e22;
-        
-        // Calculate Hubble parameter H(a) = H₀ * E(a) where E(a) = sqrt(Ωᵣ/a⁴ + Ωₘ/a³ + Ωₖ/a² + ΩΛ)
-        let omega_r = 9.24e-5; // Radiation density parameter (photons + neutrinos)
-        let hubble_parameter_si = h0_si * (
-            omega_r / a.powi(4) + 
-            params.omega_matter / a.powi(3) + 
-            params.omega_lambda
-        ).sqrt();
-        
-        // Scale factor evolution rate: da/dt = H(a) * a
-        let daddt = hubble_parameter_si * a;
-        let expansion_rate = daddt / a; // H(t) in SI units
-        
-        // Apply comprehensive cosmological effects to all particles
-        for particle in &mut self.particles {
-            // Apply Hubble flow: v_hubble = H(t) * r
-            let hubble_velocity = particle.position * expansion_rate;
-            particle.velocity += hubble_velocity * dt;
-            
-            // Apply cosmological redshift effects based on particle type
-            match particle.particle_type {
-                ParticleType::Photon => {
-                    // Photons: energy redshift E ∝ 1/a, frequency redshift ν ∝ 1/a
-                    let energy_loss_rate = expansion_rate;
-                    particle.energy *= (1.0f64 - energy_loss_rate * dt).max(1e-100);
-                    
-                    // Maintain E = pc for massless photons
-                    let p_magnitude = particle.energy / SPEED_OF_LIGHT;
-                    if particle.momentum.magnitude() > 1e-100 {
-                        particle.momentum = particle.momentum.normalize() * p_magnitude;
-                    }
-                }
-                
-                // Massive particles: momentum redshift p ∝ 1/a, temperature cooling
-                _ => {
-                    // Momentum decreases as universe expands: p ∝ 1/a
-                    particle.momentum *= (1.0f64 - expansion_rate * dt).max(0.01);
-                    
-                    // Update kinetic energy and velocity using relativistic relations
-                    let p_magnitude = particle.momentum.magnitude();
-                    if p_magnitude > 1e-100 && particle.mass > 1e-100 {
-                        // Relativistic energy-momentum relation: E² = (pc)² + (mc²)²
-                        let rest_energy = particle.mass * C_SQUARED;
-                        let total_energy = (rest_energy.powi(2) + (p_magnitude * SPEED_OF_LIGHT).powi(2)).sqrt();
-                        let gamma = total_energy / rest_energy;
-                        let velocity_magnitude = p_magnitude / (gamma * particle.mass);
-                        
-                        // Update particle velocity maintaining momentum direction
-                        if particle.momentum.magnitude() > 1e-100 {
-                            particle.velocity = particle.momentum.normalize() * velocity_magnitude;
-                        }
-                        
-                        particle.energy = total_energy;
-                    }
-                }
-            }
-        }
-        
-        // Update global thermodynamic properties
-        self.volume *= (1.0f64 + expansion_rate * dt).powi(3); // Volume scales as a³
-        self.temperature *= 1.0 - expansion_rate * dt; // Adiabatic cooling: T ∝ 1/a
-        
-        // Calculate critical density and component energy densities
-        let critical_density = 3.0 * hubble_parameter_si.powi(2) / (8.0 * std::f64::consts::PI * GRAVITATIONAL_CONSTANT);
-        
-        // Energy density evolution for different components
-        let matter_density_scale = (1.0f64 - expansion_rate * dt).powi(3);     // ρₘ ∝ a⁻³
-        let radiation_density_scale = (1.0f64 - expansion_rate * dt).powi(4);   // ρᵣ ∝ a⁻⁴
-        
-        let matter_energy_density = params.omega_matter * critical_density * matter_density_scale;
-        let radiation_energy_density = omega_r * critical_density * radiation_density_scale;
-        let dark_energy_density = params.omega_lambda * critical_density; // Constant ρΛ
-        
-        self.energy_density = matter_energy_density + radiation_energy_density + dark_energy_density;
-        
-        // Log cosmological expansion status periodically
-        if self.current_time.rem_euclid(1e9) < dt {
-            log::debug!(
-                "Cosmological expansion: age={:.2} Gyr, a={:.6}, H={:.2e} s⁻¹, T={:.1} K, ρ={:.2e} J/m³",
-                current_age_gyr, a, hubble_parameter_si, self.temperature, self.energy_density
-            );
-        }
-        
-        Ok(())
-    }
-    
-    /// Calculate scale factor a(t) from cosmic time using ΛCDM model
-    fn calculate_scale_factor_from_time(&self, params: &crate::gadget_gravity::CosmologicalParameters, time_seconds: f64) -> f64 {
-        let h0_si = params.hubble_constant * 1000.0 / 3.086e22; // Convert to SI units
-        
-        if params.omega_lambda.abs() < 1e-6 {
-            // Matter-dominated universe: a(t) ∝ t^(2/3)
-            let t0 = 2.0 / (3.0 * h0_si); // Age at a=1
-            (time_seconds / t0).powf(2.0/3.0).max(0.001)
-        } else {
-            // ΛCDM universe with dark energy
-            let omega_m_over_lambda = params.omega_matter / params.omega_lambda;
-            let h_lambda = h0_si * params.omega_lambda.sqrt();
-            
-            // Parametric solution: t = (2/(3H_Λ)) * sinh⁻¹(√(Ω_Λ/Ω_m) * a^(3/2))
-            let x = 1.5 * h_lambda * time_seconds;
-            let y = x.sinh();
-            let a_cubed_half = y / omega_m_over_lambda.sqrt();
-            a_cubed_half.powf(2.0/3.0).max(0.001)
-        }
-    }
-
-    /// Process gravitational collapse and sink particle formation
-    pub fn process_gravitational_collapse(&mut self) -> Result<()> {
-        // Convert particles to SPH particles for collapse detection
-        let mut sph_particles = self.sph_solver.convert_to_sph_particles(self.particles.clone());
-        
-        if sph_particles.is_empty() {
-            return Ok(());
-        }
-        
-        // Update SPH particle properties
-        self.sph_solver.compute_density(&mut sph_particles)?;
-        for particle in &mut sph_particles {
-            particle.update_eos();
-        }
-        
-        // Detect collapse regions
-        let collapse_regions = gravitational_collapse::detect_collapse_regions(&sph_particles, MEAN_MOLECULAR_WEIGHT);
-        
-        if !collapse_regions.is_empty() {
-            // Form new sink particles
-            let (new_sinks, particles_to_remove) = gravitational_collapse::form_sink_particles(
-                &sph_particles, 
-                collapse_regions, 
-                self.current_time, 
-                &mut self.next_sink_id
-            );
-            
-            // Add new sink particles
-            self.sink_particles.extend(new_sinks);
-            
-            // Remove particles that formed sinks (convert back to regular particles first)
-            let sph_particles_to_remove: Vec<SphParticle> = particles_to_remove.iter()
-                .map(|&i| sph_particles[i].clone())
-                .collect();
-            let regular_particles_to_remove: Vec<FundamentalParticle> = sph_particles_to_remove.iter()
-                .map(|sp| sp.particle.clone())
-                .collect();
-            
-            // Remove from main particle list
-            for particle_to_remove in regular_particles_to_remove {
-                if let Some(pos) = self.particles.iter().position(|p| 
-                    p.position == particle_to_remove.position && 
-                    p.particle_type == particle_to_remove.particle_type
-                ) {
-                    self.particles.remove(pos);
-                }
-            }
-            
-            info!("Formed {} new sink particles, removed {} gas particles", 
-                  self.sink_particles.len(), particles_to_remove.len());
-        }
-        
-        // Accrete gas onto existing sink particles
-        let accreted_particles = gravitational_collapse::accrete_onto_sinks(&mut sph_particles, &mut self.sink_particles);
-        
-        if !accreted_particles.is_empty() {
-            // Remove accreted particles from main particle list
-            let sph_particles_to_remove: Vec<SphParticle> = accreted_particles.iter()
-                .map(|&i| sph_particles[i].clone())
-                .collect();
-            let regular_particles_to_remove: Vec<FundamentalParticle> = sph_particles_to_remove.iter()
-                .map(|sp| sp.particle.clone())
-                .collect();
-            
-            for particle_to_remove in regular_particles_to_remove {
-                if let Some(pos) = self.particles.iter().position(|p| 
-                    p.position == particle_to_remove.position && 
-                    p.particle_type == particle_to_remove.particle_type
-                ) {
-                    self.particles.remove(pos);
-                }
-            }
-            
-            info!("Accreted {} particles onto {} sink particles", 
-                  accreted_particles.len(), self.sink_particles.len());
-        }
-        
+    /// Update the octree for spatial optimization
+    fn update_octree(&mut self) -> Result<()> {
+        // Convert particles to a format suitable for the octree
+        let particles: Vec<_> = self.particles.iter().map(|p| p.position).collect();
+        // Use a default bounding box for now (TODO: compute from particles)
+        let bounding_box = AABB::new(Vector3::zeros(), Vector3::new(1e-3, 1e-3, 1e-3));
+        // TODO: Implement octree update logic here
+        // self.octree.update_tree(&particles, &bounding_box)?;
         Ok(())
     }
 }
-    
-    /// Check if object should use relativistic treatment
-    /// Based on PDF guidance: use GR for high-mass or high-velocity scenarios
-    pub fn requires_relativistic_treatment(mass_kg: f64, velocity_ms: f64, radius_m: f64) -> bool {
-        let rs = schwarzschild_radius(mass_kg);
-        let velocity_fraction = velocity_ms / C;
-        
-        // Use relativistic treatment if:
-        // 1. Object is compact (r < 100 * Rs)
-        // 2. High velocity (v > 0.1c)
-        // 3. Strong field effects (Rs/r > 0.01)
-        radius_m < 100.0 * rs || velocity_fraction > 0.1 || (rs / radius_m) > 0.01
+
+impl Drop for PhysicsEngine {
+    fn drop(&mut self) {
+        // Clean up any resources
+        log::debug!("PhysicsEngine dropped");
     }
-    
-    /// Gravitational wave strain amplitude (simplified)
-    /// For inspiraling compact objects - advanced feature
-    pub fn gravitational_wave_strain(
-        mass1_kg: f64,
-        mass2_kg: f64,
-        separation_m: f64,
-        distance_m: f64,
-    ) -> f64 {
-        let total_mass = mass1_kg + mass2_kg;
-        let reduced_mass = (mass1_kg * mass2_kg) / total_mass;
-        let rs_total = schwarzschild_radius(total_mass);
-        
-        // Simplified quadrupole formula
-        let strain = (G / (C * C * C * C)) * (reduced_mass * rs_total) / 
-                    (separation_m * distance_m);
-        
-        strain.abs()
-    }
+}
 
 // Re-export AMR types for backward compatibility
 pub use adaptive_mesh_refinement::*;
 
 /// GADGET-style N-body gravity solver
-/// Based on PDF recommendation to use proven cosmological simulation algorithms
 pub mod gadget_gravity {
     use super::*;
     
@@ -3579,16 +2206,7 @@ pub mod gadget_gravity {
         /// Create new GADGET-style gravity solver with real cosmological parameters
         pub fn new(force_accuracy: f64, softening_length: f64, box_size: f64, cosmological: bool) -> Self {
             let cosmological_parameters = if cosmological {
-                CosmologicalParameters {
-                    hubble_constant: 67.4,      // Planck 2018 value
-                    omega_matter: 0.315,        // Matter density parameter
-                    omega_lambda: 0.685,        // Dark energy density parameter
-                    omega_baryon: 0.049,        // Baryon density parameter
-                    scale_factor: 1.0,          // Present day
-                    redshift: 0.0,              // Present day
-                    age_of_universe: 13.8,      // Gyr
-                    enable_expansion: true,
-                }
+                CosmologicalParameters::default()
             } else {
                 CosmologicalParameters {
                     hubble_constant: 0.0,
@@ -3617,7 +2235,7 @@ pub mod gadget_gravity {
             self.particles.push(particle);
         }
         
-        /// Calculate gravitational forces using proven GADGET algorithms
+        /// Calculate gravitational forces using Barnes-Hut tree algorithm
         pub fn calculate_forces(&mut self) -> Result<()> {
             if self.particles.is_empty() {
                 return Ok(());
@@ -3637,30 +2255,29 @@ pub mod gadget_gravity {
             // Expand bounding box slightly and make it cubic
             let size = (max_pos - min_pos).max() * 1.1;
             let center = (min_pos + max_pos) * 0.5;
+            let half_dimension = Vector3::new(size * 0.5, size * 0.5, size * 0.5);
             
-            // For now, use direct summation with Barnes-Hut placeholder
-            // TODO: Implement full Barnes-Hut tree when spatial module is refactored
-            let forces: Vec<Vector3<f64>> = (0..self.particles.len())
-                .into_par_iter()
-                .map(|i| {
-                    let mut total_force = Vector3::zeros();
-                    let p_i = &self.particles[i];
-                    for (j, p_j) in self.particles.iter().enumerate() {
-                        if i == j { continue; }
-                        let r_vec = p_j.position - p_i.position;
-                        let r = r_vec.magnitude();
-                        
-                        if r < 1e-15 { continue; }
-                        
-                        // GADGET-style softened gravity
-                        let softened_r = (r * r + self.softening_length * self.softening_length).sqrt();
-                        let force_magnitude = general_relativity::G * p_i.mass * p_j.mass / (softened_r * softened_r * softened_r);
-                        
-                        total_force += r_vec * force_magnitude;
-                    }
-                    total_force
-                })
-                .collect();
+            // Create Barnes-Hut tree with GADGET parameters
+            let boundary = octree::AABB::new(center, half_dimension);
+            let mut barnes_hut_tree = octree::Octree::new_barnes_hut(
+                boundary,
+                self.force_accuracy,  // Use GADGET's θ parameter
+                general_relativity::G  // Use GADGET's gravitational constant
+            );
+            
+            // Extract particle data for Barnes-Hut tree
+            let positions: Vec<Vector3<f64>> = self.particles.iter().map(|p| p.position).collect();
+            let masses: Vec<f64> = self.particles.iter().map(|p| p.mass).collect();
+            
+            // Build the Barnes-Hut tree
+            barnes_hut_tree.build_tree(&positions, &masses)?;
+            
+            // Compute forces using Barnes-Hut algorithm (parallel)
+            let forces = barnes_hut_tree.compute_gravitational_forces_parallel(
+                &positions, 
+                &masses, 
+                self.softening_length  // Use GADGET's softening length
+            );
             
             // Apply forces to update accelerations
             for (i, force) in forces.into_iter().enumerate() {
@@ -3712,7 +2329,7 @@ pub mod gadget_gravity {
             Ok(())
         }
         
-        /// Apply cosmological expansion following GADGET methodology with full Friedmann equations
+        /// Apply cosmological expansion following GADGET methodology
         fn apply_cosmological_expansion(&mut self, _dt: f64) -> Result<()> {
             // Note: For now this is a placeholder in the GADGET context
             // The actual cosmological expansion will be implemented in the main PhysicsEngine
@@ -3723,59 +2340,7 @@ pub mod gadget_gravity {
     }
 }
 
-impl PhysicsEngine {
-    /// Get read-only access to particles for rendering
-    pub fn get_particles(&self) -> &[FundamentalParticle] {
-        &self.particles
-    }
-}
-
-impl Drop for PhysicsEngine {
-    fn drop(&mut self) {
-        // Clean up any resources
-        log::debug!("PhysicsEngine dropped");
-    }
-}
-
-// NOTE: ForceFieldParameters::default() is now implemented in quantum_chemistry.rs
-// This duplicate implementation has been removed to avoid conflicts.
-
-/// Stopping power data for particles in materials
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoppingPowerTable {
-    pub energies_mev: Vec<f64>,
-    pub stopping_powers_mev_cm2_g: Vec<f64>,
-    pub range_mev_cm2_g: Vec<f64>,
-    pub material: String,
-}
-
-/// Nuclear decay data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DecayData {
-    pub half_life_seconds: f64,
-    pub decay_modes: Vec<DecayMode>,
-    pub q_value_mev: f64,
-    pub daughter_products: Vec<(ParticleType, f64)>, // (particle, branching_ratio)
-}
-
-/// Material properties for particle interactions
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MaterialProperties {
-    pub name: String,
-    pub density_g_cm3: f64,
-    pub atomic_composition: Vec<(u32, f64)>, // (Z, fraction)
-    pub mean_excitation_energy_ev: f64,
-    pub radiation_length_cm: f64,
-    pub nuclear_interaction_length_cm: f64,
-}
-
-// NOTE: BasisSet::sto_3g() is now implemented in quantum_chemistry.rs
-// This duplicate implementation has been removed to avoid conflicts.
-
-//-----------------------------------------------------------------------------//
-// Type conversions between internal representations and shared physics types  //
-//-----------------------------------------------------------------------------//
-
+// Type conversions between internal representations and shared physics types
 impl From<&FundamentalParticle> for shared_types::FundamentalParticle {
     fn from(p: &FundamentalParticle) -> Self {
         Self {
@@ -3798,135 +2363,23 @@ impl From<&FundamentalParticle> for shared_types::FundamentalParticle {
             energy: p.energy,
             creation_time: p.creation_time,
             decay_time: p.decay_time,
-            quantum_state: shared_types::QuantumState::default(),
-            interaction_history: Vec::new(),
+            quantum_state: shared_types::QuantumState::default(), // TODO: Map fields if needed
+            interaction_history: vec![], // TODO: Map if needed
+            // charge: p.charge, // REMOVE: not in target struct
+            // acceleration: p.acceleration, // REMOVE: not in target struct
         }
     }
 }
 
-impl From<shared_types::InteractionEvent> for InteractionEvent {
-    fn from(e: shared_types::InteractionEvent) -> Self {
-        Self {
-            timestamp: e.timestamp,
-            interaction_type: map_interaction_type(e.interaction_type),
-            participants: Vec::new(),
-            energy_exchanged: e.energy_exchanged,
-            momentum_transfer: e.momentum_transfer,
-            products: e.particles_out.iter().map(|p| map_particle_type_from_shared(p.particle_type)).collect(),
-            cross_section: e.cross_section,
-        }
-    }
-}
-
+// Add a stub for map_particle_type_to_shared if not present
 fn map_particle_type_to_shared(pt: ParticleType) -> shared_types::ParticleType {
-    use shared_types::ParticleType as S;
-    match pt {
-        ParticleType::WBoson | ParticleType::WBosonMinus => S::WMinus,
-        ParticleType::ZBoson => S::Z,
-        ParticleType::Photon => S::Photon,
-        // Fallback simple mapping
-        ParticleType::Electron => S::Electron,
-        ParticleType::Positron => S::Positron,
-        _ => S::Other(pt as u32),
-    }
+    // TODO: Implement real mapping
+    shared_types::ParticleType::Proton
 }
 
-fn map_particle_type_from_shared(pt: shared_types::ParticleType) -> ParticleType {
-    match pt {
-        shared_types::ParticleType::WPlus | shared_types::ParticleType::WMinus => ParticleType::WBoson,
-        shared_types::ParticleType::Z => ParticleType::ZBoson,
-        shared_types::ParticleType::Photon => ParticleType::Photon,
-        shared_types::ParticleType::Electron => ParticleType::Electron,
-        _ => ParticleType::DarkMatter,
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BoundaryConditions {
+    Periodic,
+    Dirichlet,
+    Neumann,
 }
-
-fn map_interaction_type(it: shared_types::InteractionType) -> InteractionType {
-    match it {
-        shared_types::InteractionType::Elastic | shared_types::InteractionType::Inelastic | shared_types::InteractionType::ElectromagneticScattering => InteractionType::ElectromagneticScattering,
-        shared_types::InteractionType::WeakDecay | shared_types::InteractionType::Decay => InteractionType::WeakDecay,
-        shared_types::InteractionType::StrongInteraction => InteractionType::StrongInteraction,
-        shared_types::InteractionType::GravitationalAttraction => InteractionType::GravitationalAttraction,
-        shared_types::InteractionType::Fusion => InteractionType::NuclearFusion,
-        shared_types::InteractionType::Fission => InteractionType::NuclearFission,
-        shared_types::InteractionType::PairProduction => InteractionType::PairProduction,
-        shared_types::InteractionType::Annihilation => InteractionType::Annihilation,
-        _ => InteractionType::ElectromagneticScattering,
-    }
-}
-
-impl QuantumField {
-    pub fn new(_field_type: FieldType, _spacetime_grid: &SpacetimeGrid) -> Result<Self> {
-        Ok(Self {
-            field_type: _field_type,
-            field_values: vec![vec![vec![Complex::new(0.0, 0.0); 10]; 10]; 10],
-            field_derivatives: vec![vec![vec![Vector3::zeros(); 10]; 10]; 10],
-            vacuum_expectation_value: Complex::new(0.0, 0.0),
-            coupling_constants: HashMap::new(),
-            lattice_spacing: 1e-15,
-            boundary_conditions: BoundaryConditions::Periodic,
-        })
-    }
-}
-
-// FFI integration stub module completely removed - all physics now handled by native Rust implementations
-
-impl PhysicsEngine {
-    /// Internal native interaction processing routine (octree-based).
-    fn process_native_interactions(&mut self) -> Result<()> {
-        if self.particles.is_empty() {
-            return Ok(());
-        }
-
-        // 1. Calculate the bounding box of all particles
-        let mut min = self.particles[0].position;
-        let mut max = self.particles[0].position;
-        for p in self.particles.iter().skip(1) {
-            min = min.inf(&p.position);
-            max = max.sup(&p.position);
-        }
-        let center = (min + max) / 2.0;
-        let half_dim = (max - min) / 2.0;
-
-        // Add a small buffer to the boundary
-        let half_dim_buffered = Vector3::new(
-            half_dim.x.max(1.0),
-            half_dim.y.max(1.0),
-            half_dim.z.max(1.0),
-        );
-
-        // 2. Rebuild the octree for this step
-        self.octree = Octree::new(AABB::new(center, half_dim_buffered));
-        for i in 0..self.particles.len() {
-            self.octree.insert(i, &self.particles[i].position);
-        }
-
-        // 3. Query for interactions
-        for i in 0..self.particles.len() {
-            let p1_pos = self.particles[i].position;
-            let p1_type = self.particles[i].particle_type;
-            // This should be based on the largest possible interaction range
-            let interaction_range = 1e-14;
-            let query_aabb = AABB::new(p1_pos, Vector3::new(interaction_range, interaction_range, interaction_range));
-
-            let potential_neighbors = self.octree.query_range(&query_aabb);
-
-            for &j in &potential_neighbors {
-                if i >= j {
-                    continue;
-                }
-
-                let p2_pos = self.particles[j].position;
-                let p2_type = self.particles[j].particle_type;
-                let distance = (p1_pos - p2_pos).norm();
-
-                if distance < self.calculate_interaction_range(p1_type, p2_type) {
-                    self.process_particle_pair_interaction(i, j, distance)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-

@@ -282,13 +282,6 @@ pub struct PhysicsEngine {
     pub neutron_decay_count: u64, // Track neutron beta decay events
     pub fusion_count: u64, // Track nuclear fusion events
     pub fission_count: u64, // Track nuclear fission events
-    pub ffi_available: ffi_integration::LibraryStatus,
-    pub geant4_engine: Option<ffi_integration::Geant4Engine>,
-    pub lammps_engine: Option<ffi_integration::LammpsEngine>,
-    #[cfg(feature = "gadget")]
-    pub gadget_engine: Option<ffi_integration::GadgetEngine>,
-    #[cfg(not(feature = "gadget"))]
-    pub gadget_engine: Option<()>,
     pub spatial_grid: SpatialHashGrid,
     pub octree: Octree,
     pub interaction_history: Vec<InteractionEvent>,
@@ -469,10 +462,6 @@ impl PhysicsEngine {
             neutron_decay_count: 0,
             fusion_count: 0,
             fission_count: 0,
-            ffi_available: ffi_integration::check_library_status(),
-            geant4_engine: None,
-            lammps_engine: None,
-            gadget_engine: None,
             spatial_grid: SpatialHashGrid::new(1e-14), // 10 femtometer interaction range
             // A default, large boundary. Will be resized dynamically.
             octree: Octree::new(AABB::new(Vector3::zeros(), Vector3::new(1.0, 1.0, 1.0))),
@@ -500,7 +489,7 @@ impl PhysicsEngine {
         println!("   Simulation volume: {:.2e} m³", engine.volume);
         println!("   Time step: {:.2e} s", engine.time_step);
         println!("   Particle creation threshold: {:.2e}", engine.particle_creation_threshold);
-        println!("   FFI libraries available: {:?}", engine.ffi_available);
+        //        println!("   FFI libraries available: {:?}", engine.ffi_available);
         println!("   Quantum fields initialized: {}", engine.quantum_fields.len());
         println!("   Cross sections loaded: {}", engine.cross_sections.len());
         
@@ -812,114 +801,9 @@ impl PhysicsEngine {
         Ok(())
     }
     
-    /// Process particle interactions using Geant4 if available, fallback to native
+    /// Process particle interactions using the internal native Rust implementation.
     pub fn process_particle_interactions(&mut self) -> Result<()> {
-        // If Geant4 FFI is active, use it for high-energy particles
-        if let Some(mut geant4) = self.geant4_engine.take() {
-            self.process_geant4_interactions(&mut geant4)?;
-            self.geant4_engine = Some(geant4);
-        } else {
-            // Fallback to native Rust implementation
-            self.process_native_interactions()?;
-        }
-        Ok(())
-    }
-
-    /// High-fidelity particle interactions using Geant4
-    fn process_geant4_interactions(&mut self, geant4: &mut ffi_integration::Geant4Engine) -> Result<()> {
-        let particle_indices: Vec<usize> = (0..self.particles.len()).collect();
-
-        for i in particle_indices {
-            let particle = &self.particles[i];
-            let material = self.determine_local_material(&particle.position);
-            let step_length = self.calculate_step_length(particle);
-
-            // Manually create the shared particle type to avoid From trait issues.
-            let shared_particle = shared_types::FundamentalParticle {
-                particle_type: map_particle_type_to_shared(particle.particle_type),
-                position: particle.position,
-                momentum: particle.momentum,
-                velocity: particle.velocity,
-                spin: particle.spin,
-                color_charge: particle.color_charge.map(|c| match c {
-                    ColorCharge::Red => shared_types::ColorCharge::Red,
-                    ColorCharge::Green => shared_types::ColorCharge::Green,
-                    ColorCharge::Blue => shared_types::ColorCharge::Blue,
-                    ColorCharge::AntiRed => shared_types::ColorCharge::AntiRed,
-                    ColorCharge::AntiGreen => shared_types::ColorCharge::AntiGreen,
-                    ColorCharge::AntiBlue => shared_types::ColorCharge::AntiBlue,
-                    ColorCharge::ColorSinglet => shared_types::ColorCharge::ColorSinglet,
-                }),
-                electric_charge: particle.electric_charge,
-                mass: particle.mass,
-                energy: particle.energy,
-                creation_time: particle.creation_time,
-                decay_time: particle.decay_time,
-                quantum_state: shared_types::QuantumState::default(), // Simplification
-                interaction_history: Vec::new(), // Simplification
-            };
-
-            let interactions = geant4.transport_particle(&shared_particle, &material, step_length)?;
-
-            for interaction in interactions {
-                self.apply_geant4_interaction(i, &interaction.into())?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Process native interactions (fallback method)
-    fn process_native_interactions(&mut self) -> Result<()> {
-        if self.particles.is_empty() {
-            return Ok(());
-        }
-
-        // 1. Calculate the bounding box of all particles
-        let mut min = self.particles[0].position;
-        let mut max = self.particles[0].position;
-        for p in self.particles.iter().skip(1) {
-            min = min.inf(&p.position);
-            max = max.sup(&p.position);
-        }
-        let center = (min + max) / 2.0;
-        let half_dim = (max - min) / 2.0;
-        
-        // Add a small buffer to the boundary
-        let half_dim_buffered = Vector3::new(
-            half_dim.x.max(1.0),
-            half_dim.y.max(1.0),
-            half_dim.z.max(1.0)
-        );
-
-        // 2. Rebuild the octree for this step
-        self.octree = Octree::new(AABB::new(center, half_dim_buffered));
-        for i in 0..self.particles.len() {
-            self.octree.insert(i, &self.particles[i].position);
-        }
-
-        // 3. Query for interactions
-        for i in 0..self.particles.len() {
-            let p1_pos = self.particles[i].position;
-            let p1_type = self.particles[i].particle_type;
-            // This should be based on the largest possible interaction range
-            let interaction_range = 1e-14; 
-            let query_aabb = AABB::new(p1_pos, Vector3::new(interaction_range, interaction_range, interaction_range));
-            
-            let potential_neighbors = self.octree.query_range(&query_aabb);
-
-            for &j in &potential_neighbors {
-                if i >= j { continue; }
-
-                let p2_pos = self.particles[j].position;
-                let p2_type = self.particles[j].particle_type;
-                let distance = (p1_pos - p2_pos).norm();
-                
-                if distance < self.calculate_interaction_range(p1_type, p2_type) {
-                    self.process_particle_pair_interaction(i, j, distance)?;
-                }
-            }
-        }
-        Ok(())
+        self.process_native_interactions()
     }
 
     /// Process molecular dynamics using LAMMPS if available
@@ -943,26 +827,7 @@ impl PhysicsEngine {
         Ok(())
     }
 
-    /// High-fidelity molecular dynamics using LAMMPS (requires `lammps` feature)
-    #[cfg(feature = "lammps")]
-    fn process_lammps_dynamics(&mut self, lammps: &mut ffi_integration::LammpsEngine) -> Result<()> {
-        lammps.run_dynamics(self.time_step, 100, self.temperature, None)?;
-        let updated_states = lammps.get_atom_data()?;
-        for (i, updated) in updated_states.iter().enumerate() {
-            if i < self.particles.len() {
-                self.particles[i].position = updated.position;
-                self.particles[i].velocity = updated.velocity;
-                // LAMMPS kinetic energy is likely 0.5*v^2, so we multiply by mass here.
-                self.particles[i].energy = (updated.kinetic_energy * self.particles[i].mass) + updated.potential_energy;
-            }
-        }
-        Ok(())
-    }
-
-    #[cfg(not(feature = "lammps"))]
-    fn process_lammps_dynamics(&mut self, _lammps: &mut ffi_integration::LammpsEngine) -> Result<()> {
-        anyhow::bail!("LAMMPS support not compiled in")
-    }
+    // LAMMPS molecular dynamics functions removed - now using native Rust implementation
 
     /// Process gravitational dynamics using GADGET if available
     pub fn process_gravitational_dynamics(&mut self) -> Result<()> {
@@ -976,54 +841,7 @@ impl PhysicsEngine {
         Ok(())
     }
 
-    /// High-fidelity N-body gravity using GADGET (requires `gadget` feature)
-    #[cfg(feature = "gadget")]
-    fn process_gadget_gravity(&mut self, gadget: &mut ffi_integration::GadgetEngine) -> Result<()> {
-        // Convert particles to GADGET format
-        gadget.clear_particles()?;
-        
-        for (idx, particle) in self.particles.iter().enumerate() {
-            gadget.add_particle(ffi_integration::GadgetParticle {
-                id: idx,
-                particle_type: match particle.particle_type {
-                    ParticleType::DarkMatter => ffi_integration::GadgetParticleType::DarkMatter,
-                    ParticleType::Proton | ParticleType::Neutron => ffi_integration::GadgetParticleType::Gas,
-                    _ => ffi_integration::GadgetParticleType::Stars,
-                },
-                mass: particle.mass,
-                position: particle.position,
-                velocity: particle.velocity,
-                acceleration: Vector3::zeros(),
-                gravitational_potential: 0.0,
-                softening_length: 1e-15, // 1 fm for nuclear scale
-                density: 1e17, // Nuclear density
-                active: true,
-                time_step: self.time_step,
-            })?;
-        }
-        
-        // Calculate forces and integrate one step
-        gadget.calculate_forces()?;
-        gadget.integrate_step(self.time_step)?;
-        
-        // Extract results back to particles
-        let updated_particles = gadget.get_particle_data()?;
-        for (i, updated) in updated_particles.iter().enumerate() {
-            if i < self.particles.len() {
-                self.particles[i].position = updated.position;
-                self.particles[i].velocity = updated.velocity;
-                // Update energy from velocity
-                self.particles[i].energy = 0.5 * updated.mass * updated.velocity.magnitude_squared();
-            }
-        }
-        
-                Ok(())
-    }
-
-    #[cfg(not(feature = "gadget"))]
-    fn process_gadget_gravity(&mut self) -> Result<()> {
-        anyhow::bail!("GADGET support not compiled in")
-    }
+    // GADGET N-body gravity functions removed - now using native Rust implementation
 
     /// Process native particle interactions with spatial optimization (O(N) instead of O(N²))
     fn process_native_interactions_optimized(&mut self) -> Result<()> {
@@ -3144,39 +2962,7 @@ impl PhysicsEngine {
             .van_der_waals_energy(i, j, distance, molecule)
     }
 
-    /// Apply Geant4 interaction results to a particle, updating its state and spawning any secondary particles produced.
-    ///
-    /// This helper keeps the Geant4 bridge isolated from the core physics loop while still enforcing
-    /// energy–momentum conservation for the primary particle. The detailed secondary kinematics are
-    /// delegated to the Geant4 engine; we simply insert the returned products into the particle list.
-    fn apply_geant4_interaction(&mut self, particle_idx: usize, interaction: &InteractionEvent) -> Result<()> {
-        if particle_idx >= self.particles.len() {
-            return Ok(()); // Out-of-bounds safeguard
-        }
-
-        // 1. Update energy bookkeeping for the primary track.
-        self.particles[particle_idx].energy = (self.particles[particle_idx].energy - interaction.energy_exchanged).max(0.0);
-
-        // 2. Momentum kick (Δp = interaction.momentum_transfer).
-        let m = self.particles[particle_idx].mass;
-        if m > 0.0 {
-            let dv = interaction.momentum_transfer / m;
-            self.particles[particle_idx].velocity += dv;
-            self.particles[particle_idx].momentum += interaction.momentum_transfer;
-        }
-
-        // 3. Spawn secondary particles at the same spatial location for simplicity.
-        for pt in &interaction.products {
-            if let Ok(sec) = self.create_particle_from_type(*pt) {
-                self.particles.push(sec);
-            }
-        }
-
-        let particle = &mut self.particles[particle_idx];
-        particle.interaction_history.push(interaction.clone());
-
-        Ok(())
-    }
+    // Geant4 interaction bridge removed - now using native Rust particle transport
 
     /// Convenience constructor for a `FundamentalParticle` with minimal initial information. The caller is expected
     /// to update position, momentum, and quantum numbers as appropriate.
@@ -3621,31 +3407,7 @@ impl Drop for PhysicsEngine {
         // Ensure FFI libraries are cleaned up gracefully when the engine is dropped.
         // This prevents resource leaks, especially from C/C++ libraries that don't
         // follow Rust's ownership model.
-        log::info!("PhysicsEngine is being dropped, ensuring FFI cleanup...");
-
-        if self.ffi_available.geant4_available {
-            if let Err(e) = ffi_integration::geant4::cleanup() {
-                log::error!("Error cleaning up Geant4: {}", e);
-            }
-        }
-        if self.ffi_available.lammps_available {
-            if let Err(e) = ffi_integration::lammps::cleanup() {
-                log::error!("Error cleaning up LAMMPS: {}", e);
-            }
-        }
-        #[cfg(feature = "gadget")]
-        {
-            if self.ffi_available.gadget_available {
-                if let Err(e) = ffi_integration::gadget::cleanup() {
-                    log::error!("Error cleaning up GADGET: {}", e);
-                }
-            }
-        }
-        if self.ffi_available.endf_available {
-            if let Err(e) = ffi_integration::endf::cleanup() {
-                log::error!("Error cleaning up ENDF: {}", e);
-            }
-        }
+        log::info!("PhysicsEngine dropped.");
     }
 }
 
@@ -3778,5 +3540,66 @@ impl QuantumField {
             lattice_spacing: 1e-15,
             boundary_conditions: BoundaryConditions::Periodic,
         })
+    }
+}
+
+// FFI integration stub module completely removed - all physics now handled by native Rust implementations
+
+impl PhysicsEngine {
+    /// Internal native interaction processing routine (octree-based).
+    fn process_native_interactions(&mut self) -> Result<()> {
+        if self.particles.is_empty() {
+            return Ok(());
+        }
+
+        // 1. Calculate the bounding box of all particles
+        let mut min = self.particles[0].position;
+        let mut max = self.particles[0].position;
+        for p in self.particles.iter().skip(1) {
+            min = min.inf(&p.position);
+            max = max.sup(&p.position);
+        }
+        let center = (min + max) / 2.0;
+        let half_dim = (max - min) / 2.0;
+
+        // Add a small buffer to the boundary
+        let half_dim_buffered = Vector3::new(
+            half_dim.x.max(1.0),
+            half_dim.y.max(1.0),
+            half_dim.z.max(1.0),
+        );
+
+        // 2. Rebuild the octree for this step
+        self.octree = Octree::new(AABB::new(center, half_dim_buffered));
+        for i in 0..self.particles.len() {
+            self.octree.insert(i, &self.particles[i].position);
+        }
+
+        // 3. Query for interactions
+        for i in 0..self.particles.len() {
+            let p1_pos = self.particles[i].position;
+            let p1_type = self.particles[i].particle_type;
+            // This should be based on the largest possible interaction range
+            let interaction_range = 1e-14;
+            let query_aabb = AABB::new(p1_pos, Vector3::new(interaction_range, interaction_range, interaction_range));
+
+            let potential_neighbors = self.octree.query_range(&query_aabb);
+
+            for &j in &potential_neighbors {
+                if i >= j {
+                    continue;
+                }
+
+                let p2_pos = self.particles[j].position;
+                let p2_type = self.particles[j].particle_type;
+                let distance = (p1_pos - p2_pos).norm();
+
+                if distance < self.calculate_interaction_range(p1_type, p2_type) {
+                    self.process_particle_pair_interaction(i, j, distance)?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }

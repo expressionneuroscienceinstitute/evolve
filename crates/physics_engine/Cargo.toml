@@ -19,9 +19,9 @@ approx = { workspace = true }
 bevy_ecs = { workspace = true, optional = true }
 once_cell = { workspace = true }
 log = { workspace = true }
+tracing = { workspace = true }
 endf_parser = "0.2.0"
 physics_types = { path = "../physics_types" }
-ffi_integration = { path = "../ffi_integration", default-features = false }
 itertools = "0.10"
 libm = "0.2"
 
@@ -43,3 +43,6 @@ lammps = []
 FALSE = []
 
 [build-dependencies]
+
+[dev-dependencies]
+tempfile.workspace = true

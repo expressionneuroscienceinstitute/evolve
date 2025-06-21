@@ -6,7 +6,6 @@ members = [
     "crates/agent_evolution",
     "crates/networking",
     "crates/diagnostics",
-    "crates/ffi_integration",
     "crates/physics_types",
     "crates/native_renderer",
     "demos"

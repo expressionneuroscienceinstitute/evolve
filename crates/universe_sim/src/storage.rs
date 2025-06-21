@@ -2,7 +2,7 @@
 //! Replaces the Bevy ECS with hand-rolled Struct-of-Arrays (SoA) and Vec-based stores.
 
 use crate::physics_engine::{
-    nuclear_physics::StellarNucleosynthesis, ElementTable, EnvironmentProfile, StratumLayer,
+    nuclear_physics::StellarNucleosynthesis, types::{ElementTable, EnvironmentProfile, StratumLayer},
 };
 use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};

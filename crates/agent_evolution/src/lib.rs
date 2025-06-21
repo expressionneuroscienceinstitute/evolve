@@ -9,7 +9,7 @@ use anyhow::Result;
 use uuid::Uuid;
 use std::collections::{HashMap, VecDeque};
 use rand::{Rng, thread_rng};
-use physics_engine::EnvironmentProfile;
+use physics_engine::types::EnvironmentProfile;
 
 pub mod ai_core;
 pub mod decision_tracking;

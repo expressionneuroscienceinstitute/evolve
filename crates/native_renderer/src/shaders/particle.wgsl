@@ -1,109 +1,104 @@
 // High-Performance Particle Shader for Universe Simulation
-// Optimized for physics engine visualization
+// Renders particles as 3D-lit spheres for debugging.
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
     time: f32,
+    // These are no longer used but kept for struct compatibility
     scale: f32,
+    color_mode: f32,
+    filter_threshold: f32,
 };
 
 @group(0) @binding(0)
 var<uniform> uniforms: Uniforms;
 
 struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) velocity: vec3<f32>,
-    @location(2) mass: f32,
-    @location(3) charge: f32,
-    @location(4) temperature: f32,
+    // Particle data (per instance)
+    @location(1) position: vec3<f32>,
+    @location(2) color: vec3<f32>,
+    @location(3) size: f32,
 };
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec3<f32>,
-    @location(1) size: f32,
-    @location(2) particle_type: f32,
+    @location(1) world_pos: vec3<f32>,
+    @location(2) size: f32,
+    @location(3) quad_pos: vec2<f32>, // [-1, 1] for the quad
 };
 
 @vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
+fn vs_main(
+    instance: VertexInput,
+    @builtin(vertex_index) vertex_index: u32,
+) -> VertexOutput {
     var out: VertexOutput;
-    
-    // Transform position to clip space
-    out.clip_position = uniforms.view_proj * vec4<f32>(input.position, 1.0);
-    
-    // Calculate particle size based on mass (logarithmic scale)
-    let base_size = 2.0;
-    let mass_factor = log(max(input.mass, 1e-30)) / log(10.0);
-    out.size = base_size + mass_factor * 0.5;
-    
-    // Color based on particle type and properties
-    var color = vec3<f32>(1.0, 1.0, 1.0); // Default white
-    
-    // Color by charge
-    if (input.charge > 0.0) {
-        color = vec3<f32>(1.0, 0.2, 0.2); // Red for positive
-    } else if (input.charge < 0.0) {
-        color = vec3<f32>(0.2, 0.2, 1.0); // Blue for negative
-    } else {
-        color = vec3<f32>(0.8, 0.8, 0.8); // Gray for neutral
+
+    var quad_pos: vec2<f32>;
+    switch(vertex_index) {
+        case 0u: { quad_pos = vec2<f32>(-1.0, -1.0); }
+        case 1u: { quad_pos = vec2<f32>( 1.0, -1.0); }
+        case 2u: { quad_pos = vec2<f32>(-1.0,  1.0); }
+        case 3u: { quad_pos = vec2<f32>(-1.0,  1.0); }
+        case 4u: { quad_pos = vec2<f32>( 1.0, -1.0); }
+        default: { quad_pos = vec2<f32>( 1.0,  1.0); } // vertex_index == 5u
     }
+
+    // Apply a minimum size to prevent particles from disappearing - scale based on zoom
+    let particle_size = max(instance.size, 0.005); // Smaller minimum for better scaling
     
-    // Modulate by temperature (if available)
-    if (input.temperature > 0.0) {
-        let temp_normalized = min(input.temperature / 10000.0, 1.0); // Normalize to stellar temps
-        color = mix(color, vec3<f32>(1.0, 0.8, 0.2), temp_normalized); // Hot -> yellow/white
-    }
+    var clip_pos = uniforms.view_proj * vec4<f32>(instance.position, 1.0);
     
-    // Modulate by velocity magnitude for kinetic energy visualization
-    let velocity_mag = length(input.velocity);
-    let velocity_factor = min(velocity_mag / 1000.0, 1.0); // Normalize relativistic speeds
-    color = mix(color, vec3<f32>(0.0, 1.0, 0.0), velocity_factor * 0.3); // Fast -> green tint
+    // Billboarding in clip space with improved scaling for microscope mode
+    // Scale the offset to be proportional to the viewport but respect depth
+    // Use perspective-correct scaling based on depth
+    let depth_scale = max(0.001, clip_pos.w);
+    let offset = quad_pos * particle_size * 0.02 / depth_scale; // Enhanced scaling for better visibility
+    clip_pos.x = clip_pos.x + offset.x;
+    clip_pos.y = clip_pos.y + offset.y;
     
-    out.color = color;
-    
-    // Particle type classification for shader branching
-    if (input.mass > 1e20) {
-        out.particle_type = 3.0; // Massive objects (stars, planets)
-    } else if (input.mass > 1e10) {
-        out.particle_type = 2.0; // Medium objects (asteroids)
-    } else if (input.mass > 1.0) {
-        out.particle_type = 1.0; // Small particles
-    } else {
-        out.particle_type = 0.0; // Subatomic particles
-    }
+    out.clip_position = clip_pos;
+    out.color = instance.color;
+    out.world_pos = instance.position;
+    out.size = particle_size;
+    out.quad_pos = quad_pos;
     
     return out;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    // Get fragment position within point sprite
-    let coord = input.clip_position.xy;
-    
-    // Calculate distance from center for circular particles
-    let center = vec2<f32>(0.5, 0.5);
-    let dist = length(coord - center);
-    
-    // Circular falloff for particle shape
-    let radius = 0.5;
-    let alpha = smoothstep(radius, radius * 0.8, dist);
-    
-    // Enhanced brightness for different particle types
-    var brightness = 1.0;
-    if (input.particle_type >= 3.0) {
-        brightness = 2.0; // Bright for massive objects
-    } else if (input.particle_type >= 2.0) {
-        brightness = 1.5; // Medium for medium objects
-    } else if (input.particle_type >= 1.0) {
-        brightness = 1.0; // Normal for small particles
-    } else {
-        brightness = 0.7; // Dim for subatomic
+    // Use the quad_pos (from -1 to 1) to form a circle
+    let dist = length(input.quad_pos);
+    if (dist > 1.0) {
+        discard;
     }
     
-    // Pulsing effect based on time for dynamic visualization
-    let pulse = sin(uniforms.time * 2.0) * 0.1 + 0.9;
-    brightness *= pulse;
+    // Calculate normal for lighting to make it look 3D
+    let normal_z = sqrt(1.0 - dist * dist);
+    let normal = vec3<f32>(input.quad_pos.x, input.quad_pos.y, normal_z);
     
-    return vec4<f32>(input.color * brightness, alpha);
+    // Simple directional lighting
+    let light_dir = normalize(vec3<f32>(0.8, 0.8, 0.8));
+    let diffuse_intensity = max(dot(normal, light_dir), 0.0);
+    
+    // Add ambient light to avoid completely black areas
+    let ambient_intensity = 0.3;
+    let total_light = ambient_intensity + diffuse_intensity * 0.7;
+    
+    let final_color = input.color * total_light;
+    
+    // Add a specular highlight for a more "sphere-like" look
+    let view_dir = normalize(input.world_pos); // Simplification
+    let reflect_dir = reflect(-light_dir, normal);
+    var specular_intensity = pow(max(dot(view_dir, reflect_dir), 0.0), 32.0);
+    
+    // Rim lighting to make the edges pop
+    let rim_dot = 1.0 - dot(normal, vec3<f32>(0.0, 0.0, 1.0));
+    let rim_intensity = smoothstep(0.5, 1.0, rim_dot) * 0.5;
+    
+    let final_lit_color = final_color + vec3<f32>(1.0, 1.0, 1.0) * specular_intensity * 0.6 + rim_intensity;
+    
+    return vec4<f32>(final_lit_color, 1.0);
 } 

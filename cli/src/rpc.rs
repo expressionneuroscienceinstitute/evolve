@@ -78,6 +78,20 @@ pub struct ResourceStatus {
     pub limits: std::collections::HashMap<String, u64>,
 }
 
+/// Response from map RPC call
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MapResponse {
+    pub width: usize,
+    pub height: usize,
+    pub data: serde_json::Value,
+}
+
+/// Response from list_planets RPC call
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PlanetListResponse {
+    pub planets: Vec<serde_json::Value>,
+}
+
 pub struct RpcClient {
     client: reqwest::Client,
     url: String,

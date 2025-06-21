@@ -665,28 +665,43 @@ impl Camera {
                 // Heavy mode controls
                 KeyCode::Digit1 => {
                     self.color_mode = ColorMode::ParticleType;
-                    println!("🎨 Color mode switched to: ParticleType (1)");
-                },
+                }
                 KeyCode::Digit2 => {
                     self.color_mode = ColorMode::Charge;
-                    println!("🎨 Color mode switched to: Charge (2)");
-                },
+                }
                 KeyCode::Digit3 => {
                     self.color_mode = ColorMode::Temperature;
-                    println!("🎨 Color mode switched to: Temperature (3)");
-                },
+                }
                 KeyCode::Digit4 => {
                     self.color_mode = ColorMode::Velocity;
-                    println!("🎨 Color mode switched to: Velocity (4)");
-                },
+                }
                 KeyCode::Digit5 => {
-                    self.color_mode = ColorMode::Interactions;
-                    println!("🎨 Color mode switched to: Interactions (5)");
-                },
+                    self.color_mode = ColorMode::Scientific;
+                }
                 KeyCode::Digit6 => {
                     self.color_mode = ColorMode::Scientific;
-                    println!("🎨 Color mode switched to: Scientific (6)");
-                },
+                }
+                KeyCode::Digit7 => {
+                    self.color_mode = ColorMode::Scientific;
+                }
+                KeyCode::Digit8 => {
+                    self.color_mode = ColorMode::Scientific;
+                }
+                KeyCode::Digit9 => {
+                    self.color_mode = ColorMode::Scientific;
+                }
+                KeyCode::Digit0 => {
+                    self.color_mode = ColorMode::Interactions;
+                }
+                KeyCode::Space => {
+                    self.focus_on_origin();
+                }
+                KeyCode::KeyR => {
+                    self.reset_view();
+                }
+                KeyCode::KeyM => {
+                    println!("🔬 Microscope mode toggle requested");
+                }
                 _ => {}
             }
         }
@@ -1064,9 +1079,7 @@ impl<'window> NativeRenderer<'window> {
     }
     
     /// Update particle data from simulation with zero-copy access
-    // TEMPORARILY COMMENTED OUT FOR TESTING
-    /*
-    pub fn update_particles(&mut self, simulation: &mut UniverseSimulation) -> Result<()> {
+    pub fn update_particles(&mut self, simulation: &mut universe_sim::UniverseSimulation) -> Result<()> {
         println!("🔬 PHYSICS DATA: Syncing real simulation particles");
 
         // Update debug panel with latest stats
@@ -1227,8 +1240,7 @@ impl<'window> NativeRenderer<'window> {
 
         Ok(())
     }
-    */
-
+    
     /// Render frame with maximum performance and heavy mode enhancements
     pub fn render(&mut self, simulation_time: f32) -> Result<()> {
         let frame_start = std::time::Instant::now();
@@ -1738,10 +1750,40 @@ impl<'window> NativeRenderer<'window> {
                     println!("🔬 Microscope view reset - focusing on particle");
                 },
                 KeyCode::Space => {
-                    // Focus on center of particle system
-                    self.camera.focus_on(Point3::new(0.0, 0.0, 0.0), Some(20.0));
-                    println!("🎯 Camera focused on origin");
-                },
+                    // Focus camera on origin
+                    self.camera.focus_on_origin();
+                }
+                KeyCode::KeyR => {
+                    // Reset camera view
+                    self.camera.reset_view();
+                }
+                KeyCode::KeyM => {
+                    // Toggle microscope mode (close-up particle view)
+                    // This will be handled by the renderer, not the camera
+                    println!("🔬 Microscope mode toggle requested");
+                }
+                KeyCode::KeyC => {
+                    // Toggle color mode (legacy)
+                    let next_color_mode = match self.camera.color_mode {
+                        ColorMode::ParticleType => ColorMode::Charge,
+                        ColorMode::Charge => ColorMode::Temperature,
+                        ColorMode::Temperature => ColorMode::Velocity,
+                        ColorMode::Velocity => ColorMode::Interactions,
+                        ColorMode::Interactions => ColorMode::Scientific,
+                        ColorMode::Scientific => ColorMode::ParticleType,
+                    };
+                    self.camera.color_mode = next_color_mode;
+                }
+                KeyCode::KeyS => {
+                    // Toggle scale mode (legacy)
+                    let next_scale_mode = match self.camera.scale_mode {
+                        ScaleMode::Linear => ScaleMode::Logarithmic,
+                        ScaleMode::Logarithmic => ScaleMode::Energy,
+                        ScaleMode::Energy => ScaleMode::Custom(1.0),
+                        ScaleMode::Custom(_) => ScaleMode::Linear,
+                    };
+                    self.camera.scale_mode = next_scale_mode;
+                }
                 _ => {}
             }
         }
@@ -1770,7 +1812,6 @@ impl<'window> NativeRenderer<'window> {
                 🎮 Controls:\n\
                 • F1: Toggle debug panel\n\
                 • F2: Cycle debug modes\n\
-                • F5: Reset camera view\n\
                 \n\
                 🔧 Buffer Pool Stats:\n\
                 • Active buffers: {}\n\
@@ -2272,6 +2313,12 @@ pub async fn run_renderer(sim: std::sync::Arc<std::sync::Mutex<universe_sim::Uni
                             if let Err(e) = sim.tick() {
                                 error!("Simulation tick failed: {}", e);
                             }
+                            
+                            // Update particle data from simulation before rendering
+                            if let Err(e) = renderer.update_particles(&mut *sim) {
+                                error!("Failed to update particles: {}", e);
+                            }
+                            
                             // Use universe age as a time parameter in seconds for the renderer.
                             let sim_time = sim.universe_age_years() as f32;
                             if let Err(e) = renderer.render(sim_time) {

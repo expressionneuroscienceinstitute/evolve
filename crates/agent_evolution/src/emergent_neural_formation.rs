@@ -10,11 +10,11 @@
 //! complexity creates intelligence - all through physics, not programming.
 
 use anyhow::Result;
-use nalgebra::{DVector, DMatrix};
-use rand::{thread_rng, Rng};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
+use rand::{thread_rng, Rng};
+use crate::{PlasticityInput, PlasticityOutput};
 
 /// Physical constraints that emerge from the laws of physics
 /// These are NOT hardcoded - they arise from fundamental physics
@@ -206,7 +206,7 @@ impl EmergentNeuralSystem {
     }
     
     /// Check for emergent rules based on constraint interactions
-    fn check_for_emergent_rules(&mut self, delta_time: f64) -> Result<()> {
+    fn check_for_emergent_rules(&mut self, _delta_time: f64) -> Result<()> {
         // Rule 1: Information clustering emerges from spatial proximity
         if self.information_units.len() > 2 {
             let clustering_rule = EmergentRule {
@@ -301,7 +301,7 @@ impl EmergentNeuralSystem {
     }
     
     /// Apply efficiency rule - this creates activation thresholds
-    fn apply_efficiency_rule(&mut self, rule: &EmergentRule, delta_time: f64) -> Result<()> {
+    fn apply_efficiency_rule(&mut self, rule: &EmergentRule, _delta_time: f64) -> Result<()> {
         // Energy efficiency creates activation thresholds
         for unit in &mut self.information_units {
             // Units with more connections need higher activation thresholds
@@ -364,7 +364,7 @@ impl EmergentNeuralSystem {
     }
     
     /// Check if neural-like structure has formed
-    fn check_neural_formation(&mut self, delta_time: f64) -> Result<()> {
+    fn check_neural_formation(&mut self, _delta_time: f64) -> Result<()> {
         // Check for neural-like properties
         let mut neural_properties = 0;
         

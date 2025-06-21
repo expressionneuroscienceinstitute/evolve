@@ -6,11 +6,11 @@
 //! everything emerges from scratch through survival needs.
 
 use anyhow::Result;
-use nalgebra::{DVector, DMatrix};
-use rand::{thread_rng, Rng};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
+use rand::{thread_rng, Rng};
+use crate::{PlasticityInput, PlasticityOutput};
 
 /// Autonomous communication system that evolves from scratch
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -716,7 +716,7 @@ impl AutonomousCommunication {
     }
     
     /// Generate concept name based on social context
-    fn generate_concept_name(&self, social_context: &SocialContext) -> String {
+    fn generate_concept_name(&self, _social_context: &SocialContext) -> String {
         let mut rng = thread_rng();
         let syllables = ["ka", "ma", "ta", "pa", "na", "la", "sa", "ra", "ga", "da"];
         let num_syllables = rng.gen_range(1..4);
@@ -728,7 +728,7 @@ impl AutonomousCommunication {
     }
     
     /// Determine signal representations for a concept
-    fn determine_signal_representations(&self, concept_name: &str) -> Vec<SignalRepresentation> {
+    fn determine_signal_representations(&self, _concept_name: &str) -> Vec<SignalRepresentation> {
         let mut representations = Vec::new();
         let mut rng = thread_rng();
         
@@ -775,7 +775,7 @@ impl AutonomousCommunication {
     }
     
     /// Update social networks
-    fn update_social_networks(&mut self, social_context: &SocialContext) -> Result<()> {
+    fn update_social_networks(&mut self, _social_context: &SocialContext) -> Result<()> {
         // This would be implemented based on actual social interactions
         // For now, we'll just update the structure
         Ok(())
@@ -812,7 +812,7 @@ impl AutonomousCommunication {
     }
     
     /// Calculate survival benefit of communication
-    fn calculate_survival_benefit(&self, environment: &CommunicationEnvironment) -> f64 {
+    fn calculate_survival_benefit(&self, _environment: &CommunicationEnvironment) -> f64 {
         let mut benefit = 0.0;
         
         // Benefit from effective signal types
@@ -841,7 +841,7 @@ impl AutonomousCommunication {
     }
     
     /// Calculate social benefit of communication
-    fn calculate_social_benefit(&self, social_context: &SocialContext) -> f64 {
+    fn calculate_social_benefit(&self, _social_context: &SocialContext) -> f64 {
         let mut benefit = 0.0;
         
         // Benefit from social networks

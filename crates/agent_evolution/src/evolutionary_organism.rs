@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::ai_core::{AICore, SensoryInput, ActionType, AgentSensoryData};
 use crate::natural_selection::{Fitness, FitnessLandscape};
 use crate::autonomous_communication::{AutonomousCommunication, CommunicationEnvironment, SocialContext};
+use crate::{PlasticityInput, PlasticityOutput};
 
 /// A true evolutionary organism with self-modifying neural architecture
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,7 +264,6 @@ impl EvolutionaryOrganism {
     
     /// Create offspring from two parent organisms
     pub fn reproduce(&self, other: &EvolutionaryOrganism) -> EvolutionaryOrganism {
-        let mut rng = thread_rng();
         let mut offspring = EvolutionaryOrganism::new();
         
         offspring.id = Uuid::new_v4();

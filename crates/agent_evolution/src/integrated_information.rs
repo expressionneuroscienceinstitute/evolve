@@ -255,14 +255,14 @@ impl IntegratedInformationSystem {
         
         for (i, _element) in self.mechanism.elements.iter().enumerate() {
             let mut input_sum = 0.0;
-            let mut connection_count = 0;
+            let mut _connection_count = 0;
 
             // Sum inputs from connected elements
             for connection in &self.mechanism.connections {
                 if connection.target == self.mechanism.elements[i].id {
                     if let Some(source_idx) = self.mechanism.elements.iter().position(|e| e.id == connection.source) {
                         input_sum += self.mechanism.state[source_idx] * connection.weight * connection.strength;
-                        connection_count += 1;
+                        _connection_count += 1;
                     }
                 }
             }

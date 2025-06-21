@@ -72,6 +72,9 @@ use crate::types::{
 };
 use crate::general_relativity::{C, G, schwarzschild_radius};
 use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType};
+use crate::gravitational_collapse::MEAN_MOLECULAR_WEIGHT;
+use crate::sph::SphParticle;
+use log::info;
 
 mod gravitational_collapse;
 pub use gravitational_collapse::{jeans_mass, jeans_length, SinkParticle};
@@ -380,6 +383,10 @@ pub struct PhysicsEngine {
     pub interaction_history: Vec<InteractionEvent>,
     /// SPH solver for fluid dynamics and star formation
     pub sph_solver: SphSolver,
+    /// Sink particles representing collapsed objects (protostars, stars)
+    pub sink_particles: Vec<SinkParticle>,
+    /// Next unique ID for sink particle creation
+    pub next_sink_id: u64,
 }
 
 /// Atomic nucleus with detailed structure
@@ -534,22 +541,22 @@ impl PhysicsEngine {
             atoms: Vec::new(),
             molecules: Vec::new(),
             quantum_chemistry_engine: quantum_chemistry::QuantumChemistryEngine::new(),
-            interaction_matrix: InteractionMatrix,
-            spacetime_grid: SpacetimeGrid,
-            quantum_vacuum: QuantumVacuum,
-            field_equations: FieldEquations,
-            particle_accelerator: ParticleAccelerator,
+            interaction_matrix: InteractionMatrix::default(),
+            spacetime_grid: SpacetimeGrid::default(),
+            quantum_vacuum: QuantumVacuum::default(),
+            field_equations: FieldEquations::default(),
+            particle_accelerator: ParticleAccelerator::default(),
             decay_channels: HashMap::new(),
             cross_sections: HashMap::new(),
             running_couplings: RunningCouplings::default(),
-            symmetry_breaking: SymmetryBreaking,
+            symmetry_breaking: SymmetryBreaking::default(),
             stellar_nucleosynthesis: StellarNucleosynthesis::new(),
-            time_step: 1e-18, // default time step
+            time_step: 1e-12,
             current_time: 0.0,
-            temperature: 0.0,
+            temperature: 2.73, // Cosmic microwave background
             energy_density: 0.0,
-            particle_creation_threshold: 1e-10,
-            volume: 1e-30,  // 1 cubic femtometer
+            particle_creation_threshold: 1e6, // 1 MeV
+            volume: 1e27, // 1 cubic meter
             compton_count: 0,
             pair_production_count: 0,
             neutrino_scatter_count: 0,
@@ -557,37 +564,17 @@ impl PhysicsEngine {
             neutron_decay_count: 0,
             fusion_count: 0,
             fission_count: 0,
-            spatial_grid: SpatialHashGrid::new(1e-14), // 10 femtometer interaction range
-            // A default, large boundary. Will be resized dynamically.
-            octree: Octree::new(AABB::new(Vector3::zeros(), Vector3::new(1.0, 1.0, 1.0))),
+            spatial_grid: SpatialHashGrid::new(1e-6),
+            octree: Octree::new(AABB::new(Vector3::zeros(), Vector3::new(1e-3, 1e-3, 1e-3))),
             interaction_history: Vec::new(),
             sph_solver: SphSolver::default(),
+            sink_particles: Vec::new(),
+            next_sink_id: 0,
         };
-
-        engine.initialize_particle_properties()?;
         
-        // Initialize quantum fields
         engine.initialize_quantum_fields()?;
-        
-        // Initialize particle properties
         engine.initialize_particle_properties()?;
-        
-        // Initialize interaction matrix
         engine.initialize_interactions()?;
-        
-        // Set larger volume for demo
-        engine.volume = 1e-42; // Cubic femtometer scale
-        
-        // Print physics engine initialization values
-        println!("🔬 PHYSICS ENGINE INITIALIZATION:");
-        println!("   Initial temperature: {:.2e} K", engine.temperature);
-        println!("   Initial energy density: {:.2e} J/m³", engine.energy_density);
-        println!("   Simulation volume: {:.2e} m³", engine.volume);
-        println!("   Time step: {:.2e} s", engine.time_step);
-        println!("   Particle creation threshold: {:.2e}", engine.particle_creation_threshold);
-        //        println!("   FFI libraries available: {:?}", engine.ffi_available);
-        println!("   Quantum fields initialized: {}", engine.quantum_fields.len());
-        println!("   Cross sections loaded: {}", engine.cross_sections.len());
         
         Ok(engine)
     }
@@ -835,68 +822,69 @@ impl PhysicsEngine {
     pub fn step(&mut self, dt: f64) -> Result<()> {
         self.time_step = dt;
         self.current_time += dt;
-
-        // --------------------
-        // FULL-FIDELITY PATH
-        // --------------------
-        #[cfg(feature = "heavy")]
-        {
-            // 1. Particle interactions (Geant4 or native)
-            self.process_particle_interactions()?;
-
-            // 2. Molecular dynamics (LAMMPS or native)
-            self.process_molecular_dynamics()?;
-
-            // 3. Gravitational dynamics (GADGET or native)
-            self.process_gravitational_dynamics()?;
-
-            // 4. SPH hydrodynamics for fluid dynamics and star formation
-            self.process_sph_hydrodynamics()?;
-
-            // 5. Nuclear physics
-            self.process_nuclear_fusion()?;
-            self.process_nuclear_fission()?;
-            self.update_nuclear_shells()?;
-
-            // 6. Atomic physics & phase changes
-            self.update_atomic_physics()?;
-            self.process_phase_transitions()?;
-
-            // 7. Emergent phenomena & quantum fields
-            let mut emergent_states: Vec<PhysicsState> = self
-                .particles
-                .iter()
-                .map(|p| PhysicsState {
-                    position: p.position,
-                    velocity: p.velocity,
-                    acceleration: Vector3::zeros(),
-                    mass: p.mass,
-                    charge: p.charge,
-                    temperature: self.temperature,
-                    entropy: 0.0,
-                })
-                .collect();
-            self.update_emergent_properties(&mut emergent_states)?;
-
-            self.evolve_quantum_state()?;
-            self.update_spacetime_curvature()?;
-
-            // Ensure conservation laws each step.
-            self.validate_conservation_laws()?;
+        
+        // Update quantum fields
+        for field in self.quantum_fields.values_mut() {
+            // Placeholder for quantum field evolution
         }
-
-        // --------------------
-        // FAST PATH (default)
-        // --------------------
-        #[cfg(not(feature = "heavy"))]
-        {
-                    // Only recompute kinematic energies in parallel; skip expensive gravity pair-wise forces.
-        self.update_particle_energies()?;
-        }
-
-        // Apply cosmological expansion effects to all particles 
-        self.apply_cosmological_expansion_to_particles(dt)?;
-
+        
+        // Process particle interactions
+        self.process_particle_interactions()?;
+        
+        // Process molecular dynamics
+        self.process_molecular_dynamics()?;
+        
+        // Process gravitational dynamics
+        self.process_gravitational_dynamics()?;
+        
+        // Process SPH hydrodynamics
+        self.process_sph_hydrodynamics()?;
+        
+        // Process gravitational collapse and sink particle formation
+        self.process_gravitational_collapse()?;
+        
+        // Process nuclear reactions
+        self.process_nuclear_reactions()?;
+        
+        // Process particle decays
+        self.process_particle_decays()?;
+        
+        // Process atomic physics
+        self.update_atomic_physics()?;
+        
+        // Process molecular formation
+        self.process_molecular_formation(&mut [])?;
+        
+        // Process chemical reactions
+        self.process_chemical_reactions()?;
+        
+        // Process phase transitions
+        self.process_phase_transitions()?;
+        
+        // Update emergent properties
+        self.update_emergent_properties(&mut [])?;
+        
+        // Update running couplings
+        self.update_running_couplings(&mut [])?;
+        
+        // Check symmetry breaking
+        self.check_symmetry_breaking()?;
+        
+        // Update spacetime curvature
+        self.update_spacetime_curvature()?;
+        
+        // Update thermodynamic state
+        self.update_thermodynamic_state()?;
+        
+        // Evolve quantum state
+        self.evolve_quantum_state()?;
+        
+        // Update temperature
+        self.update_temperature()?;
+        
+        // Validate conservation laws
+        self.validate_conservation_laws()?;
+        
         Ok(())
     }
     
@@ -3286,6 +3274,86 @@ impl PhysicsEngine {
             let a_cubed_half = y / omega_m_over_lambda.sqrt();
             a_cubed_half.powf(2.0/3.0).max(0.001)
         }
+    }
+
+    /// Process gravitational collapse and sink particle formation
+    pub fn process_gravitational_collapse(&mut self) -> Result<()> {
+        // Convert particles to SPH particles for collapse detection
+        let mut sph_particles = self.sph_solver.convert_to_sph_particles(self.particles.clone());
+        
+        if sph_particles.is_empty() {
+            return Ok(());
+        }
+        
+        // Update SPH particle properties
+        self.sph_solver.compute_density(&mut sph_particles)?;
+        for particle in &mut sph_particles {
+            particle.update_eos();
+        }
+        
+        // Detect collapse regions
+        let collapse_regions = gravitational_collapse::detect_collapse_regions(&sph_particles, MEAN_MOLECULAR_WEIGHT);
+        
+        if !collapse_regions.is_empty() {
+            // Form new sink particles
+            let (new_sinks, particles_to_remove) = gravitational_collapse::form_sink_particles(
+                &sph_particles, 
+                collapse_regions, 
+                self.current_time, 
+                &mut self.next_sink_id
+            );
+            
+            // Add new sink particles
+            self.sink_particles.extend(new_sinks);
+            
+            // Remove particles that formed sinks (convert back to regular particles first)
+            let sph_particles_to_remove: Vec<SphParticle> = particles_to_remove.iter()
+                .map(|&i| sph_particles[i].clone())
+                .collect();
+            let regular_particles_to_remove: Vec<FundamentalParticle> = sph_particles_to_remove.iter()
+                .map(|sp| sp.particle.clone())
+                .collect();
+            
+            // Remove from main particle list
+            for particle_to_remove in regular_particles_to_remove {
+                if let Some(pos) = self.particles.iter().position(|p| 
+                    p.position == particle_to_remove.position && 
+                    p.particle_type == particle_to_remove.particle_type
+                ) {
+                    self.particles.remove(pos);
+                }
+            }
+            
+            info!("Formed {} new sink particles, removed {} gas particles", 
+                  self.sink_particles.len(), particles_to_remove.len());
+        }
+        
+        // Accrete gas onto existing sink particles
+        let accreted_particles = gravitational_collapse::accrete_onto_sinks(&mut sph_particles, &mut self.sink_particles);
+        
+        if !accreted_particles.is_empty() {
+            // Remove accreted particles from main particle list
+            let sph_particles_to_remove: Vec<SphParticle> = accreted_particles.iter()
+                .map(|&i| sph_particles[i].clone())
+                .collect();
+            let regular_particles_to_remove: Vec<FundamentalParticle> = sph_particles_to_remove.iter()
+                .map(|sp| sp.particle.clone())
+                .collect();
+            
+            for particle_to_remove in regular_particles_to_remove {
+                if let Some(pos) = self.particles.iter().position(|p| 
+                    p.position == particle_to_remove.position && 
+                    p.particle_type == particle_to_remove.particle_type
+                ) {
+                    self.particles.remove(pos);
+                }
+            }
+            
+            info!("Accreted {} particles onto {} sink particles", 
+                  accreted_particles.len(), self.sink_particles.len());
+        }
+        
+        Ok(())
     }
 }
     

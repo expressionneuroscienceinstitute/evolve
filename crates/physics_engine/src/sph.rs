@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_density_computation() {
-        let mut solver = SphSolver::new(KernelType::CubicSpline, 3);
+        let solver = SphSolver::new(KernelType::CubicSpline, 3);
         
         // Create test particles
         let mut particles = vec![

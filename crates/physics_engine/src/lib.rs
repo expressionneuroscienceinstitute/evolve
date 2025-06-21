@@ -44,6 +44,7 @@ pub mod quantum_math;
 pub mod octree;
 
 pub mod radiative_transfer;
+pub mod jeans_instability;
 
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
@@ -60,6 +61,7 @@ use self::spatial::{SpatialHashGrid, SpatialGridStats};
 use self::octree::{Octree, AABB};
 use self::sph::SphSolver; // NEW: SPH imports
 use self::radiative_transfer::RadiativeTransferSolver; // NEW: Radiative transfer imports
+use self::jeans_instability::JeansInstabilitySolver; // NEW: Jeans instability imports
 // use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT, VACUUM_PERMITTIVITY};
 use physics_types as shared_types;
 
@@ -79,7 +81,7 @@ use crate::gravitational_collapse::MEAN_MOLECULAR_WEIGHT;
 use crate::sph::SphParticle;
 use log::info;
 
-mod gravitational_collapse;
+pub mod gravitational_collapse;
 pub use gravitational_collapse::{jeans_mass, jeans_length, SinkParticle};
 
 /// Fundamental particle types in the Standard Model
@@ -125,6 +127,9 @@ pub enum ParticleType {
     
     // Molecules
     H2, H2O, CO2, CH4, NH3, // ... complex molecules
+    
+    // Sink particles for gravitational collapse (protostars, stars)
+    SinkParticle,
     
     // Dark matter candidate
     DarkMatter,
@@ -393,6 +398,9 @@ pub struct PhysicsEngine {
     
     /// Radiative transfer solver for gas cooling and heating
     pub radiative_transfer: RadiativeTransferSolver,
+    
+    /// Jeans instability solver for gravitational collapse and star formation
+    pub jeans_instability: JeansInstabilitySolver,
 }
 
 /// Atomic nucleus with detailed structure
@@ -577,6 +585,7 @@ impl PhysicsEngine {
             sink_particles: Vec::new(),
             next_sink_id: 0,
             radiative_transfer: RadiativeTransferSolver::default(),
+            jeans_instability: JeansInstabilitySolver::default(),
         };
         
         engine.initialize_quantum_fields()?;
@@ -952,77 +961,67 @@ impl PhysicsEngine {
             return Ok(());
         }
         
-        // Compute SPH time step
-        let sph_dt = self.sph_solver.compute_time_step(&sph_particles);
-        let sph_dt = sph_dt.min(self.time_step); // Use smaller of SPH or physics time step
+        // Compute SPH time step based on Courant condition
+        let dt_sph = self.sph_solver.compute_time_step(&sph_particles);
         
-        // Integrate SPH particles
-        self.sph_solver.integrate_step(&mut sph_particles, sph_dt)?;
-        
-        // Convert back to regular particles and update positions
-        let updated_particles = self.sph_solver.convert_from_sph_particles(sph_particles);
-        
-        // Update original particle positions and velocities
-        let mut sph_idx = 0;
-        for i in 0..self.particles.len() {
-            if matches!(self.particles[i].particle_type, ParticleType::Hydrogen | ParticleType::Helium) {
-                if sph_idx < updated_particles.len() {
-                    self.particles[i].position = updated_particles[sph_idx].position;
-                    self.particles[i].velocity = updated_particles[sph_idx].velocity;
-                    self.particles[i].momentum = updated_particles[sph_idx].mass * updated_particles[sph_idx].velocity;
-                    sph_idx += 1;
-                }
-            }
-        }
+        // Process SPH fluid dynamics
+        self.sph_solver.integrate_step(&mut sph_particles, dt_sph)?;
         
         // Process radiative transfer for gas cooling and heating
         self.process_radiative_transfer()?;
         
+        // Process Jeans instability and gravitational collapse
+        self.process_jeans_instability()?;
+        
         // Process gravitational collapse and sink particle formation
         self.process_gravitational_collapse()?;
         
-        debug!("Processed SPH hydrodynamics for {} gas particles", updated_particles.len());
         Ok(())
     }
 
     /// Process radiative transfer for gas cooling and heating
     fn process_radiative_transfer(&mut self) -> Result<()> {
         let constants = constants::PhysicsConstants::default();
-        
-        // Calculate local stellar luminosity and distance for each particle
-        let stellar_luminosity = self.calculate_local_stellar_luminosity();
-        
-        // Collect particle data to avoid borrow checker issues
-        let particle_data: Vec<_> = self.particles.iter().map(|p| {
-            let local_density = self.calculate_local_density(&p.position);
-            let metallicity = self.calculate_local_metallicity(&p.position);
-            let distance_to_star = self.calculate_distance_to_nearest_star(&p.position);
-            (p.position, local_density, metallicity, distance_to_star)
-        }).collect();
-        
-        // Update particle temperatures based on radiative transfer
+        let local_luminosity = self.calculate_local_stellar_luminosity();
+        // Collect particle positions to avoid borrow checker issues
+        let particle_positions: Vec<_> = self.particles.iter().map(|p| p.position).collect();
+        let metallicities: Vec<_> = particle_positions.iter().map(|pos| self.calculate_local_metallicity(pos)).collect();
+        let distances: Vec<_> = particle_positions.iter().map(|pos| self.calculate_distance_to_nearest_star(pos)).collect();
+        let densities: Vec<_> = particle_positions.iter().map(|pos| self.calculate_local_density(pos)).collect();
         for (i, particle) in self.particles.iter_mut().enumerate() {
-            let (_, local_density, metallicity, distance_to_star) = particle_data[i];
-            
-            // Update particle temperature based on radiative transfer
-            let mut temperature = self.temperature; // Use global temperature as starting point
-            self.radiative_transfer.update_temperature(
-                &mut temperature,
-                local_density,
-                metallicity,
-                stellar_luminosity,
-                distance_to_star,
-                self.time_step,
-                &constants
-            )?;
-            
-            // Update particle energy based on temperature change
-            let energy_change = 1.5 * constants::BOLTZMANN * (temperature - self.temperature);
-            particle.energy += energy_change;
-            
-            // Update global temperature (weighted average)
-            self.temperature = temperature;
+            if matches!(particle.particle_type, ParticleType::Hydrogen | ParticleType::Helium) {
+                let metallicity = metallicities[i];
+                let distance_to_star = distances[i];
+                let local_density = densities[i];
+                // Get radiative transfer solution
+                let radiative_solution = self.radiative_transfer.calculate_radiative_transfer(
+                    self.temperature, // Use global temperature for now
+                    local_density,
+                    metallicity,
+                    local_luminosity,
+                    distance_to_star,
+                    &constants,
+                );
+                let energy_change = radiative_solution.net_rate * self.time_step;
+                particle.energy += energy_change;
+                let specific_heat = 1.5 * constants.k_b / constants.m_p; // Monatomic gas
+                let temperature_change = energy_change / (local_density * specific_heat);
+                self.temperature += temperature_change;
+                self.temperature = self.temperature.max(2.73); // CMB temperature
+                self.temperature = self.temperature.min(1e8); // 100 million K
+            }
         }
+        
+        Ok(())
+    }
+
+    /// Process Jeans instability and gravitational collapse
+    fn process_jeans_instability(&mut self) -> Result<()> {
+        // Process gravitational collapse using the Jeans instability solver
+        self.jeans_instability.process_gravitational_collapse(
+            &mut self.particles,
+            self.time_step,
+        )?;
         
         Ok(())
     }

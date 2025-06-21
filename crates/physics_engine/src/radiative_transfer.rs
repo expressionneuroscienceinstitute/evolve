@@ -10,8 +10,7 @@
 //! - FLASH astrophysical radiative transfer
 
 use anyhow::Result;
-use nalgebra::Vector3;
-use crate::{PhysicsState, PhysicsConstants};
+use crate::PhysicsConstants;
 
 /// Stefan-Boltzmann constant (W⋅m⁻²⋅K⁻⁴)
 const STEFAN_BOLTZMANN: f64 = 5.670374419e-8;

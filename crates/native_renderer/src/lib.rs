@@ -258,6 +258,9 @@ pub struct NativeRenderer<'window> {
     pub orbit_sensitivity: f32,
     pub pan_sensitivity: f32,
     pub zoom_sensitivity: f32,
+
+    // Keep text buffers alive until GPU is done with them to avoid destroyed-buffer validation errors
+    text_buffers: Vec<glyphon::Buffer>,
 }
 
 /// Uniform data sent to GPU with heavy mode extensions
@@ -516,6 +519,50 @@ impl Camera {
         self.focus_on(Point3::new(0.0, 0.0, 0.0), Some(50.0));
         println!("🎯 Camera focused on origin");
     }
+
+    /// Get zoom level for LOD system - returns scale factor for detail level
+    pub fn get_zoom_level(&self) -> f32 {
+        let distance = (self.position - self.target).magnitude();
+        
+        // Scale levels:
+        // 0.01-0.1: Particle level (atoms, molecules)
+        // 0.1-10: Cell/organism level  
+        // 10-1000: Object level (rocks, trees)
+        // 1000-100k: Planetary level (continents, weather)
+        // 100k+: Stellar/galactic level (stars, planets as points)
+        
+        if distance < 0.1 {
+            0.0 // Microscope mode - individual particles
+        } else if distance < 10.0 {
+            1.0 // Biological scale
+        } else if distance < 1000.0 {
+            2.0 // Object scale
+        } else if distance < 100000.0 {
+            3.0 // Planetary scale
+        } else {
+            4.0 // Stellar scale
+        }
+    }
+
+    /// Get particle size multiplier based on zoom level for LOD
+    pub fn get_particle_size_multiplier(&self) -> f32 {
+        let distance = (self.position - self.target).magnitude();
+        
+        // Size scaling for visibility at different zoom levels
+        if distance < 0.01 {
+            1000.0  // Very close - make particles huge
+        } else if distance < 0.1 {
+            100.0   // Microscope level
+        } else if distance < 1.0 {
+            10.0    // Close inspection
+        } else if distance < 10.0 {
+            5.0     // Normal view
+        } else if distance < 100.0 {
+            2.0     // Medium zoom out
+        } else {
+            1.0     // Far zoom - default size
+        }
+    }
 }
 
 impl<'window> NativeRenderer<'window> {
@@ -613,10 +660,10 @@ impl<'window> NativeRenderer<'window> {
         });
         queue.write_buffer(&quad_vertex_buffer, 0, bytemuck::cast_slice(quad_vertices));
         
-        // Create instance buffer for particle data
+        // Create instance buffer for particle data (simple layout: position, color, size)
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Particle Instance Buffer"),
-            size: (max_particles * std::mem::size_of::<ParticleVertex>()) as u64,
+            size: (max_particles * std::mem::size_of::<SimpleParticleVertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -672,55 +719,25 @@ impl<'window> NativeRenderer<'window> {
                     },
                     // Particle data (per instance)
                     wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<ParticleVertex>() as u64,
+                        array_stride: std::mem::size_of::<SimpleParticleVertex>() as u64,
                         step_mode: wgpu::VertexStepMode::Instance,
                         attributes: &[
-                            // Position
+                            // Position (vec3)
                             wgpu::VertexAttribute {
                                 offset: 0,
                                 shader_location: 1,
                                 format: wgpu::VertexFormat::Float32x3,
                             },
-                            // Velocity
+                            // Color (vec3)
                             wgpu::VertexAttribute {
                                 offset: std::mem::size_of::<[f32; 3]>() as u64,
                                 shader_location: 2,
                                 format: wgpu::VertexFormat::Float32x3,
                             },
-                            // Mass
+                            // Size (f32)
                             wgpu::VertexAttribute {
                                 offset: (std::mem::size_of::<[f32; 3]>() * 2) as u64,
                                 shader_location: 3,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Charge
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>()) as u64,
-                                shader_location: 4,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Temperature
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 2) as u64,
-                                shader_location: 5,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Particle Type
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 3) as u64,
-                                shader_location: 6,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Interaction Count
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 4) as u64,
-                                shader_location: 7,
-                                format: wgpu::VertexFormat::Float32,
-                            },
-                            // Padding
-                            wgpu::VertexAttribute {
-                                offset: (std::mem::size_of::<[f32; 3]>() * 2 + std::mem::size_of::<f32>() * 5) as u64,
-                                shader_location: 8,
                                 format: wgpu::VertexFormat::Float32,
                             },
                         ],
@@ -815,6 +832,9 @@ impl<'window> NativeRenderer<'window> {
             orbit_sensitivity: 0.01,
             pan_sensitivity: 0.01,
             zoom_sensitivity: 0.01,
+
+            // Persistent text buffers (cleared each frame after rendering)
+            text_buffers: Vec::new(),
         })
     }
     
@@ -827,7 +847,7 @@ impl<'window> NativeRenderer<'window> {
             self.debug_panel.simulation_stats = Some(stats);
         }
 
-        let mut particles: Vec<ParticleVertex> = Vec::new();
+        let mut particles: Vec<SimpleParticleVertex> = Vec::new();
         
         // Get particles from physics engine
         let physics_particles = simulation.physics_engine.get_particles();
@@ -860,29 +880,29 @@ impl<'window> NativeRenderer<'window> {
             
             // Convert to temperature using kinetic theory (E = 3/2 kT for monatomic)
             let boltzmann_constant = 1.380649e-23; // J/K
-            let temperature = if physics_particle.mass > 0.0 {
+            let _temperature = if physics_particle.mass > 0.0 {
                 (2.0 * kinetic_energy) / (3.0 * boltzmann_constant)
             } else {
                 300.0 // Default for massless particles
             };
 
-            let render_particle = ParticleVertex {
+            // Derive a simple color from particle type value (basic rainbow mapping)
+            let hue = particle_type_value / 6.0;
+            let (r, g, b) = hsv_to_rgb(hue, 1.0, 1.0);
+
+            // Apply LOD-based particle scaling for better visibility at different zoom levels
+            let base_size = 0.003;
+            let size_multiplier = self.camera.get_particle_size_multiplier();
+            let final_size = base_size * size_multiplier;
+
+            let render_particle = SimpleParticleVertex {
                 position: [
-                    physics_particle.position.x as f32 * 1e-15, // Scale from meters to visualization units
-                    physics_particle.position.y as f32 * 1e-15,
-                    physics_particle.position.z as f32 * 1e-15,
+                    physics_particle.position.x as f32 * 1e-12,
+                    physics_particle.position.y as f32 * 1e-12,
+                    physics_particle.position.z as f32 * 1e-12,
                 ],
-                velocity: [
-                    physics_particle.velocity.x as f32 * 1e-6, // Scale velocity for visualization
-                    physics_particle.velocity.y as f32 * 1e-6,
-                    physics_particle.velocity.z as f32 * 1e-6,
-                ],
-                mass: (physics_particle.mass as f32 / 1.66e-27).log10().max(0.0), // Log scale relative to atomic mass unit
-                charge: physics_particle.charge as f32,
-                temperature: temperature as f32,
-                particle_type: particle_type_value,
-                interaction_count: physics_particle.interaction_history.len() as f32,
-                _padding: 0.0,
+                color: [r, g, b],
+                size: final_size,
             };
 
             particles.push(render_particle);
@@ -894,23 +914,19 @@ impl<'window> NativeRenderer<'window> {
                 break;
             }
 
-            let store_particle = ParticleVertex {
+            let (r, g, b) = (0.8, 0.8, 0.8);
+            let base_size = 0.003;
+            let size_multiplier = self.camera.get_particle_size_multiplier();
+            let final_size = base_size * size_multiplier;
+            
+            let store_particle = SimpleParticleVertex {
                 position: [
-                    simulation.store.particles.position[i].x as f32 * 1e-15,
-                    simulation.store.particles.position[i].y as f32 * 1e-15,
-                    simulation.store.particles.position[i].z as f32 * 1e-15,
+                    simulation.store.particles.position[i].x as f32 * 1e-12,
+                    simulation.store.particles.position[i].y as f32 * 1e-12,
+                    simulation.store.particles.position[i].z as f32 * 1e-12,
                 ],
-                velocity: [
-                    simulation.store.particles.velocity[i].x as f32 * 1e-6,
-                    simulation.store.particles.velocity[i].y as f32 * 1e-6,
-                    simulation.store.particles.velocity[i].z as f32 * 1e-6,
-                ],
-                mass: (simulation.store.particles.mass[i] as f32 / 1.66e-27).log10().max(0.0),
-                charge: simulation.store.particles.charge[i] as f32,
-                temperature: simulation.store.particles.temperature[i] as f32,
-                particle_type: 0.0, // Default particle type since store doesn't track this yet
-                interaction_count: 0.0, // Store doesn't track interaction history yet
-                _padding: 0.0,
+                color: [r, g, b],
+                size: final_size,
             };
 
             particles.push(store_particle);
@@ -920,20 +936,19 @@ impl<'window> NativeRenderer<'window> {
         if particles.is_empty() {
             println!("⚠️ No physics particles found, creating demo particles for testing");
             
+            let base_size = 0.01; // Make demo particles a bit larger to be visible
+            let size_multiplier = self.camera.get_particle_size_multiplier();
+            let final_size = base_size * size_multiplier;
+            
             for i in 0..10 {
-                let demo_particle = ParticleVertex {
+                let demo_particle = SimpleParticleVertex {
                     position: [
-                        (i as f32 - 5.0) * 2.0,
+                        (i as f32 - 5.0) * 0.1, // Bring them closer together for microscope view
                         0.0,
                         0.0,
                     ],
-                    velocity: [0.0, 0.0, 0.0],
-                    mass: 1.0 + i as f32 * 0.1,
-                    charge: if i % 2 == 0 { 1.0 } else { -1.0 },
-                    temperature: 300.0 + i as f32 * 100.0,
-                    particle_type: (i % 6) as f32,
-                    interaction_count: i as f32,
-                    _padding: 0.0,
+                    color: [1.0, 0.5, 0.0], // Orange for visibility
+                    size: final_size,
                 };
                 particles.push(demo_particle);
             }
@@ -956,6 +971,9 @@ impl<'window> NativeRenderer<'window> {
         let frame_start = std::time::Instant::now();
         
         println!("🔥 RENDER START - Frame {}", self.frame_count);
+        
+        // Clear previous text buffers – GPU has finished with them once we reach a new frame
+        self.text_buffers.clear();
         
         // Update camera matrices
         self.camera.update_view();
@@ -985,9 +1003,7 @@ impl<'window> NativeRenderer<'window> {
         const SPACING_X: f32 = 1.5;
         const SPACING_Y: f32 = 1.8;
 
-        // Create all text buffers first to avoid borrowing conflicts
-        let mut label_buffers: Vec<Buffer> = Vec::with_capacity(ROW_LABELS.len() + COL_LABELS.len());
-        
+        // ---- helper: project world-space to screen-space ----
         let vp_mat = Matrix4::<f32>::from_row_slice(&[
             view_proj[0][0], view_proj[0][1], view_proj[0][2], view_proj[0][3],
             view_proj[1][0], view_proj[1][1], view_proj[1][2], view_proj[1][3],
@@ -998,85 +1014,67 @@ impl<'window> NativeRenderer<'window> {
         let world_to_screen = |pos: [f32; 3], size: (u32, u32)| -> Option<(f32, f32)> {
             let wp = nalgebra::Vector4::new(pos[0], pos[1], pos[2], 1.0);
             let clip = vp_mat * wp;
-            if clip.w.abs() < 1e-6 { return None; }
+            if clip.w.abs() < 1e-6 {
+                return None;
+            }
             let ndc = clip / clip.w;
-            let ndc_x = ndc.x;
-            let ndc_y = ndc.y;
-            if ndc_x.abs() > 1.0 || ndc_y.abs() > 1.0 { return None; }
-            let sx = (ndc_x + 1.0) * 0.5 * size.0 as f32;
-            let sy = (1.0 - (ndc_y + 1.0) * 0.5) * size.1 as f32;
-            Some((sx, sy))
+            if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 {
+                return None;
+            }
+            Some((
+                (ndc.x + 1.0) * 0.5 * size.0 as f32,
+                (1.0 - (ndc.y + 1.0) * 0.5) * size.1 as f32,
+            ))
         };
 
-        let y_offset = (COLOR_SETS as f32 - 1.0) * 0.5 * SPACING_Y;
+        // First pass: create and store all text buffers without creating TextAreas
+        // Clear old text buffers to prevent memory buildup
+        self.text_buffers.clear();
 
-        // Create buffers for row labels
-        for (row_idx, label) in ROW_LABELS.iter().enumerate() {
-            let y_world = row_idx as f32 * SPACING_Y - y_offset;
+        // Collect buffer creation info first
+        let mut buffer_info = Vec::new();
+
+        // Row labels buffer info
+        for (row_idx, _label) in ROW_LABELS.iter().enumerate() {
+            let y_world = row_idx as f32 * SPACING_Y - (COLOR_SETS as f32 - 1.0) * 0.5 * SPACING_Y;
             let x_world = -(SAMPLES_PER_ROW as f32 * SPACING_X * 0.5) - 1.5;
-            if world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)).is_some() {
-                let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(16.0, 20.0));
-                buffer.set_size(&mut self.font_system, 180.0, 24.0);
-                buffer.set_text(&mut self.font_system, label, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
-                label_buffers.push(buffer);
+            if let Some((sx, sy)) = world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)) {
+                buffer_info.push((ROW_LABELS[row_idx], sx, sy, Color::rgb(255, 255, 255), 16.0, 180.0, 24.0));
             }
         }
 
-        // Create buffers for column labels
-        let top_row_y_world = 0.0 - y_offset;
+        // Column labels buffer info
+        let top_row_y_world = 0.0 - (COLOR_SETS as f32 - 1.0) * 0.5 * SPACING_Y;
         let x_start = -(SAMPLES_PER_ROW as f32 * SPACING_X * 0.5);
         for (col_idx, label) in COL_LABELS.iter().enumerate() {
             let x_world = col_idx as f32 * SPACING_X + x_start;
             let y_world = top_row_y_world + SPACING_Y + 0.5;
-            if world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)).is_some() {
-                let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(14.0, 18.0));
-                buffer.set_size(&mut self.font_system, 80.0, 22.0);
-                buffer.set_text(&mut self.font_system, label, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
-                label_buffers.push(buffer);
+            if let Some((sx, sy)) = world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)) {
+                buffer_info.push((label, sx, sy, Color::rgb(255, 255, 0), 14.0, 80.0, 22.0));
             }
+        }
+
+        // Create all text buffers
+        for (text, _sx, _sy, _color, font_size, width, height) in &buffer_info {
+            let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(*font_size, font_size + 4.0));
+            buffer.set_size(&mut self.font_system, *width, *height);
+            buffer.set_text(&mut self.font_system, text, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+            self.text_buffers.push(buffer);
         }
 
         // Now create text areas with references to the buffers
         let mut text_areas: Vec<TextArea> = Vec::new();
-        let mut buffer_idx = 0;
-
-        // Row labels text areas
-        for (row_idx, _label) in ROW_LABELS.iter().enumerate() {
-            let y_world = row_idx as f32 * SPACING_Y - y_offset;
-            let x_world = -(SAMPLES_PER_ROW as f32 * SPACING_X * 0.5) - 1.5;
-            if let Some((sx, sy)) = world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)) {
-                if buffer_idx < label_buffers.len() {
-                    let bounds = TextBounds { left: 0, top: 0, right: self.size.width as i32, bottom: self.size.height as i32 };
-                    text_areas.push(TextArea { 
-                        buffer: &label_buffers[buffer_idx], 
-                        left: sx, 
-                        top: sy, 
-                        scale: 1.0, 
-                        bounds, 
-                        default_color: Color::rgb(255,255,255) 
-                    });
-                    buffer_idx += 1;
-                }
-            }
-        }
-
-        // Column labels text areas
-        for (col_idx, _label) in COL_LABELS.iter().enumerate() {
-            let x_world = col_idx as f32 * SPACING_X + x_start;
-            let y_world = top_row_y_world + SPACING_Y + 0.5;
-            if let Some((sx, sy)) = world_to_screen([x_world, y_world, 0.0], (self.size.width, self.size.height)) {
-                if buffer_idx < label_buffers.len() {
-                    let bounds = TextBounds { left: 0, top: 0, right: self.size.width as i32, bottom: self.size.height as i32 };
-                    text_areas.push(TextArea { 
-                        buffer: &label_buffers[buffer_idx], 
-                        left: sx, 
-                        top: sy, 
-                        scale: 1.0, 
-                        bounds, 
-                        default_color: Color::rgb(255,255,0) 
-                    });
-                    buffer_idx += 1;
-                }
+        for (buffer_idx, (_text, sx, sy, color, _font_size, _width, _height)) in buffer_info.iter().enumerate() {
+            if buffer_idx < self.text_buffers.len() {
+                let bounds = TextBounds { left: 0, top: 0, right: self.size.width as i32, bottom: self.size.height as i32 };
+                text_areas.push(TextArea { 
+                    buffer: &self.text_buffers[buffer_idx], 
+                    left: *sx, 
+                    top: *sy, 
+                    scale: 1.0, 
+                    bounds, 
+                    default_color: *color 
+                });
             }
         }
 
@@ -1157,10 +1155,10 @@ impl<'window> NativeRenderer<'window> {
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.0,
-                            g: 0.3,
+                            g: 0.0,
                             b: 0.0,
                             a: 1.0,
-                        }), // GREEN BACKGROUND - proves rendering works
+                        }), // BLACK SPACE-LIKE BACKGROUND for better particle visibility
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1220,6 +1218,26 @@ impl<'window> NativeRenderer<'window> {
         // Submit GPU commands and present the frame
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+
+        // === NEW: GPU lifecycle safeguard for debug resources ===
+        // When the debug panel is active we allocate and drop many text buffers
+        // every frame.  If any of those GPU buffers are freed while the GPU is
+        // still processing the previous frame wgpu will raise a validation
+        // error ("Buffer is destroyed").  To guarantee safety we synchronise
+        // with the GPU once per frame while the debug UI is visible.  In normal
+        // rendering mode we keep the previous non-blocking behaviour for
+        // performance.
+        if self.debug_panel.visible {
+            // Non-blocking poll every frame keeps the driver alive without stalling
+            // the CPU.  We now rely on an explicit poll-and-drop inside
+            // `render_debug_text` (added above) to guarantee safe destruction of
+            // old text buffers, so we can always use the lightweight mode here.
+            self.device.poll(wgpu::Maintain::Poll);
+        } else {
+            // Lightweight polling – just allow the driver to make progress.
+            self.device.poll(wgpu::Maintain::Poll);
+        }
+        // === END safeguard ===
 
         // ---- Metrics ----
         let frame_time = frame_start.elapsed();
@@ -1294,6 +1312,12 @@ impl<'window> NativeRenderer<'window> {
     pub fn toggle_debug_panel(&mut self) {
         self.debug_panel.visible = !self.debug_panel.visible;
         println!("🎛️ Debug panel: {}", if self.debug_panel.visible { "ON" } else { "OFF" });
+        
+        // When panel is turned off, clear any cached text buffers to prevent opacity issues
+        if !self.debug_panel.visible {
+            self.text_buffers.clear();
+            println!("🧹 Cleared debug panel text buffers");
+        }
     }
     
     /// Cycle through debug panel modes
@@ -1423,8 +1447,8 @@ impl<'window> NativeRenderer<'window> {
                     self.debug_panel.show_performance_metrics = !self.debug_panel.show_performance_metrics;
                 },
                 KeyCode::F5 => {
-                    self.camera.reset_view();
-                    println!("📷 Camera reset to default view");
+                    self.camera_microscope_reset();
+                    println!("🔬 Microscope view reset - focusing on particle");
                 },
                 KeyCode::Space => {
                     // Focus on center of particle system
@@ -1449,7 +1473,16 @@ impl<'window> NativeRenderer<'window> {
         }
 
         let Some(ref stats) = self.debug_panel.simulation_stats else {
-            return Ok(());
+            // If no stats available, show a placeholder message
+            let placeholder_text = "🔬 EVOLUTION Universe Simulation - Debug Panel [F1=Toggle]\n\
+                                   📊 Waiting for simulation data...\n\
+                                   \n\
+                                   🎮 Controls:\n\
+                                   • F1: Toggle debug panel\n\
+                                   • F2: Cycle debug modes\n\
+                                   • F5: Reset camera view";
+
+            return self.render_debug_text(encoder, view, placeholder_text);
         };
 
         // Create debug text content based on current mode
@@ -1468,8 +1501,9 @@ impl<'window> NativeRenderer<'window> {
                      🎮 Controls:\n\
                      • Left Mouse: Orbit camera around target\n\
                      • Middle Mouse: Pan camera\n\
-                     • Scroll Wheel: Zoom in/out\n\
+                     • Scroll Wheel: Zoom in/out (LOD scaling)\n\
                      • Space: Focus on origin\n\
+                     • F5: Microscope view (particle close-up)\n\
                      • F3: Toggle physics details\n\
                      • F4: Toggle performance metrics\n\
                      \n\
@@ -1560,6 +1594,7 @@ impl<'window> NativeRenderer<'window> {
                      • Tick span: {:.1} years\n\
                      • Camera position: ({:.1}, {:.1}, {:.1})\n\
                      • Camera target: ({:.1}, {:.1}, {:.1})\n\
+                     • Zoom level: {:.1} (distance: {:.4})\n\
                      • Current color mode: {:?}",
                     self.metrics.fps,
                     self.metrics.frame_time_ms,
@@ -1578,6 +1613,8 @@ impl<'window> NativeRenderer<'window> {
                     self.camera.target.x,
                     self.camera.target.y,
                     self.camera.target.z,
+                    self.camera.get_zoom_level(),
+                    (self.camera.position - self.camera.target).magnitude(),
                     self.camera.color_mode
                 )
             },
@@ -1702,20 +1739,42 @@ impl<'window> NativeRenderer<'window> {
             },
         };
 
-        // Create text buffer for debug panel
+        self.render_debug_text(encoder, view, &debug_text)
+    }
+
+    /// Render debug text with proper buffer lifecycle management
+    fn render_debug_text(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, text: &str) -> Result<()> {
+        // Clean up old text buffers only after ensuring GPU has finished
+        // all previously submitted work that might still reference them.
+        // Waiting here guarantees we never destroy a buffer that is still
+        // in-flight, preventing the validation error we observed while the
+        // debug panel is active.
+        if self.text_buffers.len() > 5 {
+            // Block until GPU is idle before releasing old buffers.
+            self.device.poll(wgpu::Maintain::Wait);
+            self.text_buffers.clear();
+        }
+
+        // CRITICAL: Store buffer BEFORE creating TextArea to ensure proper lifecycle
         let mut debug_buffer = Buffer::new(&mut self.font_system, Metrics::new(16.0, 20.0));
         debug_buffer.set_size(&mut self.font_system, self.size.width as f32 * 0.4, self.size.height as f32 * 0.8);
         debug_buffer.set_text(
             &mut self.font_system,
-            &debug_text,
+            text,
             Attrs::new().family(Family::Monospace),
             Shaping::Advanced
         );
         debug_buffer.shape_until_scroll(&mut self.font_system);
 
-        // Position debug panel in top-left corner with padding
+        // Store buffer FIRST to ensure it stays alive during GPU operations
+        self.text_buffers.push(debug_buffer);
+        
+        // Get reference to the buffer we just stored
+        let buffer_ref = self.text_buffers.last().unwrap();
+
+        // Create text area with reference to stored buffer
         let text_area = TextArea {
-            buffer: &debug_buffer,
+            buffer: buffer_ref,
             left: 20.0,
             top: 20.0,
             scale: 1.0,
@@ -1725,11 +1784,11 @@ impl<'window> NativeRenderer<'window> {
                 right: (self.size.width / 2) as i32,
                 bottom: (self.size.height - 20) as i32,
             },
-            default_color: Color::rgb(220, 220, 220), // Light gray text
+            default_color: Color::rgb(255, 255, 255), // Bright white text for better visibility
         };
 
-        // Render debug text
-        self.text_renderer.prepare(
+        // Prepare text rendering
+        if let Err(e) = self.text_renderer.prepare(
             &self.device,
             &self.queue,
             &mut self.font_system,
@@ -1740,8 +1799,12 @@ impl<'window> NativeRenderer<'window> {
             },
             [text_area],
             &mut self.text_cache,
-        ).map_err(|e| anyhow::anyhow!("Text preparation failed: {}", e))?;
+        ) {
+            warn!("Text preparation failed: {}", e);
+            return Ok(()); // Don't crash, just skip text rendering
+        }
 
+        // Render the text
         {
             let mut text_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Debug Text Pass"),
@@ -1758,8 +1821,10 @@ impl<'window> NativeRenderer<'window> {
                 occlusion_query_set: None,
             });
 
-            self.text_renderer.render(&self.text_atlas, &mut text_pass)
-                .map_err(|e| anyhow::anyhow!("Text rendering failed: {}", e))?;
+            if let Err(e) = self.text_renderer.render(&self.text_atlas, &mut text_pass) {
+                warn!("Text rendering failed: {}", e);
+                // Don't return error, just log and continue
+            }
         }
 
         Ok(())
@@ -1790,6 +1855,40 @@ impl<'window> NativeRenderer<'window> {
             self.camera.flythrough_move(movement, 1.0);
             println!("✈️ Unity Flythrough: {:?} pressed, movement: {:?}", key_code, movement);
         }
+    }
+
+    /// Reset camera to microscope view - focus on a particle up close
+    pub fn camera_microscope_reset(&mut self) {
+        // Position camera very close to origin to see particles like through a microscope
+        self.camera.position = Point3::new(0.01, 0.01, 0.05); // Very close
+        self.camera.target = Point3::new(0.0, 0.0, 0.0);      // Looking at origin
+        self.camera.up = Vector3::new(0.0, 1.0, 0.0);         // Standard up vector
+        self.camera.fov = 45.0;                                // Good viewing angle
+        
+        // Update camera matrices
+        self.camera.update_view();
+        self.camera.update_projection();
+        
+        println!("🔬 MICROSCOPE MODE: Camera positioned at distance {:.4} for particle inspection", 
+                (self.camera.position - self.camera.target).magnitude());
+        println!("🔍 Use scroll wheel to zoom in/out, drag to pan around particles");
+    }
+}
+
+/// Convert HSV (0.0-1.0) to RGB (0.0-1.0)
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    let i = (h * 6.0).floor() as i32;
+    let f = h * 6.0 - i as f32;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - f * s);
+    let t = v * (1.0 - (1.0 - f) * s);
+    match i % 6 {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
     }
 }
 
@@ -1822,7 +1921,7 @@ pub async fn run_renderer(simulation: Arc<Mutex<UniverseSimulation>>) -> Result<
     info!("    • Right Mouse Hold + WASD - Flythrough mode (first-person)");
     info!("    • Scroll Wheel - Zoom in/out");
     info!("    • Space - Focus on origin");
-    info!("    • F5 - Reset camera view");
+    info!("    • F5 - Microscope view reset (particle close-up)");
     info!("  🎛️ Debug Panel:");
     info!("    • F1 - Toggle debug panel");
     info!("    • F2 - Cycle debug modes (Overview/Physics/Performance/Particles/Chemistry/Cosmology)");

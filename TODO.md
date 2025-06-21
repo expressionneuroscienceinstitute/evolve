@@ -1,249 +1,138 @@
-# EVOLVE Universe Simulation - TODO & Progress Tracker
+# EVOLVE Development TODO
 
-This file tracks the development status, completed work, and remaining tasks for the EVOLVE project.
+**Project Status**: ✅ **FULLY FUNCTIONAL** - All core systems operational
+**Build Status**: ✅ Clean compilation (zero warnings)
+**Current Branch**: `feature/physics-debug-panel`
 
-## 🎯 Project Status Overview
+## 🚀 Quick Dev Setup
 
-**Current Status:** ✅ **FULLY FUNCTIONAL** - All core systems operational, clean compilation
-**Build Status:** ✅ All crates compile successfully
-**Core Features:** ✅ Physics engine, universe simulation, CLI, web dashboard all working
-**Scientific Accuracy:** ✅ Comprehensive nuclear physics, stellar evolution, statistical mechanics
+```bash
+git clone https://github.com/ankziety/evolution.git
+cd evolution
+cargo check --workspace  # Must pass cleanly
+cargo test --workspace   # All tests passing
+cargo run --bin universectl -- start --native-render
+```
 
-## 🚀 Quick Start Status
+## 📋 Current Active TODOs
 
-- ✅ **Simulation Server:** `cargo run --bin universectl -- start --serve-dash 8080`
-- ✅ **Web Dashboard:** `cd viz_web && trunk serve --port 9000`
-- ✅ **CLI Commands:** All inspection, mapping, and control commands functional
-- ✅ **Real Data:** Planet listing, universe statistics, physics diagnostics all use real simulation data
+### 🔬 **HIGH PRIORITY** - Scientific Accuracy
 
-## 📊 Major Accomplishments
+#### Nuclear Physics Enhancement
+- [ ] **Expand ENDF/B-VIII.0 Database** - Currently ~50 isotopes, expand to full dataset
+  - Files: `crates/physics_engine/src/endf_data.rs`, `crates/physics_engine/src/nuclear_physics.rs`
+  - Impact: More accurate heavy element nucleosynthesis
+  - Effort: Medium (database import automation needed)
 
-### ✅ Core Physics Engine (COMPLETED)
-- **Nuclear Physics:** Comprehensive nucleosynthesis with stellar evolution
-- **Atomic Physics:** Electronic transitions, ionization, recombination
-- **Statistical Mechanics:** Van der Waals EOS, Sackur-Tetrode entropy
-- **Phase Transitions:** Realistic water/hydrogen phase models
-- **Cross-Section Database:** Temperature-dependent nuclear reactions with experimental data
+#### Cosmological Realism
+- [ ] **Implement Cosmological Expansion** - Add Hubble flow and dark energy
+  - Files: `crates/universe_sim/src/cosmic_era.rs`, `crates/physics_engine/src/general_relativity.rs`
+  - Current: Static universe simulation
+  - Needed: Friedmann equations, scale factor evolution
+  - Effort: Medium (cosmology physics knowledge required)
 
-### ✅ Universe Simulation (COMPLETED)
-- **Cosmic Evolution:** Big Bang to present day modeling
-- **Stellar Formation:** IMF-based star generation with realistic properties
-- **Planetary Systems:** Procedural planet generation around stars
-- **Chemical Evolution:** Supernova enrichment and galactic metallicity
-- **Agent Lineages:** AI evolution tracking on habitable worlds
-
-### ✅ Command-Line Interface (COMPLETED)
-- **Simulation Control:** start, stop, status, speed control
-- **Universe Inspection:** Real-time mapping, planet listing, detailed inspection
-- **Physics Diagnostics:** Performance monitoring, interaction statistics
-- **God-Mode Commands:** Complete simulation manipulation toolkit
-- **Interactive Mode:** Real-time monitoring and control
-
-### ✅ Web Visualization (OPERATIONAL)
-- **WASM Dashboard:** Real-time universe visualization
-- **WebSocket Integration:** Live data streaming from simulation
-- **Multi-layer Rendering:** Stars, gas, dark matter, radiation views
-
-## 🔬 Scientific Accuracy Status
-
-### ✅ Completed Scientific Implementations
-- **Nuclear Cross-Sections:** ENDF/B-VIII.0 experimental data integration
-- **Stellar Nucleosynthesis:** Complete pp-chain, CNO cycle, advanced burning
-- **Quantum Tunneling:** Gamow peak calculations for stellar conditions
-- **General Relativity:** Basic spacetime curvature effects (placeholder ready)
-- **Thermodynamics:** Proper statistical mechanics with quantum corrections
-- **Quantum Chemistry:** Refactored to a modular, extensible, and scientifically-grounded engine.
-
-### ⚠️ Active Scientific TODOs
-
-#### Codebase Refactoring & Cleanup
-- ✅ **COMPLETED** - Resolved critical compilation errors
-  - **Status:** All major compilation errors resolved. DiagnosticsSystem Default implementation added, ffi_integration errors fixed, Cargo.toml issues resolved.
-  - **Completed:** Fixed missing Default implementations, removed unused imports, corrected struct field issues, updated C string literals, resolved lammps.rs enumerate issues.
-  - **Impact:** Critical compilation issues resolved - all crates now compile successfully with warnings only.
-
-- ✅ **COMPLETED** - Address remaining clippy warnings for clean compilation
-  - **Status:** All warnings resolved - clean compilation achieved
-  - **Completed:** Added `#[allow(dead_code)]` attributes to unused functions and fields, fixed `gadget` feature configuration, resolved all compilation warnings
-  - **Impact:** Project now meets strict "no warnings tolerance" build standard with zero warnings
-
-#### Nuclear Physics Enhancements
-- [ ] **MEDIUM PRIORITY** - Expand nuclear database with complete ENDF/B-VIII.0 dataset
-  - **Status:** Foundation implemented, ~50 key isotopes covered
-  - **Remaining:** Full database import automation, validation framework
-  - **Impact:** More accurate heavy element nucleosynthesis
-
-#### Cosmological Realism  
-- [ ] **MEDIUM PRIORITY** - Implement cosmological expansion (Hubble flow)
-  - **Current:** Static universe simulation
-  - **Needed:** Dark energy effects, proper cosmic timeline
-  - **Implementation:** Friedmann equations, scale factor evolution
-
-#### Multi-Scale Physics Integration
-- [ ] **LOW PRIORITY** - Connect quantum field evolution to cosmic structure
-  - **Status:** Placeholder implementations ready
-  - **Needed:** Schrödinger equation integration, field coupling
-  - **Complexity:** High - requires quantum field theory expertise
-
-## 🎮 User Experience & Features
-
-### ✅ Fully Operational Features
-- **Universe Mapping:** ASCII heat maps with multiple data layers
-- **Planet Discovery:** Real-time habitable world detection
-- **Lineage Tracking:** AI evolution progress monitoring  
-- **Physics Monitoring:** Real-time particle interaction statistics
-- **Performance Analytics:** System resource usage, bottleneck detection
-
-### 🚧 Enhancement TODOs
-
-#### Command-Line Improvements
-- ✅ **COMPLETED** - Add historical trend analysis to universe statistics
-  - **Current:** Snapshot statistics only
-  - **Needed:** Time series data, evolution tracking
-  - **Benefit:** Long-term simulation pattern analysis
-
-#### Web Dashboard Enhancements  
-- [ ] **MEDIUM PRIORITY** - Add interactive planet inspection in web UI
-  - **Current:** CLI-only detailed inspection
-  - **Needed:** Click-to-inspect functionality in web dashboard
-  - **Implementation:** WebSocket command routing, interactive overlays
-
-## ⚡ Performance & Optimization
-
-### ✅ Current Performance Status
-- **Particle Count:** Successfully handles 1M+ tracked particles  
-- **Memory Usage:** Efficient ECS architecture, low memory overhead
-- **Parallel Processing:** Multi-threaded physics and AI simulation
-- **Real-time Monitoring:** System diagnostics with performance tracking
-
-### 🔧 Optimization TODOs
+### ⚡ **MEDIUM PRIORITY** - Performance & Optimization
 
 #### Spatial Optimization
-- [ ] **MEDIUM PRIORITY** - Implement spatial partitioning for particle interactions
-  - **Current:** O(N²) interaction checking for some systems
-  - **Needed:** Octree or grid-based spatial indexing
-  - **Performance Impact:** Critical for >10⁶ particle simulations
+- [ ] **Spatial Partitioning for Particle Interactions** - Replace O(N²) with octree/grid
+  - Files: `crates/physics_engine/src/spatial.rs`, `crates/physics_engine/src/octree.rs`
+  - Current: O(N²) interaction checking
+  - Impact: Critical for >10⁶ particle simulations
+  - Effort: Medium (spatial data structures)
 
 #### GPU Acceleration
-- [ ] **LOW PRIORITY** - Add GPU acceleration for field calculations
-  - **Current:** CPU-only quantum field calculations
-  - **Needed:** CUDA/OpenCL implementation
-  - **Complexity:** High - requires GPU programming expertise
+- [ ] **GPU Field Calculations** - CUDA/OpenCL for quantum fields
+  - Files: `crates/physics_engine/src/quantum_fields.rs`
+  - Current: CPU-only calculations
+  - Effort: High (GPU programming expertise required)
 
-## 🌐 Infrastructure & Distribution
+### 🌐 **LOW PRIORITY** - Features & Enhancement
 
-### ✅ Current Infrastructure
-- **JSON-RPC API:** Full simulation control and monitoring
-- **WebSocket Streaming:** Real-time data feeds
-- **Cross-platform:** Windows, macOS, Linux support
-- **Containerized:** Docker-ready deployment
+#### User Experience
+- [ ] **Interactive Planet Inspection in Native Renderer** - Click-to-inspect in GPU window
+  - Files: `crates/native_renderer/`, CLI integration
+  - Current: No interactive inspection UI
+  - Effort: Medium (renderer UI panel)
 
-### 🚧 Distribution TODOs
+#### Network Distribution
+- [ ] **Distributed Simulation Architecture** - Multi-node simulation
+  - Files: `crates/networking/`
+  - Status: Foundation implemented
+  - Effort: High (distributed systems expertise)
 
-#### Distributed Computing
-- [ ] **LOW PRIORITY** - Implement distributed simulation architecture
-  - **Status:** Foundation implemented with basic node communication
-  - **Needed:** Real network protocols, workload balancing
-  - **Complexity:** High - requires distributed systems expertise
+#### Security
+- [ ] **Network Authentication & Encryption** - TLS, tokens, access control
+  - Files: `crates/networking/src/lib.rs`
+  - Current: Local-only operation
+  - Effort: Medium (security protocols)
 
-#### Network Security
-- [ ] **LOW PRIORITY** - Add authentication and encryption for network mode
-  - **Current:** Local-only operation, basic security
-  - **Needed:** TLS, authentication tokens, access control
-  - **Use Case:** Multi-node simulation clusters
+## ✅ Recently Completed (Reference)
 
-## 🧪 Testing & Validation
+- **Clean Compilation**: Resolved all compilation errors and warnings
+- **Particle Physics Validation**: Comprehensive QCD validation test suite
+- **Nuclear Physics Integration**: All processes active in simulation loop
+- **Real System Monitoring**: CPU, memory, temperature tracking via sysinfo
+- **Enhanced CLI Interface**: All commands functional with real simulation data
 
-### ✅ Current Test Coverage
-- **Physics Validation:** Nuclear reaction Q-values, conservation laws
-- **Particle Physics Validation:** Comprehensive QCD validation, peer review tests, particle interaction tests
-- **Integration Tests:** Full simulation lifecycle testing
-- **Performance Benchmarks:** Physics engine performance baselines
+## 🔧 Development Guidelines
 
-### 📋 Testing TODOs
+### For AI Agents
+1. **Check TODO.md first** - Review current tasks before adding new ones
+2. **Consult RESEARCH_PAPERS.md** - For scientific references and validation
+3. **Maintain clean builds** - `cargo check --workspace` must pass
+4. **No stubs or shortcuts** - Implement features completely
+5. **Run tests** - Ensure `cargo test --workspace` passes
 
-#### Scientific Validation
-- ✅ **COMPLETED** - Comprehensive particle physics validation test suite
-  - **Status:** QCD validation, peer review tests, and particle interaction tests all passing
-  - **Coverage:** Standard Model particles, gauge theories, conservation laws
-  - **Scientific Impact:** Validates core physics engine against theoretical predictions
-- ✅ **COMPLETED** - Add comprehensive stellar evolution benchmarks (v0.2.2)
-  - **Implementation:** Added `test_stellar_properties_benchmarks` validating mass–radius, mass–temperature, and mass–luminosity relations across M → O classes in `world.rs` using CODATA 2022 solar constants and Harvard classification ranges.
-  - **Sources:** [GEANT4: A Simulation Toolkit](https://doi.org/10.1016/S0168-9002(03)01368-8) stellar parameter tables; CODATA 2022 fundamental constants for solar radius & luminosity.
-  - **Benefit:** Provides automated regression ensuring stellar property scaling laws remain astrophysically accurate when physics kernels are modified.
+### For Human Developers
+- **Code Quality**: No warnings tolerance, scientific rigor required
+- **Testing**: Critical paths covered by unit and integration tests
+- **Documentation**: Major features documented with examples
+- **Performance**: Verify optimizations don't sacrifice simulation fidelity
 
-#### Performance Regression Testing
-- [ ] **LOW PRIORITY** - Establish automated performance monitoring
-  - **Current:** Manual performance testing
-  - **Needed:** CI/CD performance regression detection
-  - **Implementation:** Criterion.rs benchmarks, automated reporting
+## 📚 Key Files for Contributors
 
-## 🎯 Future Roadmap
+### Core Physics
+- `crates/physics_engine/src/lib.rs` - Main physics engine entry
+- `crates/physics_engine/src/nuclear_physics.rs` - Nuclear reactions and data
+- `crates/physics_engine/src/quantum_chemistry.rs` - Molecular interactions
 
-### Phase 1: Scientific Accuracy (Next 3 months)
-1. Complete nuclear database expansion
-2. Implement cosmological expansion
-3. Add comprehensive stellar evolution benchmarks
-4. Enhance quantum field integration
+### Universe Simulation
+- `crates/universe_sim/src/world.rs` - Main world state and evolution
+- `crates/universe_sim/src/cosmic_era.rs` - Big Bang to present timeline
 
-### Phase 2: Scale & Performance (Next 6 months)  
-1. Spatial partitioning optimization
-2. GPU acceleration for field calculations
-3. Distributed simulation architecture
-4. Advanced AI consciousness modeling
+### User Interface
+- `cli/src/main.rs` - Command-line interface
+- `crates/native_renderer/` - GPU-native renderer and visualization
 
-### Phase 3: Advanced Features (Next 12 months)
-1. Multi-galaxy simulation support
-2. Advanced AI civilization modeling
-3. Speculative physics modules (string theory, loop quantum gravity)
-4. VR/AR visualization interfaces
+### Testing & Validation
+- `crates/physics_engine/tests/` - Physics validation tests
+- `crates/universe_sim/tests/` - Integration tests
 
-## 📋 Development Guidelines
+## 🎯 Development Priorities
 
-### Code Quality Standards
-- ✅ **Clean Compilation:** No warnings tolerance
-- ✅ **Scientific Rigor:** Physics implementations must be experimentally validated
-- ✅ **Documentation:** All major features documented with examples
-- ✅ **Testing:** Critical paths covered by unit and integration tests
+1. **Nuclear database expansion** (scientific impact, medium effort)
+2. **Cosmological expansion** (realism improvement, medium effort)  
+3. **Spatial optimization** (performance critical, medium effort)
+4. **Interactive web features** (user experience, medium effort)
+5. **Advanced AI consciousness** (speculative, high effort)
 
-### Memory Mentions
-According to memories from past conversations, the project emphasizes:
-- Clean compilation with no warnings
-- Scientific rigor in all physics implementations  
-- Comprehensive FFI integration for maximum accuracy
-- Real system monitoring replacing placeholder implementations
+## 📞 Quick Commands
 
-## 🎉 Recent Major Achievements
+```bash
+# Start development session
+cargo run --bin universectl -- start --native-render
 
-### This Development Cycle
-- ✅ **Complete Nuclear Physics Integration:** All processes active in main simulation loop
-- ✅ **Real System Monitoring:** CPU, memory, temperature tracking via sysinfo
-- ✅ **Enhanced Universe Statistics:** Comprehensive cosmic parameters and evolution metrics
-- ✅ **Professional CLI Interface:** All commands functional with real simulation data
-- ✅ **Clean Architecture:** ECS-based design with proper separation of concerns
-- ✅ **Particle Physics Validation:** Comprehensive test suite with QCD validation, peer review tests, and particle interaction validation - all tests passing
+# Interactive monitoring while developing
+cargo run --bin universectl -- interactive
 
-### Technical Milestones
-- ✅ **1M+ Particles:** Successfully simulating large-scale particle interactions
-- ✅ **Real-time Physics:** 60+ UPS with comprehensive physics calculations
-- ✅ **Scientific Accuracy:** Experimental cross-sections, proper thermodynamics
-- ✅ **User Experience:** Intuitive CLI with detailed inspection capabilities
+# Run full test suite
+cargo test --workspace
+
+# Check for compilation issues
+cargo check --workspace
+```
 
 ---
 
-## 📞 For Contributors
-
-**Priority Order for New Work:**
-1. Nuclear database expansion (medium priority, high scientific impact)
-2. Cosmological expansion implementation (medium priority, realism)
-3. Spatial optimization (medium priority, performance)
-4. Interactive web dashboard enhancements (medium priority, UX)
-5. Advanced consciousness modeling (low priority, speculative)
-
-**Getting Started:**
-- All core systems are functional and well-documented
-- `cargo check --workspace` should pass cleanly
-- Start simulation with `cargo run --bin universectl -- start`
-- Use `cargo run --bin universectl -- interactive` for live monitoring
-
-**Development Status:** 🟢 **READY FOR FEATURE DEVELOPMENT**
+**Status**: 🟢 **READY FOR FEATURE DEVELOPMENT**
+**Next Sprint Focus**: Nuclear database expansion and cosmological expansion

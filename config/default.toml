@@ -7,8 +7,8 @@ target_ups = 1000.0                    # Updates per second target
 # max_ticks = 0                         # No limit (infinite simulation) - 0 means infinite
 
 # Initial conditions
-initial_particle_count = 10000          # Starting particles after Big Bang
-universe_radius_ly = 1000.0            # Initial universe radius (light-years)
+initial_particle_count = 1000          # Starting particles after Big Bang
+universe_radius_ly = 100.0            # Initial universe radius (light-years)
 big_bang_temperature = 3000.0          # Initial temperature (K)
 
 # Physics parameters

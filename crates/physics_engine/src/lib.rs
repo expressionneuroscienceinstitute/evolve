@@ -44,7 +44,7 @@ pub mod octree;
 
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
-use anyhow::{Result, Context, bail};
+use anyhow::{Result};
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
 use rand::distributions::Distribution;
@@ -61,7 +61,7 @@ use physics_types as shared_types;
 pub use constants::*;
 
 // Add missing imports for constants and types
-use crate::constants::{SPEED_OF_LIGHT, GRAVITATIONAL_CONSTANT, ELECTRON_MASS, MUON_MASS, TAU_MASS, C_SQUARED};
+use crate::constants::{ELECTRON_MASS, MUON_MASS, TAU_MASS, C_SQUARED};
 use crate::constants::ELEMENTARY_CHARGE as E_CHARGE;
 use crate::utils::K_E;
 use crate::types::{

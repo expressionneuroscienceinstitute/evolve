@@ -43,6 +43,8 @@ pub mod quantum_chemistry;
 pub mod quantum_math;
 pub mod octree;
 
+pub mod radiative_transfer;
+
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
 use anyhow::{Result};
@@ -57,6 +59,7 @@ use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
 use self::spatial::{SpatialHashGrid, SpatialGridStats};
 use self::octree::{Octree, AABB};
 use self::sph::SphSolver; // NEW: SPH imports
+use self::radiative_transfer::RadiativeTransferSolver; // NEW: Radiative transfer imports
 // use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT, VACUUM_PERMITTIVITY};
 use physics_types as shared_types;
 
@@ -387,6 +390,9 @@ pub struct PhysicsEngine {
     pub sink_particles: Vec<SinkParticle>,
     /// Next unique ID for sink particle creation
     pub next_sink_id: u64,
+    
+    /// Radiative transfer solver for gas cooling and heating
+    pub radiative_transfer: RadiativeTransferSolver,
 }
 
 /// Atomic nucleus with detailed structure
@@ -570,6 +576,7 @@ impl PhysicsEngine {
             sph_solver: SphSolver::default(),
             sink_particles: Vec::new(),
             next_sink_id: 0,
+            radiative_transfer: RadiativeTransferSolver::default(),
         };
         
         engine.initialize_quantum_fields()?;
@@ -840,9 +847,6 @@ impl PhysicsEngine {
         // Process SPH hydrodynamics
         self.process_sph_hydrodynamics()?;
         
-        // Process gravitational collapse and sink particle formation
-        self.process_gravitational_collapse()?;
-        
         // Process nuclear reactions
         self.process_nuclear_reactions()?;
         
@@ -971,8 +975,119 @@ impl PhysicsEngine {
             }
         }
         
+        // Process radiative transfer for gas cooling and heating
+        self.process_radiative_transfer()?;
+        
+        // Process gravitational collapse and sink particle formation
+        self.process_gravitational_collapse()?;
+        
         debug!("Processed SPH hydrodynamics for {} gas particles", updated_particles.len());
         Ok(())
+    }
+
+    /// Process radiative transfer for gas cooling and heating
+    fn process_radiative_transfer(&mut self) -> Result<()> {
+        let constants = constants::PhysicsConstants::default();
+        
+        // Calculate local stellar luminosity and distance for each particle
+        let stellar_luminosity = self.calculate_local_stellar_luminosity();
+        
+        // Collect particle data to avoid borrow checker issues
+        let particle_data: Vec<_> = self.particles.iter().map(|p| {
+            let local_density = self.calculate_local_density(&p.position);
+            let metallicity = self.calculate_local_metallicity(&p.position);
+            let distance_to_star = self.calculate_distance_to_nearest_star(&p.position);
+            (p.position, local_density, metallicity, distance_to_star)
+        }).collect();
+        
+        // Update particle temperatures based on radiative transfer
+        for (i, particle) in self.particles.iter_mut().enumerate() {
+            let (_, local_density, metallicity, distance_to_star) = particle_data[i];
+            
+            // Update particle temperature based on radiative transfer
+            let mut temperature = self.temperature; // Use global temperature as starting point
+            self.radiative_transfer.update_temperature(
+                &mut temperature,
+                local_density,
+                metallicity,
+                stellar_luminosity,
+                distance_to_star,
+                self.time_step,
+                &constants
+            )?;
+            
+            // Update particle energy based on temperature change
+            let energy_change = 1.5 * constants::BOLTZMANN * (temperature - self.temperature);
+            particle.energy += energy_change;
+            
+            // Update global temperature (weighted average)
+            self.temperature = temperature;
+        }
+        
+        Ok(())
+    }
+
+    /// Calculate local stellar luminosity affecting gas
+    fn calculate_local_stellar_luminosity(&self) -> f64 {
+        // Simplified: use total stellar luminosity from sink particles
+        let total_luminosity: f64 = self.sink_particles.iter()
+            .map(|sink| {
+                // Luminosity scales with mass as L ∝ M^3.5 (main sequence)
+                let mass_solar = sink.mass / 1.989e30; // Convert to solar masses
+                3.828e26 * mass_solar.powf(3.5) // Solar luminosity * mass scaling
+            })
+            .sum();
+        
+        total_luminosity.max(3.828e26) // Minimum solar luminosity
+    }
+
+    /// Calculate local metallicity around a position
+    fn calculate_local_metallicity(&self, position: &Vector3<f64>) -> f64 {
+        // Simplified: count heavy elements (Z > 2) in local region
+        let search_radius = 1e16; // 1 pc
+        let mut heavy_elements = 0;
+        let mut total_elements = 0;
+        
+        for particle in &self.particles {
+            let distance = (particle.position - position).magnitude();
+            if distance < search_radius {
+                total_elements += 1;
+                // Check if particle is a heavy element (simplified)
+                if matches!(particle.particle_type, 
+                    ParticleType::Carbon | ParticleType::Nitrogen | ParticleType::Oxygen |
+                    ParticleType::Iron | ParticleType::Silicon | ParticleType::Sulfur) {
+                    heavy_elements += 1;
+                }
+            }
+        }
+        
+        if total_elements > 0 {
+            heavy_elements as f64 / total_elements as f64
+        } else {
+            0.01 // Default 1% metallicity
+        }
+    }
+
+    /// Calculate distance to nearest star
+    fn calculate_distance_to_nearest_star(&self, position: &Vector3<f64>) -> f64 {
+        let mut min_distance = f64::INFINITY;
+        
+        // Check distance to sink particles (stars)
+        for sink in &self.sink_particles {
+            let distance = (sink.position - position).magnitude();
+            min_distance = min_distance.min(distance);
+        }
+        
+        // Check distance to stellar particles
+        for particle in &self.particles {
+            if matches!(particle.particle_type, 
+                ParticleType::HydrogenAtom | ParticleType::HeliumAtom) {
+                let distance = (particle.position - position).magnitude();
+                min_distance = min_distance.min(distance);
+            }
+        }
+        
+        min_distance.max(1e16) // Minimum 1 pc distance
     }
 
     // GADGET N-body gravity functions removed - now using native Rust implementation
@@ -3618,10 +3733,8 @@ impl PhysicsEngine {
 
 impl Drop for PhysicsEngine {
     fn drop(&mut self) {
-        // Ensure FFI libraries are cleaned up gracefully when the engine is dropped.
-        // This prevents resource leaks, especially from C/C++ libraries that don't
-        // follow Rust's ownership model.
-        log::info!("PhysicsEngine dropped.");
+        // Clean up any resources
+        log::debug!("PhysicsEngine dropped");
     }
 }
 
@@ -3817,3 +3930,4 @@ impl PhysicsEngine {
         Ok(())
     }
 }
+

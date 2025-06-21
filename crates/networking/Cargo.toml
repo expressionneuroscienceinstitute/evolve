@@ -1,9 +1,0 @@
-[package]
-name = "networking"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-anyhow = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["full"] }

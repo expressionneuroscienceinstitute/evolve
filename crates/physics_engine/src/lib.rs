@@ -61,7 +61,6 @@ use physics_types as shared_types;
 pub use constants::*;
 
 // Add missing imports for constants and types
-use crate::constants::{ELECTRON_MASS, MUON_MASS, TAU_MASS, C_SQUARED};
 use crate::constants::ELEMENTARY_CHARGE as E_CHARGE;
 use crate::utils::K_E;
 use crate::types::{
@@ -71,7 +70,6 @@ use crate::types::{
 };
 use crate::general_relativity::{C, G, schwarzschild_radius};
 use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType};
-use crate::interaction_events::FusionReaction as FusionReactionEvent;
 
 /// Fundamental particle types in the Standard Model
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

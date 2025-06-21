@@ -6,18 +6,20 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use tracing::{error, info, warn};
-use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation, CelestialBodyType};
+use tracing::{debug, error, info, warn};
+use universe_sim::{config::SimulationConfig, persistence, UniverseSimulation};
 
 mod rpc;
+mod logging;
 
 // Add import after other use lines
 use warp::Filter;
+use logging::LogLevel;
 
 /// A struct to hold the shared state of the simulation for RPC.
 #[derive(Clone)]
@@ -44,8 +46,13 @@ struct Cli {
     #[arg(long, global = true)]
     godmode: bool,
     
-    #[arg(long, global = true)]
+    /// Alias for `--log verbose` – extremely detailed, potentially huge output.
+    #[arg(long, global = true, help = "Shortcut for --log verbose (very chatty)")]
     verbose: bool,
+    
+    /// Choose the logging verbosity. Defaults to `info`.
+    #[arg(long = "log", value_enum, default_value_t = LogLevel::Info, global = true)]
+    log: LogLevel,
     
     #[arg(long, global = true)]
     trace: bool,
@@ -267,7 +274,13 @@ struct ParticleSnapshot {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     
-    let _guard = init_logging(cli.verbose, cli.trace);
+    let chosen_level = if cli.verbose {
+        LogLevel::Verbose
+    } else {
+        cli.log
+    };
+    
+    let _guard = logging::init_logging(chosen_level, cli.trace);
     
     let config = load_config(cli.config.as_ref()).await?;
     
@@ -288,39 +301,6 @@ async fn main() -> Result<()> {
         Commands::Oracle { action } => cmd_oracle(action).await,
         Commands::Interactive => cmd_interactive().await,
     }
-}
-
-fn init_logging(verbose: bool, trace_json: bool) -> tracing_appender::non_blocking::WorkerGuard {
-    use tracing_subscriber::{fmt, EnvFilter};
-    use tracing_appender::non_blocking;
-
-    let level = if verbose { "debug" } else { "info" };
-    let env_filter = EnvFilter::new(format!(
-        "universectl={},universe_sim={},physics_engine={}",
-        level, level, level
-    ));
-
-    // Non-blocking writer reduces stalls when the terminal is slow (e.g. verbose mode)
-    let (writer, guard) = non_blocking(std::io::stderr());
-
-    // Handle the different subscriber types by setting them directly
-    if trace_json {
-        let subscriber = fmt::Subscriber::builder()
-            .with_env_filter(env_filter)
-            .with_writer(writer)
-            .json()
-            .finish();
-        let _ = tracing::subscriber::set_global_default(subscriber);
-    } else {
-        let subscriber = fmt::Subscriber::builder()
-            .with_env_filter(env_filter)
-            .with_writer(writer)
-            .finish();
-        let _ = tracing::subscriber::set_global_default(subscriber);
-    }
-
-    let _ = tracing_log::LogTracer::init();
-    guard
 }
 
 async fn load_config(config_path: Option<&PathBuf>) -> Result<SimulationConfig> {
@@ -350,8 +330,7 @@ async fn load_config(config_path: Option<&PathBuf>) -> Result<SimulationConfig> 
 }
 
 async fn cmd_status() -> Result<()> {
-    println!("Universe Simulation Status");
-    println!("==========================");
+    debug!("Requesting simulation status");
 
     let client = reqwest::Client::new();
     let req_body = json!({
@@ -368,6 +347,7 @@ async fn cmd_status() -> Result<()> {
         .await?;
 
     if !res.status().is_success() {
+        error!("Failed to connect to simulation RPC server (status: {})", res.status());
         println!("Error: Failed to connect to simulation RPC server.");
         println!("Is the simulation running with 'universectl start'?");
         return Ok(());
@@ -376,11 +356,17 @@ async fn cmd_status() -> Result<()> {
     let rpc_res: rpc::RpcResponse<rpc::StatusResponse> = res.json().await?;
 
     if let Some(error) = rpc_res.error {
+        error!("RPC error: {} (code: {})", error.message, error.code);
         println!("RPC Error: {} (code: {})", error.message, error.code);
         return Ok(());
     }
 
     if let Some(status) = rpc_res.result {
+        debug!("Retrieved status: tick={}, ups={:.2}, age={:.3e} years", 
+               status.tick, status.ups, status.universe_age_gyr);
+        
+        println!("Universe Simulation Status");
+        println!("==========================");
         println!("--- Simulation Status ---");
         println!("Status: {}", status.status);
         println!("Tick: {}", status.tick);
@@ -405,30 +391,36 @@ async fn cmd_start(
     tick_span: Option<f64>,
     low_mem: bool,
     native_render: bool,
-    silicon: bool,
+    _silicon: bool,
     rpc_port: u16,
     _allow_net: bool,
 ) -> Result<()> {
+    info!("Starting universe simulation");
+    debug!("Config: particles={}, tick_span={:.2e}, low_mem={}, native_render={}", 
+           config.initial_particle_count, config.tick_span_years, low_mem, native_render);
+
     if let Some(ts) = tick_span {
         config.tick_span_years = ts;
+        debug!("Overriding tick span to {:.2e} years", ts);
     }
     if low_mem {
         config.initial_particle_count = 1000; // Lower particle count for low-mem
+        info!("Low memory mode: reduced particle count to {}", config.initial_particle_count);
     }
 
     let sim = if let Some(path) = load {
-        println!("Loading simulation from checkpoint: {:?}", path);
+        info!("Loading simulation from checkpoint: {:?}", path);
         persistence::load_checkpoint(&path)?
     } else {
-        println!("Starting new simulation from Big Bang...");
+        info!("Starting new simulation from Big Bang...");
         let mut sim = UniverseSimulation::new(config.clone())?;
         sim.init_big_bang()?;
         
         // Also initialize Big Bang conditions in the physics engine
-        println!("🔬 Initializing physics engine Big Bang conditions...");
+        info!("🔬 Initializing physics engine Big Bang conditions...");
         sim.physics_engine.initialize_big_bang()?;
         
-        println!("✅ Simulation initialized with {} particles in store and {} particles in physics engine",
+        info!("✅ Simulation initialized with {} particles in store and {} particles in physics engine",
             sim.store.particles.count,
             sim.physics_engine.particles.len());
         
@@ -438,310 +430,96 @@ async fn cmd_start(
     let sim = Arc::new(Mutex::new(sim));
 
     // Start RPC server
+    info!("Starting RPC server on port {}", rpc_port);
     let shared_state = Arc::new(Mutex::new(SharedState { sim: sim.clone(), last_save_time: None }));
     tokio::spawn(start_rpc_server(rpc_port, shared_state.clone()));
 
     // Start native renderer if requested
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(feature = "native_renderer", not(target_os = "macos")))]
     if native_render {
-        info!("Starting high-performance native renderer");
+        info!("Starting high-performance native renderer (non-macOS)");
         let render_sim = sim.clone();
         tokio::task::spawn_blocking(move || {
             tokio::runtime::Handle::current().block_on(async {
                 if let Err(e) = native_renderer::run_renderer(render_sim).await {
-                    error!("Native renderer error: {}", e);
+                    error!("Native renderer failed: {}", e);
                 }
             });
         });
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(feature = "native_renderer", target_os = "macos"))]
     if native_render {
-        if silicon {
-            info!("Starting experimental native renderer on Apple Silicon (main-thread mode)");
+        if _silicon {
+            info!("Starting experimental native renderer on Apple Silicon");
 
             // Spawn simulation loop on a background task so the main thread can own the EventLoop.
             let sim_for_loop = sim.clone();
             tokio::spawn(async move {
+                info!("Starting simulation loop on background thread");
                 loop {
                     {
                         let mut guard = sim_for_loop.lock().unwrap();
                         if let Err(e) = guard.tick() {
-                            error!("Simulation tick error: {}", e);
+                            error!("Simulation tick failed: {}", e);
                             break;
                         }
                     }
                     sleep(Duration::from_millis(1)).await;
                 }
+                warn!("Simulation loop terminated");
             });
 
             // Run renderer on the current (main) thread – blocks until window closed.
             native_renderer::run_renderer(sim.clone()).await?;
-
+            info!("Native renderer terminated");
             return Ok(());
         } else {
-            warn!("Native renderer is disabled on macOS. Pass --silicon in addition to --native-render to enable the experimental Metal renderer (requires window on main thread).");
+            warn!("Native renderer requested on macOS without --silicon flag");
+            info!("Continuing with simulation-only mode (no native renderer)");
         }
     }
 
-    println!("Simulation started. Press Ctrl+C to stop.");
+    #[cfg(not(feature = "native_renderer"))]
+    if native_render {
+        error!("Native renderer not available - CLI was built without native_renderer feature");
+        return Err(anyhow::anyhow!("Native renderer not available"));
+    }
 
-    let mut _ups = 0.0;
-    let mut sent_initial_state = false;
-    let mut last_particle_state: HashMap<usize, ParticleSnapshot> = HashMap::new();
-
+    // Main simulation loop
+    info!("Starting main simulation loop");
+    let mut last_save = Instant::now();
+    let save_interval = Duration::from_secs(300); // Save every 5 minutes
+    
     loop {
-        let start_time = tokio::time::Instant::now();
-        let mut sim_guard = sim.lock().unwrap();
-
-        if let Err(e) = sim_guard.tick() {
-            eprintln!("Error during simulation tick: {}", e);
-            break;
-        }
-
-        // Auto-saving logic
-        if config.auto_save_interval > 0 && sim_guard.current_tick % config.auto_save_interval == 0 {
-            let save_path = PathBuf::from(&config.auto_save_path);
-            if !save_path.exists() {
-                std::fs::create_dir_all(&save_path)?;
-            }
-            let checkpoint_file = save_path.join(format!("snapshot_{}.bin", sim_guard.current_tick));
-            info!("Auto-saving checkpoint to {:?}", checkpoint_file);
-            if let Err(e) = persistence::save_checkpoint(&mut sim_guard, &checkpoint_file) {
-                error!("Failed to save checkpoint: {}", e);
-            } else {
-                // Update last save time on successful save
-                drop(sim_guard);
-                if let Ok(mut state) = shared_state.lock() {
-                    state.last_save_time = Some(Instant::now());
-                }
-                sim_guard = sim.lock().unwrap();
+        // Run simulation tick
+        {
+            let mut guard = sim.lock().unwrap();
+            if let Err(e) = guard.tick() {
+                error!("Simulation tick failed: {}", e);
+                break;
             }
         }
-        
-        let _stats = sim_guard.get_stats().unwrap();
 
-        drop(sim_guard); // Release lock before sleeping
-
-        // Frame limiting
-        let elapsed = start_time.elapsed();
-        
-        // Send WebSocket updates every 10 ticks or so for better responsiveness
-        if _stats.current_tick % 10 == 0 {
-            // Get a fresh lock on the simulation to get more detailed data
-            let sim_guard = sim.lock().unwrap();
-            
-            // Get physics engine reference (extract data we need before borrowing mutably)
-            let physics_data = {
-                let physics = &sim_guard.physics_engine;
-                
-                // Extract particle data from simulation (no hard limit – rely on compression)
-                let particle_data: Vec<serde_json::Value> = physics.particles
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        // Calculate safe numeric values outside the json! macro
-                        let safe_pos = [
-                            if p.position.x.is_finite() { p.position.x } else { 0.0 },
-                            if p.position.y.is_finite() { p.position.y } else { 0.0 },
-                            if p.position.z.is_finite() { p.position.z } else { 0.0 }
-                        ];
-                        let safe_momentum = [
-                            if p.momentum.x.is_finite() { p.momentum.x } else { 0.0 },
-                            if p.momentum.y.is_finite() { p.momentum.y } else { 0.0 },
-                            if p.momentum.z.is_finite() { p.momentum.z } else { 0.0 }
-                        ];
-                        let safe_energy = if p.energy.is_finite() { p.energy } else { 0.0 };
-                        let safe_mass = if p.mass.is_finite() { p.mass } else { 0.0 };
-                        let safe_charge = if p.electric_charge.is_finite() { p.electric_charge } else { 0.0 };
-                        let safe_spin = [
-                            if p.spin.x.re.is_finite() { p.spin.x.re } else { 0.0 },
-                            if p.spin.y.re.is_finite() { p.spin.y.re } else { 0.0 },
-                            if p.spin.z.re.is_finite() { p.spin.z.re } else { 0.0 }
-                        ];
-                        let safe_age = {
-                            let age = physics.current_time - p.creation_time;
-                            if age.is_finite() && age >= 0.0 { age } else { 0.0 }
-                        };
-                        let safe_decay_prob = if let Some(decay_time) = p.decay_time { 
-                            let time_diff = physics.current_time - p.creation_time;
-                            if decay_time > 0.0 && time_diff.is_finite() && time_diff >= 0.0 {
-                                let prob = 1.0 - ((-time_diff / decay_time).exp());
-                                if prob.is_finite() { prob.clamp(0.0, 1.0) } else { 0.0 }
-                            } else { 0.0 }
-                        } else { 0.0 };
-
-                        json!({
-                            "id": i,
-                            "particle_type": format!("{:?}", p.particle_type),
-                            "position": safe_pos,
-                            "momentum": safe_momentum,
-                            "energy": safe_energy,
-                            "mass": safe_mass,
-                            "charge": safe_charge,
-                            "spin": safe_spin,
-                            "color_charge": p.color_charge.as_ref().map(|c| format!("{:?}", c)),
-                            "interaction_count": p.interaction_history.len() as u32,
-                            "age": safe_age,
-                            "decay_probability": safe_decay_prob
-                        })
-                    })
-                    .collect();
-                
-                // Extract raw particles for delta processing
-                let raw_particles: Vec<_> = physics.particles.clone();
-                
-                // Extract nuclear data as strings (frontend expects String type)
-                let nuclei_data: Vec<String> = physics.nuclei
-                    .iter()
-                    .take(50)
-                    .map(|n| format!("{}{}(A={}, Z={}, BE={:.2e}J)", 
-                        match n.atomic_number {
-                            1 => "H", 2 => "He", 3 => "Li", 6 => "C", 8 => "O", 26 => "Fe", _ => "X"
-                        },
-                        n.mass_number, n.mass_number, n.atomic_number, n.binding_energy))
-                    .collect();
-                
-                // Extract atomic data as strings (frontend expects String type)
-                let atoms_data: Vec<String> = physics.atoms
-                    .iter()
-                    .take(50)
-                    .map(|a| format!("{}{}(e-={}, E={:.2e}J)", 
-                        match a.nucleus.atomic_number {
-                            1 => "H", 2 => "He", 3 => "Li", 6 => "C", 8 => "O", 26 => "Fe", _ => "X"
-                        },
-                        a.nucleus.mass_number, a.electrons.len(), a.total_energy))
-                    .collect();
-                
-                (particle_data, raw_particles, nuclei_data, atoms_data, physics.temperature, physics.energy_density)
-            };
-            
-            let (particle_data, raw_particles, nuclei_data, atoms_data, temperature, energy_density) = physics_data;
-            
-            // Extract celestial body data (stars, planets, etc.)
-            let celestial_bodies: Vec<serde_json::Value> = sim_guard
-                .store
-                .celestials
-                .iter()
-                .take(100)
-                .map(|body| {
-                    let body_type_str = match body.body_type {
-                        CelestialBodyType::Star => "Star",
-                        CelestialBodyType::Planet => "Planet",
-                        CelestialBodyType::Moon => "Moon",
-                        CelestialBodyType::Asteroid => "Asteroid",
-                        CelestialBodyType::BlackHole => "BlackHole",
-                        CelestialBodyType::NeutronStar => "NeutronStar",
-                        CelestialBodyType::WhiteDwarf => "WhiteDwarf",
-                        CelestialBodyType::BrownDwarf => "BrownDwarf",
-                    };
-
-                    json!({
-                        "id": body.id.to_string(),
-                        "body_type": body_type_str,
-                        "position": [0.0, 0.0, 0.0], // Placeholder until position integrated
-                        "velocity": [0.0, 0.0, 0.0], // Placeholder until velocity integrated
-                        "mass": if body.mass.is_finite() { body.mass } else { 0.0 },
-                        "radius": if body.radius.is_finite() { body.radius } else { 0.0 },
-                        "temperature": if body.temperature.is_finite() { body.temperature } else { 0.0 },
-                        "luminosity": if body.luminosity.is_finite() { body.luminosity } else { 0.0 },
-                        "age": if body.age.is_finite() { body.age } else { 0.0 }
-                    })
-                })
-                .collect();
-            
-            // Capture quantum field snapshot (downsampled)
-            let qfield_snapshot = sim_guard.get_quantum_field_snapshot();
-
-            // ── Decide full snapshot vs delta ───────────────────────────
-            let payload_json = if !sent_initial_state {
-                // Full snapshot
-                sent_initial_state = true;
-
-                // Build and cache particle snapshots
-                last_particle_state.clear();
-                for (idx, part) in raw_particles.iter().enumerate() {
-                    last_particle_state.insert(idx, ParticleSnapshot {
-                        position: [part.position.x, part.position.y, part.position.z],
-                        momentum: [part.momentum.x, part.momentum.y, part.momentum.z],
-                        energy: part.energy,
-                    });
+        // Auto-save periodically
+        if last_save.elapsed() > save_interval {
+            debug!("Performing periodic auto-save");
+            let checkpoint_path = std::env::current_dir()?.join("checkpoints").join("auto_save.checkpoint");
+            if let Ok(mut guard) = sim.lock() {
+                if let Err(e) = persistence::save_checkpoint(&mut *guard, &checkpoint_path) {
+                    warn!("Auto-save failed: {}", e);
+                } else {
+                    debug!("Auto-save completed successfully");
                 }
-
-                json!({
-                    "kind": "full",
-                    "current_tick": _stats.current_tick,
-                    "universe_age_gyr": _stats.universe_age_gyr,
-                    "universe_description": _stats.universe_description,
-                    "temperature": temperature,
-                    "energy_density": energy_density,
-                    "particles": particle_data,
-                    "nuclei": nuclei_data,
-                    "atoms": atoms_data,
-                    "celestial_bodies": celestial_bodies,
-                    "quantum_fields": qfield_snapshot,
-                })
-            } else {
-                // Delta snapshot
-                let mut new_particles = Vec::new();
-                let mut updated_particles = Vec::new();
-                let mut current_map: HashMap<usize, ParticleSnapshot> = HashMap::new();
-
-                for (idx, p) in raw_particles.iter().enumerate() {
-                    let snapshot = ParticleSnapshot {
-                        position: [p.position.x, p.position.y, p.position.z],
-                        momentum: [p.momentum.x, p.momentum.y, p.momentum.z],
-                        energy: p.energy,
-                    };
-                    current_map.insert(idx, snapshot);
-
-                    if !last_particle_state.contains_key(&idx) {
-                        // New particle
-                        new_particles.push(particle_data[idx].clone());
-                    } else {
-                        // Possibly updated
-                        let prev = last_particle_state.get(&idx).unwrap();
-                        let changed = prev.position != snapshot.position || prev.momentum != snapshot.momentum || (prev.energy - snapshot.energy).abs() > 1e-9;
-                        if changed {
-                            updated_particles.push(particle_data[idx].clone());
-                        }
-                    }
-                }
-
-                // Removed particles
-                let mut removed_ids = Vec::new();
-                for id in last_particle_state.keys() {
-                    if !current_map.contains_key(id) {
-                        removed_ids.push(*id);
-                    }
-                }
-
-                // Update cache
-                last_particle_state = current_map;
-
-                json!({
-                    "kind": "delta",
-                    "current_tick": _stats.current_tick,
-                    "new_particles": new_particles,
-                    "updated_particles": updated_particles,
-                    "removed_particle_ids": removed_ids,
-                    "celestial_bodies": celestial_bodies,
-                    "quantum_fields": qfield_snapshot,
-                })
-            };
-
-            drop(sim_guard); // Release the lock quickly
-
-            // ── Serialize and broadcast plain JSON ─────────────────────
-            let _json_str = payload_json.to_string();
+            }
+            last_save = Instant::now();
         }
 
-        let tick_duration = Duration::from_secs_f64(1.0 / config.target_ups);
-        if let Some(sleep_duration) = tick_duration.checked_sub(elapsed) {
-            sleep(sleep_duration).await;
-        }
+        // Small delay to prevent busy-waiting
+        sleep(Duration::from_millis(1)).await;
     }
 
+    info!("Simulation terminated");
     Ok(())
 }
 
@@ -784,47 +562,51 @@ async fn cmd_stop() -> Result<()> {
 }
 
 async fn cmd_map(zoom: f64, layer: &str) -> Result<()> {
-    println!("Universe Map (zoom: {:.1}, layer: {})", zoom, layer);
-    println!("================================");
-    
-    // Try to get real simulation data via RPC
+    info!("Generating simulation map (zoom: {}, layer: {})", zoom, layer);
+    debug!("Requesting map data from RPC server");
+
     let client = reqwest::Client::new();
-    let params = json!({ "zoom": zoom, "layer": layer });
     let req_body = json!({
         "jsonrpc": "2.0",
         "method": "map",
-        "params": params,
-        "id": 5
+        "params": {
+            "zoom": zoom,
+            "layer": layer
+        },
+        "id": 1
     });
 
-    let width = 60;
-    let height = 20;
-    
-    match client
+    let res = client
         .post("http://127.0.0.1:9001/rpc")
         .json(&req_body)
         .send()
-        .await
-    {
-        Ok(res) if res.status().is_success() => {
-            // Try to parse simulation data
-            if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
-                if let Some(map_data) = rpc_res.result {
-                    println!("🌌 Connected to simulation - showing real {} data", layer);
-                    render_simulation_map(&map_data, width, height, layer)?;
-                    return Ok(());
-                }
-            }
-        }
-        _ => {
-            println!("⚠️  Could not connect to simulation RPC server");
-            println!("💡 Start simulation with 'universectl start' for real data");
-        }
+        .await?;
+
+    if !res.status().is_success() {
+        warn!("Failed to connect to RPC server for map data (status: {})", res.status());
+        println!("Error: Failed to connect to simulation RPC server.");
+        println!("Is the simulation running with 'universectl start'?");
+        println!("Rendering sample map instead...");
+        debug!("Falling back to sample map rendering");
+        render_sample_map(80, 40, layer, zoom);
+        return Ok(());
     }
-    
-    // Fallback to more realistic sample data when simulation isn't running
-    render_sample_map(width, height, layer, zoom);
-    
+
+    let rpc_res: rpc::RpcResponse<rpc::MapResponse> = res.json().await?;
+
+    if let Some(error) = rpc_res.error {
+        error!("RPC error while getting map: {} (code: {})", error.message, error.code);
+        println!("RPC Error: {} (code: {})", error.message, error.code);
+        println!("Rendering sample map instead...");
+        render_sample_map(80, 40, layer, zoom);
+        return Ok(());
+    }
+
+    if let Some(map) = rpc_res.result {
+        debug!("Received map data: {}x{} grid", map.width, map.height);
+        render_simulation_map(&map.data, map.width, map.height, layer)?;
+    }
+
     Ok(())
 }
 
@@ -986,47 +768,52 @@ fn print_map_legend(layer: &str) {
 }
 
 async fn cmd_list_planets(class: Option<String>, habitable: bool) -> Result<()> {
-    println!("Planetary Bodies");
-    println!("================");
-    
-    // Try to get real simulation data via RPC
+    info!("Listing planets (class: {:?}, habitable: {})", class, habitable);
+    debug!("Requesting planet data from RPC server");
+
     let client = reqwest::Client::new();
-    let params = json!({ 
-        "class_filter": class, 
-        "habitable_only": habitable 
-    });
     let req_body = json!({
         "jsonrpc": "2.0",
         "method": "list_planets",
-        "params": params,
-        "id": 6
+        "params": {
+            "class_filter": class,
+            "habitable_only": habitable
+        },
+        "id": 1
     });
 
-    match client
+    let res = client
         .post("http://127.0.0.1:9001/rpc")
         .json(&req_body)
         .send()
-        .await
-    {
-        Ok(res) if res.status().is_success() => {
-            if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
-                if let Some(planets_data) = rpc_res.result {
-                    println!("🌍 Connected to simulation - showing real data");
-                    render_planet_list(&planets_data, &class, habitable)?;
-                    return Ok(());
-                }
-            }
-        }
-        _ => {
-            println!("⚠️  Could not connect to simulation RPC server");
-            println!("📍 Showing sample planetary data");
-            println!("💡 Start simulation with 'universectl start' for real data\n");
-        }
+        .await?;
+
+    if !res.status().is_success() {
+        warn!("Failed to connect to RPC server for planet data (status: {})", res.status());
+        println!("Error: Failed to connect to simulation RPC server.");
+        println!("Is the simulation running with 'universectl start'?");
+        println!("Showing sample planets instead...");
+        debug!("Falling back to sample planet data");
+        render_sample_planets(&class, habitable);
+        return Ok(());
     }
-    
-    // Fallback to sample data when simulation isn't running
-    render_sample_planets(&class, habitable);
-    
+
+    let rpc_res: rpc::RpcResponse<rpc::PlanetListResponse> = res.json().await?;
+
+    if let Some(error) = rpc_res.error {
+        error!("RPC error while listing planets: {} (code: {})", error.message, error.code);
+        println!("RPC Error: {} (code: {})", error.message, error.code);
+        println!("Showing sample planets instead...");
+        render_sample_planets(&class, habitable);
+        return Ok(());
+    }
+
+    if let Some(planets) = rpc_res.result {
+        debug!("Received data for {} planets", planets.planets.len());
+        let planets_value = serde_json::Value::Array(planets.planets);
+        render_planet_list(&planets_value, &class, habitable)?;
+    }
+
     Ok(())
 }
 
@@ -1416,146 +1203,228 @@ fn render_sample_physics_diagnostics() {
 }
 
 async fn cmd_inspect(target: InspectTarget) -> Result<()> {
+    info!("Inspecting target: {:?}", target);
+    debug!("Connecting to RPC server for inspection data");
+
     let client = reqwest::Client::new();
     
     match target {
         InspectTarget::Planet { id } => {
-            println!("Inspecting planet {}...\n", id);
-            
-            let params = json!({ "planet_id": id });
+            debug!("Inspecting planet: {}", id);
             let req_body = json!({
                 "jsonrpc": "2.0",
                 "method": "inspect_planet",
-                "params": params,
-                "id": 7
+                "params": { "planet_id": id },
+                "id": 1
             });
 
-            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
-                Ok(res) if res.status().is_success() => {
-                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
-                        if let Some(planet_data) = rpc_res.result {
-                            render_planet_inspection(&planet_data)?;
-                        } else if let Some(error) = rpc_res.error {
-                            println!("RPC Error: {} (code: {})", error.message, error.code);
-                        }
-                    }
-                }
-                _ => {
-                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
-                    render_sample_planet_inspection(&id);
-                }
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                warn!("Failed to connect to RPC server for planet inspection (status: {})", res.status());
+                println!("Error: Failed to connect to simulation RPC server.");
+                println!("Showing sample planet inspection instead...");
+                render_sample_planet_inspection(&id);
+                return Ok(());
             }
-        }
+
+            let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+
+            if let Some(error) = rpc_res.error {
+                error!("RPC error during planet inspection: {} (code: {})", error.message, error.code);
+                println!("RPC Error: {} (code: {})", error.message, error.code);
+                println!("Showing sample planet inspection instead...");
+                render_sample_planet_inspection(&id);
+                return Ok(());
+            }
+
+            if let Some(planet_data) = rpc_res.result {
+                debug!("Received planet inspection data");
+                render_planet_inspection(&planet_data)?;
+            } else {
+                warn!("No planet data received for id: {}", id);
+                println!("No planet data received. Showing sample instead...");
+                render_sample_planet_inspection(&id);
+            }
+        },
         
         InspectTarget::Lineage { id } => {
-            println!("Inspecting lineage {}...\n", id);
-            
-            let params = json!({ "lineage_id": id });
+            debug!("Inspecting lineage: {}", id);
             let req_body = json!({
                 "jsonrpc": "2.0",
-                "method": "inspect_lineage", 
-                "params": params,
-                "id": 8
+                "method": "inspect_lineage",
+                "params": { "lineage_id": id },
+                "id": 1
             });
 
-            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
-                Ok(res) if res.status().is_success() => {
-                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
-                        if let Some(lineage_data) = rpc_res.result {
-                            render_lineage_inspection(&lineage_data)?;
-                        } else if let Some(error) = rpc_res.error {
-                            println!("RPC Error: {} (code: {})", error.message, error.code);
-                        }
-                    }
-                }
-                _ => {
-                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
-                    render_sample_lineage_inspection(&id);
-                }
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                warn!("Failed to connect to RPC server for lineage inspection (status: {})", res.status());
+                println!("Error: Failed to connect to simulation RPC server.");
+                println!("Showing sample lineage inspection instead...");
+                render_sample_lineage_inspection(&id);
+                return Ok(());
             }
-        }
+
+            let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+
+            if let Some(error) = rpc_res.error {
+                error!("RPC error during lineage inspection: {} (code: {})", error.message, error.code);
+                println!("RPC Error: {} (code: {})", error.message, error.code);
+                println!("Showing sample lineage inspection instead...");
+                render_sample_lineage_inspection(&id);
+                return Ok(());
+            }
+
+            if let Some(lineage_data) = rpc_res.result {
+                debug!("Received lineage inspection data");
+                render_lineage_inspection(&lineage_data)?;
+            } else {
+                warn!("No lineage data received for id: {}", id);
+                println!("No lineage data received. Showing sample instead...");
+                render_sample_lineage_inspection(&id);
+            }
+        },
         
         InspectTarget::Universe => {
-            println!("Inspecting universe statistics...\n");
-            
+            debug!("Inspecting universe statistics");
             let req_body = json!({
                 "jsonrpc": "2.0",
-                "method": "universe_stats",
+                "method": "stats",
                 "params": {},
-                "id": 9
+                "id": 1
             });
 
-            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
-                Ok(res) if res.status().is_success() => {
-                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
-                        if let Some(stats_data) = rpc_res.result {
-                            render_universe_stats(&stats_data)?;
-                        } else if let Some(error) = rpc_res.error {
-                            println!("RPC Error: {} (code: {})", error.message, error.code);
-                        }
-                    }
-                }
-                _ => {
-                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
-                    render_sample_universe_stats();
-                }
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                warn!("Failed to connect to RPC server for universe stats (status: {})", res.status());
+                println!("Error: Failed to connect to simulation RPC server.");
+                println!("Showing sample universe statistics instead...");
+                render_sample_universe_stats();
+                return Ok(());
             }
-        }
+
+            let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+
+            if let Some(error) = rpc_res.error {
+                error!("RPC error during universe inspection: {} (code: {})", error.message, error.code);
+                println!("RPC Error: {} (code: {})", error.message, error.code);
+                println!("Showing sample universe statistics instead...");
+                render_sample_universe_stats();
+                return Ok(());
+            }
+
+            if let Some(stats_data) = rpc_res.result {
+                debug!("Received universe statistics data");
+                render_universe_stats(&stats_data)?;
+            } else {
+                warn!("No universe statistics received");
+                println!("No universe statistics received. Showing sample instead...");
+                render_sample_universe_stats();
+            }
+        },
         
         InspectTarget::Physics => {
-            println!("Inspecting physics engine diagnostics...\n");
-            
+            debug!("Inspecting physics diagnostics");
             let req_body = json!({
                 "jsonrpc": "2.0",
                 "method": "physics_diagnostics",
                 "params": {},
-                "id": 10
+                "id": 1
             });
 
-            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
-                Ok(res) if res.status().is_success() => {
-                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
-                        if let Some(diagnostics_data) = rpc_res.result {
-                            render_physics_diagnostics(&diagnostics_data)?;
-                        } else if let Some(error) = rpc_res.error {
-                            println!("RPC Error: {} (code: {})", error.message, error.code);
-                        }
-                    }
-                }
-                _ => {
-                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
-                    render_sample_physics_diagnostics();
-                }
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                warn!("Failed to connect to RPC server for physics diagnostics (status: {})", res.status());
+                println!("Error: Failed to connect to simulation RPC server.");
+                println!("Showing sample physics diagnostics instead...");
+                render_sample_physics_diagnostics();
+                return Ok(());
             }
-        }
+
+            let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+
+            if let Some(error) = rpc_res.error {
+                error!("RPC error during physics inspection: {} (code: {})", error.message, error.code);
+                println!("RPC Error: {} (code: {})", error.message, error.code);
+                println!("Showing sample physics diagnostics instead...");
+                render_sample_physics_diagnostics();
+                return Ok(());
+            }
+
+            if let Some(diagnostics_data) = rpc_res.result {
+                debug!("Received physics diagnostics data");
+                render_physics_diagnostics(&diagnostics_data)?;
+            } else {
+                warn!("No physics diagnostics received");
+                println!("No physics diagnostics received. Showing sample instead...");
+                render_sample_physics_diagnostics();
+            }
+        },
+        
         InspectTarget::UniverseHistory => {
-            println!("Inspecting historical trends of universe statistics...\n");
-            
+            debug!("Inspecting universe history");
             let req_body = json!({
                 "jsonrpc": "2.0",
-                "method": "universe_stats_history",
+                "method": "universe_history",
                 "params": {},
-                "id": 11
+                "id": 1
             });
 
-            match client.post("http://127.0.0.1:9001/rpc").json(&req_body).send().await {
-                Ok(res) if res.status().is_success() => {
-                    if let Ok(rpc_res) = res.json::<rpc::RpcResponse<serde_json::Value>>().await {
-                        if let Some(history_data) = rpc_res.result {
-                            render_universe_history(&history_data)?;
-                        } else if let Some(error) = rpc_res.error {
-                            println!("RPC Error: {} (code: {})", error.message, error.code);
-                        }
-                    }
-                }
-                _ => {
-                    println!("Warning: Could not connect to simulation. Showing sample data.\n");
-                    render_sample_universe_history();
-                }
+            let res = client
+                .post("http://127.0.0.1:9001/rpc")
+                .json(&req_body)
+                .send()
+                .await?;
+
+            if !res.status().is_success() {
+                warn!("Failed to connect to RPC server for universe history (status: {})", res.status());
+                println!("Error: Failed to connect to simulation RPC server.");
+                println!("Showing sample universe history instead...");
+                render_sample_universe_history();
+                return Ok(());
             }
-        }
+
+            let rpc_res: rpc::RpcResponse<serde_json::Value> = res.json().await?;
+
+            if let Some(error) = rpc_res.error {
+                error!("RPC error during universe history inspection: {} (code: {})", error.message, error.code);
+                println!("RPC Error: {} (code: {})", error.message, error.code);
+                println!("Showing sample universe history instead...");
+                render_sample_universe_history();
+                return Ok(());
+            }
+
+            if let Some(history_data) = rpc_res.result {
+                debug!("Received universe history data");
+                render_universe_history(&history_data)?;
+            } else {
+                warn!("No universe history received");
+                println!("No universe history received. Showing sample instead...");
+                render_sample_universe_history();
+            }
+        },
     }
-    
+
     Ok(())
 }
 
@@ -3000,7 +2869,7 @@ async fn handle_rpc_request(
             match serde_json::from_value::<InspectPlanetParams>(request.params) {
                 Ok(params) => {
                     // Get real planet data from simulation ECS
-                    let mut sim_guard = shared_state.sim.lock().unwrap();
+                    let sim_guard = shared_state.sim.lock().unwrap();
                     let planet_data = match sim_guard.get_planet_inspection_data(&params.planet_id) {
                         Ok(Some(real_planet_data)) => real_planet_data,
                         Ok(None) => {
@@ -3076,7 +2945,7 @@ async fn handle_rpc_request(
             match serde_json::from_value::<InspectLineageParams>(request.params) {
                 Ok(params) => {
                     // Get real lineage data from simulation ECS
-                    let mut sim_guard = shared_state.sim.lock().unwrap();
+                    let sim_guard = shared_state.sim.lock().unwrap();
                     let lineage_data = match sim_guard.get_lineage_inspection_data(&params.lineage_id) {
                         Ok(Some(real_lineage_data)) => real_lineage_data,
                         Ok(None) => {

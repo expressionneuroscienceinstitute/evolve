@@ -70,7 +70,7 @@ pub fn load_checkpoint(path: &Path) -> Result<UniverseSimulation> {
         config: serializable_universe.config,
         diagnostics: crate::DiagnosticsSystem::new(),
         stats_history: std::collections::VecDeque::new(),
-        performance_stats: crate::PerformanceStats::new(),
+        performance_stats: crate::PerformanceStats::default(),
     };
 
     Ok(sim)

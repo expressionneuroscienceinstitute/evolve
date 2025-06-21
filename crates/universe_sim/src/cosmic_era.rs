@@ -61,7 +61,7 @@ impl UniverseState {
     pub fn update_from_simulation(&mut self, 
                                   current_tick: u64, 
                                   tick_span_years: f64,
-                                  particles: &[crate::physics_engine::types::PhysicsState],
+                                  particles: &[physics_engine::types::PhysicsState],
                                   celestial_bodies: &[CelestialBody],
                                   lineages: &[AgentLineage]) {
         

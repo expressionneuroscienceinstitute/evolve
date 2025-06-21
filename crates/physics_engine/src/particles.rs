@@ -174,3 +174,29 @@ pub fn alpha_s_one_loop(q2_gev2: f64) -> f64 {
 
 /// Convenience: α_s(Q) with Q in GeV (one-loop)
 pub fn alpha_s(q_gev: f64) -> f64 { alpha_s_one_loop(q_gev * q_gev) }
+
+// -----------------------------------------------------------------------------
+// Simple particle accelerator helper – provides energy kicks to particles
+// -----------------------------------------------------------------------------
+#[derive(Debug, Clone)]
+pub struct ParticleAccelerator {
+    /// Beam energy per particle in Joules
+    pub beam_energy: f64,
+}
+
+impl Default for ParticleAccelerator {
+    fn default() -> Self {
+        // 1 GeV default beam energy
+        Self { beam_energy: 1.0e9 * crate::constants::ELEMENTARY_CHARGE }
+    }
+}
+
+impl ParticleAccelerator {
+    /// Accelerate a particle by adding kinetic energy (simplified, 1-D boost).
+    pub fn accelerate(&self, particle: &mut crate::FundamentalParticle) {
+        particle.energy += self.beam_energy;
+        // Roughly convert energy to momentum assuming ultra-relativistic
+        let p_mag = self.beam_energy / crate::constants::SPEED_OF_LIGHT;
+        particle.momentum.x += p_mag; // Boost along x for now
+    }
+}

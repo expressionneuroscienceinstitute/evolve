@@ -191,6 +191,9 @@ pub const ATOMIC_MASS_UNIT: f64 = 1.66053906660e-27; // kg
 
 pub const LIGHT_YEAR_TO_METERS: f64 = 9.461e15;     // meters
 
+// Legacy alias – some modules still reference `E_CHARGE`. Keep for compatibility.
+pub const E_CHARGE: f64 = ELEMENTARY_CHARGE;
+
 #[cfg(test)]
 mod tests {
     use super::*;

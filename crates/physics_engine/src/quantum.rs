@@ -6,6 +6,7 @@
 use crate::*;
 use rand::{Rng, thread_rng};
 use anyhow::Result;
+use crate::constants::FINE_STRUCTURE_CONSTANT;
 
 /// Quantum mechanics solver
 pub struct QuantumSolver {
@@ -139,6 +140,69 @@ impl QuantumSolver {
             occupation_probability: 1.0,
             ..Default::default()
         }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Additional quantum–field–theory helper structs required by the main engine
+// -----------------------------------------------------------------------------
+
+/// Simple representation of the quantum vacuum (placeholder).
+#[derive(Debug, Clone)]
+pub struct QuantumVacuum {
+    pub fluctuation_level: f64,
+}
+
+impl Default for QuantumVacuum {
+    fn default() -> Self {
+        Self { fluctuation_level: 0.0 }
+    }
+}
+
+impl QuantumVacuum {
+    /// Initialise vacuum fluctuations (very coarse model – scales with T).
+    pub fn initialize_fluctuations(&mut self, temperature: f64) -> anyhow::Result<()> {
+        // Scale fluctuations linearly with temperature for now
+        self.fluctuation_level = temperature * 1e-5;
+        Ok(())
+    }
+}
+
+/// Scale–dependent running of fundamental couplings (α_s, α_EM, etc.).
+#[derive(Debug, Clone)]
+pub struct RunningCouplings {
+    pub alpha_em: f64,
+    pub alpha_s: f64,
+    pub scale_gev: f64,
+}
+
+impl Default for RunningCouplings {
+    fn default() -> Self {
+        Self {
+            alpha_em: FINE_STRUCTURE_CONSTANT,
+            alpha_s: 0.118, // α_s(M_Z)
+            scale_gev: 91.1876, // Default reference scale (M_Z)
+        }
+    }
+}
+
+/// Electroweak symmetry–breaking tracking (Higgs mechanism placeholder).
+#[derive(Debug, Clone)]
+pub struct SymmetryBreaking {
+    pub higgs_vev_gev: f64,
+}
+
+impl Default for SymmetryBreaking {
+    fn default() -> Self {
+        Self { higgs_vev_gev: 246.0 } // Standard Model v ≈ 246 GeV
+    }
+}
+
+impl SymmetryBreaking {
+    /// Initialise spontaneous symmetry breaking (no-op placeholder).
+    pub fn initialize_higgs_mechanism(&mut self) -> anyhow::Result<()> {
+        // In a full model we would modify particle masses here.
+        Ok(())
     }
 }
 

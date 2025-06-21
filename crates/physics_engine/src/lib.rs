@@ -46,9 +46,16 @@ pub mod octree;
 pub mod radiative_transfer;
 pub mod jeans_instability;
 
+// Add back missing modules
+pub mod gravitational_collapse;
+pub use gravitational_collapse::{jeans_mass, jeans_length, SinkParticle};
+
+pub mod conservation;
+use conservation::{ConservationEnforcer, ConservationMonitor, ConservationConstraint, EnforcementMethod};
+
 use nalgebra::{Vector3, Matrix3, Complex};
 use serde::{Serialize, Deserialize};
-use anyhow::{Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
 use rand::distributions::Distribution;
@@ -68,76 +75,20 @@ use physics_types as shared_types;
 pub use constants::*;
 
 // Add missing imports for constants and types
-use crate::constants::ELEMENTARY_CHARGE as E_CHARGE;
 use crate::utils::K_E;
-use crate::types::{
-    MeasurementBasis, DecayChannel, NuclearShellState,
-    GluonField, ElectronicState, MolecularOrbital, VibrationalMode,
-    PotentialEnergySurface, ReactionCoordinate
-};
 use crate::general_relativity::{C, G, schwarzschild_radius};
-use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType};
-use crate::gravitational_collapse::MEAN_MOLECULAR_WEIGHT;
-use crate::sph::SphParticle;
-use log::info;
+use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType, MeasurementBasis, BoundaryConditions, MolecularOrbital, VibrationalMode, PotentialEnergySurface, ReactionCoordinate, NuclearShellState, ElectronicState};
+use crate::interaction_events::DecayChannel;
+use crate::particle_types::GluonField;
+use crate::interactions::InteractionMatrix;
+use crate::spatial::SpacetimeGrid;
+use crate::quantum::{QuantumVacuum, RunningCouplings, SymmetryBreaking};
+use crate::quantum_fields::FieldEquations;
+use crate::particles::ParticleAccelerator;
+use physics_types::ColorCharge;
 
-pub mod gravitational_collapse;
-pub use gravitational_collapse::{jeans_mass, jeans_length, SinkParticle};
-
-pub mod conservation;
-
-use conservation::{ConservationEnforcer, ConservationMonitor, ConservationConstraint, EnforcementMethod};
-
-/// Fundamental particle types in the Standard Model
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ParticleType {
-    // Quarks
-    Up, Down, Charm, Strange, Top, Bottom,
-    
-    // Leptons
-    Electron, ElectronNeutrino, ElectronAntiNeutrino, 
-    Muon, MuonNeutrino, MuonAntiNeutrino,
-    Tau, TauNeutrino, TauAntiNeutrino,
-    
-    // Antiparticles
-    Positron,
-    
-    // Gauge bosons
-    Photon, WBoson, WBosonMinus, ZBoson, Gluon,
-    
-    // Scalar bosons
-    Higgs,
-    
-    // Composite particles
-    Proton, Neutron, 
-    
-    // Light mesons (π, K, η)
-    PionPlus, PionMinus, PionZero,
-    KaonPlus, KaonMinus, KaonZero,
-    Eta,
-    
-    // Baryons (Λ, Σ, Ξ, Ω)
-    Lambda, SigmaPlus, SigmaMinus, SigmaZero,
-    XiMinus, XiZero, OmegaMinus,
-    
-    // Heavy quarkonium states
-    JPsi, Upsilon,
-    
-    // Atomic nuclei (by mass number)
-    Hydrogen, Helium, Lithium, Carbon, Nitrogen, Oxygen, Fluorine, Silicon, Phosphorus, Sulfur, Chlorine, Bromine, Iodine, Iron, // ... etc
-    
-    // Atoms
-    HydrogenAtom, HeliumAtom, CarbonAtom, OxygenAtom, IronAtom,
-    
-    // Molecules
-    H2, H2O, CO2, CH4, NH3, // ... complex molecules
-    
-    // Sink particles for gravitational collapse (protostars, stars)
-    SinkParticle,
-    
-    // Dark matter candidate
-    DarkMatter,
-}
+// Re-export canonical ParticleType from shared physics_types crate
+pub use physics_types::ParticleType;
 
 /// Individual fundamental particle
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2373,8 +2324,16 @@ impl From<&FundamentalParticle> for shared_types::FundamentalParticle {
 
 // Add a stub for map_particle_type_to_shared if not present
 fn map_particle_type_to_shared(pt: ParticleType) -> shared_types::ParticleType {
-    // TODO: Implement real mapping
-    shared_types::ParticleType::Proton
+    use shared_types::ParticleType as S;
+    match pt {
+        ParticleType::WBoson | ParticleType::WBosonMinus => S::WMinus,
+        ParticleType::ZBoson => S::Z,
+        ParticleType::Photon => S::Photon,
+        // Fallback simple mapping
+        ParticleType::Electron => S::Electron,
+        ParticleType::Positron => S::Positron,
+        _ => S::Other,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

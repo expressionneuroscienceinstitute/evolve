@@ -9,6 +9,10 @@ use ndarray::{Array, Ix3};
 use rand::thread_rng;
 use rand_distr::{Distribution, Normal};
 
+/// Placeholder container for complex field–equation solvers (e.g. Klein–Gordon, Dirac).
+#[derive(Debug, Clone, Default)]
+pub struct FieldEquations {}
+
 /// Represents a scalar quantum field on a 3D lattice.
 #[derive(Debug, Clone)]
 pub struct QuantumField {

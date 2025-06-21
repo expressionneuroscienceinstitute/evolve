@@ -14,11 +14,11 @@ use physics_engine::{
 };
 use rand::Rng;
 use std::collections::HashMap;
-use std::time::{Duration};
+use std::time::Duration;
 use uuid::Uuid;
 
 use std::collections::VecDeque;
-use serde_json::{json};
+use serde_json::json;
 use crate::storage::{Store, AgentLineage, CelestialBody};
 use tracing::{info, warn, debug};
 use crate::config::SimulationConfig;
@@ -345,18 +345,17 @@ impl UniverseSimulation {
     }
 
     /// Update cosmic-scale processes based on current physical conditions
-    #[allow(dead_code)]
-    fn update_cosmic_processes(&mut self, _dt: f64) -> Result<()> {
+    fn update_cosmic_processes(&mut self, dt: f64) -> Result<()> {
         // Currently we model only stellar evolution and star formation.
         // Planet formation and other processes are stubbed for now.
-        // Note: stellar evolution is handled directly in step()
+        self.process_stellar_evolution(dt)?;
         self.process_star_formation()?;
         Ok(())
     }
 
     /// Process stellar evolution based on nuclear burning
     fn process_stellar_evolution(&mut self, dt: f64) -> Result<()> {
-        let dt_years = dt;
+        let _dt_years = dt;
 
         // Iterate over all stellar evolution records.
         let mut death_events: Vec<usize> = Vec::new();
@@ -370,10 +369,10 @@ impl UniverseSimulation {
                 .expect("Invalid entity_id in StellarEvolution");
 
             // 1. Advance age.
-            body.age += dt_years;
+            body.age += dt;
 
             // 2. Evolve core.
-            let _energy_generated = evolution.evolve(body.mass, dt_years)?;
+            let _energy_generated = evolution.evolve(body.mass, dt)?;
 
             // 3. Update global properties.
             body.radius = Self::calculate_stellar_radius(body.mass);
@@ -1655,7 +1654,7 @@ impl UniverseSimulation {
                 } else if age_gyr > 10.0 {
                     1.2 // Mature universe favors complexity
                 } else {
-                    1.0 // Standard evolution rate
+                    1.0_f64 // Standard evolution rate
                 };
                 
                 lineage.tech_level *= cosmic_acceleration_factor.powf(dt / 1e9); // Scale by Gyr
@@ -1697,13 +1696,12 @@ impl UniverseSimulation {
     
     /// Process agent evolution with cosmic context
     fn process_agent_evolution(&mut self, dt: f64) -> Result<()> {
-        let dt_years = dt;
+        let _dt_years = dt;
         
-        for lineage in &mut self.store.agents {
-            // TODO: Implement proper agent evolution integration
-            // For now, just update basic evolution parameters
-            lineage.fitness += dt_years * 0.001; // Slow fitness growth
-            lineage.generation += (dt_years / 1e6) as u32; // One generation per Myr
+        for _lineage in &mut self.store.agents {
+            // Placeholder: agent evolution systems are not yet integrated.
+            // Once the agent_evolution module exposes the required APIs,
+            // hook them up here.
         }
         
         Ok(())

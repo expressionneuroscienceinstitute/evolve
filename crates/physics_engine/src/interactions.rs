@@ -600,3 +600,28 @@ pub struct InteractionResult {
     pub e_momentum: Vector3<f64>,
     _nu_momentum: Vector3<f64>,
 }
+
+// Added minimal InteractionMatrix definition to provide coupling constants for the physics engine
+#[derive(Debug, Clone, Default)]
+pub struct InteractionMatrix {
+    electromagnetic_coupling: f64,
+    weak_coupling: f64,
+    strong_coupling: f64,
+}
+
+impl InteractionMatrix {
+    /// Set the dimensionless electromagnetic coupling (α)
+    pub fn set_electromagnetic_coupling(&mut self, alpha: f64) {
+        self.electromagnetic_coupling = alpha;
+    }
+
+    /// Set the Fermi constant–like weak coupling (G_F in GeV⁻²)
+    pub fn set_weak_coupling(&mut self, g_f: f64) {
+        self.weak_coupling = g_f;
+    }
+
+    /// Set the dimensionless strong coupling (α_s)
+    pub fn set_strong_coupling(&mut self, alpha_s: f64) {
+        self.strong_coupling = alpha_s;
+    }
+}

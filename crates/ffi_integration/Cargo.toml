@@ -1,0 +1,27 @@
+[package]
+name = "ffi_integration"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+geant4 = []
+lammps = []
+gadget = []
+endf = []
+max-fidelity = ["geant4", "lammps", "gadget", "endf"]
+demo = []
+
+[dependencies]
+anyhow = { workspace = true }
+nalgebra = { workspace = true }
+log = { workspace = true }
+num_cpus = "1.16"
+serde = { workspace = true }
+physics_types = { path = "../physics_types" }
+
+[build-dependencies]
+cc = "1.0"
+pkg-config = "0.3"
+bindgen = "0.69"
+num_cpus = "1.16" 

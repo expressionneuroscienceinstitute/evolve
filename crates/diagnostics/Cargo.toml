@@ -1,0 +1,12 @@
+[package]
+name = "diagnostics"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+num_cpus = "1.16"
+sysinfo = "0.30"

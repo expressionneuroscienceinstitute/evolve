@@ -1,0 +1,12 @@
+target/*
+demos/outputs/*
+node_modules/*
+viz_web/dist/*
+*/dist/*
+checkpoints/*
+endf-b-viii.0/**
+endf-b-viii.0/*
+endf-b-viii.0-full.zip
+endfb-viii.0-neutrons.zip
+.cursor/rules/*
+**/build/*

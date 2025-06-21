@@ -73,6 +73,9 @@ use crate::types::{
 use crate::general_relativity::{C, G, schwarzschild_radius};
 use crate::types::{PhysicsState, FusionReaction, InteractionEvent, InteractionType};
 
+mod gravitational_collapse;
+pub use gravitational_collapse::{jeans_mass, jeans_length, SinkParticle};
+
 /// Fundamental particle types in the Standard Model
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ParticleType {

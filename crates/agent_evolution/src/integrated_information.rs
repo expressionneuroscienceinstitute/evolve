@@ -13,7 +13,7 @@
 use anyhow::Result;
 use nalgebra::{DVector, DMatrix};
 use serde::{Serialize, Deserialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use uuid::Uuid;
 use rand::{Rng, thread_rng};
 use rand::prelude::SliceRandom;

@@ -18,11 +18,8 @@ use rand::{Rng, thread_rng};
 // Import quantum field neural emergence types
 use crate::neural_physics::{
     QuantumFieldNeuralEmergence, 
-    EmergentNeuralNetwork, 
-    EmergentNeuralNode, 
-    EmergentNeuralConnection,
-    FieldInteractionPattern,
-    NetworkEvolutionEvent
+    EmergentNeuralNetwork,
+    FieldInteractionPattern
 };
 use physics_engine::{QuantumField, particle_types::FieldType};
 
@@ -804,7 +801,7 @@ impl QuantumConsciousnessManager {
         };
         
         for (system_id, system) in &mut self.systems {
-            let input = inputs.get(system_id).unwrap_or(&default_input);
+            let _input = inputs.get(system_id).unwrap_or(&default_input);
             
             // Update with quantum field consciousness
             let output = system.update_quantum_field_consciousness(delta_time, quantum_fields)?;
@@ -968,7 +965,8 @@ fn update_entanglement_network(network: &mut EntanglementGraph, delta_time: f64)
     Ok(())
 }
 
-fn collapse_microtubule_quantum_states(microtubule: &mut MicrotubuleQuantumState) -> Result<()> {
+    #[allow(dead_code)]
+    fn collapse_microtubule_quantum_states(microtubule: &mut MicrotubuleQuantumState) -> Result<()> {
     // Collapse superposition states
     for superposition in &mut microtubule.quantum_state.superposition_states {
         superposition.amplitude = Complex::new(1.0, 0.0);

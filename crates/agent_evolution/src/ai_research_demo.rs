@@ -13,18 +13,14 @@
 //! maximum performance and scientific rigor.
 
 use anyhow::Result;
-use nalgebra::{DVector, DMatrix};
+use nalgebra::DVector;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use uuid::Uuid;
+use std::time::Instant;
 use rand::{Rng, thread_rng};
 
 use crate::{
     AgentEvolutionSystem, AdvancedAIIntegrationSystem, EvolutionInput, EvolutionOutput,
-    PhysicsInformedNeuralNetwork, QuantumConsciousnessSystem, IntegratedInformationSystem,
-    NeuralPlasticitySystem, MemoryConsolidationSystem,
-    NeuralPlasticityManager, MemoryConsolidationManager, AdvancedAIIntegrationManager,
 };
 
 /// Revolutionary AI Research Demo

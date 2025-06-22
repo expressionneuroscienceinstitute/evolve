@@ -6,15 +6,13 @@
 //! and self-improvement capabilities.
 
 use anyhow::Result;
-use nalgebra::{DVector, DMatrix};
 use rand::{thread_rng, Rng};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 use crate::ai_core::{AICore, SensoryInput, ActionType, AgentSensoryData};
-use crate::natural_selection::{Fitness, FitnessLandscape};
+use crate::natural_selection::FitnessLandscape;
 use crate::autonomous_communication::{AutonomousCommunication, CommunicationEnvironment, SocialContext};
-use crate::{PlasticityInput, PlasticityOutput};
 
 /// A true evolutionary organism with self-modifying neural architecture
 #[derive(Debug, Clone, Serialize, Deserialize)]

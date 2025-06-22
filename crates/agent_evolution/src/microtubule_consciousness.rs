@@ -361,7 +361,7 @@ impl MicrotubuleConsciousnessSystem {
         // Apply entanglement enhancement to all microtubules
         for microtubule in &mut self.microtubules {
             microtubule.expansion_enhancement = entanglement_strength;
-            microtubule.coherence_time *= (1.0 + entanglement_strength * 0.2);
+            microtubule.coherence_time *= 1.0 + entanglement_strength * 0.2;
         }
         
         // Update expansion protocol

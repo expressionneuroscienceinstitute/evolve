@@ -14,7 +14,6 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 use rand::{thread_rng, Rng};
-use crate::{PlasticityInput, PlasticityOutput};
 
 /// Physical constraints that emerge from the laws of physics
 /// These are NOT hardcoded - they arise from fundamental physics

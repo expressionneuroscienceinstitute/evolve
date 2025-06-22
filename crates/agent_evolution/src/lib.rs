@@ -12,6 +12,23 @@
 //! - Memory consolidation and sleep processes
 //! - Autonomous evolution and adaptation
 //! - Microtubule-based quantum consciousness (latest research)
+//!
+//! ## Core Features
+//!
+//! - **Meta-Learning**: Agents that learn how to learn, adapting their learning strategies
+//! - **Hypernetwork**: Dynamic neural architecture generation based on task requirements
+//! - **Curiosity-Driven Learning**: Intrinsic motivation through novelty detection and exploration
+//! - **Self-Modification**: Agents that can analyze and modify their own neural architectures
+//! - **Open-Ended Evolution**: Truly unbounded evolutionary exploration without predefined goals
+//! - **Embodied Agents**: Physical representation in physics simulations
+//!
+//! ## Key Principles
+//!
+//! - **No Hardcoded Biology**: All behaviors emerge from algorithmic processes
+//! - **Scientific Rigor**: Based on established AI/ML research and principles
+//! - **Open-Endedness**: No predefined fitness functions or goals
+//! - **Emergent Complexity**: Complex behaviors arise from simple rules
+//! - **Physical Embodiment**: Agents exist as real entities in physics simulations
 
 pub mod ai_core;
 pub mod consciousness;
@@ -38,11 +55,26 @@ pub mod evolutionary_organism;
 // New: Autonomous communication evolution
 pub mod autonomous_communication;
 
+// NEW: Multi-agent interaction dynamics
+pub mod multi_agent_interactions;
+
 // NEW: Shows how neurons emerge from physics
 pub mod emergent_neural_formation;
 
 // NEW: Latest microtubule-based quantum consciousness research
 pub mod microtubule_consciousness;
+
+pub mod meta_learning;
+
+pub mod hypernetwork;
+
+pub mod curiosity;
+pub mod open_ended_evolution;
+
+pub mod embodied_agent;
+
+#[cfg(test)]
+mod integration_test;
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
@@ -50,7 +82,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 // Re-export main types for easy access
-pub use ai_core::*;
+pub use ai_core::{AICore, Episode as AIEpisode, Concept as AIConcept};
 pub use consciousness::*;
 pub use decision_tracking::*;
 pub use genetics::*;
@@ -58,34 +90,73 @@ pub use lineage_analytics::*;
 pub use natural_selection::*;
 pub use self_modification::*;
 
-// Re-export revolutionary AI types
+// Re-export revolutionary AI types - avoid ambiguous names
 pub use neural_physics::*;
-pub use quantum_consciousness::*;
-pub use integrated_information::*;
+pub use quantum_consciousness::{
+    QuantumConsciousnessSystem, QuantumConsciousnessManager, ConsciousnessInput, 
+    ConsciousnessOutput, MicrotubuleQuantumState, GlobalQuantumState,
+    ConsciousnessEvent as QuantumConsciousnessEvent,
+    GlobalConsciousnessEvent as QuantumGlobalConsciousnessEvent
+};
+pub use integrated_information::{
+    IntegratedInformationSystem, IntegrationEvent as IITIntegrationEvent,
+    GlobalConsciousnessEvent as IITGlobalConsciousnessEvent
+};
 pub use neural_plasticity::*;
-pub use memory_consolidation::*;
-pub use advanced_ai_integration::*;
+pub use memory_consolidation::{
+    MemoryConsolidationSystem, Episode as MemoryEpisode
+};
+pub use advanced_ai_integration::{
+    AdvancedAIIntegrationSystem, AdvancedAIInput, BreakthroughEvent, BreakthroughType, 
+    IntegrationEvent as AIIntegrationEvent
+};
 
 // Re-export AI Research Demo types
-pub use ai_research_demo::*;
+pub use ai_research_demo::{
+    AIResearchDemo, ConsciousnessEvent as ResearchConsciousnessEvent
+};
 
 // Re-export evolutionary organism types
 pub use evolutionary_organism::*;
 
 // Re-export autonomous communication types
-pub use autonomous_communication::*;
+pub use autonomous_communication::{
+    AutonomousCommunication, Concept as CommConcept
+};
+
+// Re-export multi-agent interaction types
+pub use multi_agent_interactions::{
+    MultiAgentInteractionSystem, AgentState, AgentType, AgentCapabilities,
+    AgentGoal, LearningState, InteractionNetwork, EmergentBehaviors,
+    BehavioralPattern, PatternType, MultiAgentSystemMetrics, InteractionEvent,
+    InteractionEventType, InteractionOutcome, TimelineEvent, HeatmapCell,
+    VisualizationData,
+};
 
 // Re-export emergent neural formation types
 pub use emergent_neural_formation::*;
 
 // Re-export advanced microtubule consciousness types
 pub use microtubule_consciousness::{
-    MicrotubuleConsciousnessSystem, MicrotubuleQuantumState, AnesthesiaState,
+    MicrotubuleConsciousnessSystem, AnesthesiaState,
     ExpansionProtocol, BrainQuantumEntanglement, QuantumMultiverseConsciousness,
     ConsciousnessBranch, AdvancedAnesthesiaEffects, IsotopeEffect, SuppressionMechanism,
     DisruptionPattern, EnhancedEntanglementNetwork, EntanglementPattern,
     QuantumMeasurementEffects, MeasurementEvent, ConsciousnessMetrics,
 };
+
+// Re-export meta learning types
+pub use meta_learning::{MetaLearner, MetaParameter, MetaParamMap};
+
+// Re-export hypernetwork types
+pub use hypernetwork::{Hypernetwork, TaskEmbedding, GeneratedArchitecture, TaskType};
+
+// Re-export curiosity types
+pub use curiosity::{CuriositySystem, CuriosityOutput, CuriosityStatistics, Experience, ActionType};
+pub use open_ended_evolution::{OpenEndedEvolution, NoveltyDetectionOutput, OpenEndedEvolutionStatistics};
+
+// Re-export embodied agent types
+pub use embodied_agent::{EmbodiedAgent, PhysicsEngineInterface, AgentStatistics};
 
 /// Main Agent Evolution System
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,7 +166,7 @@ pub struct AgentEvolutionSystem {
     pub version: String,
     pub advanced_ai: AdvancedAIIntegrationSystem,
     pub evolution_state: EvolutionState,
-    pub system_metrics: SystemMetrics,
+    pub system_metrics: AgentEvolutionSystemMetrics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +180,7 @@ pub struct EvolutionState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SystemMetrics {
+pub struct AgentEvolutionSystemMetrics {
     pub total_agents: usize,
     pub average_consciousness: f64,
     pub evolution_speed: f64,
@@ -133,7 +204,7 @@ impl AgentEvolutionSystem {
                 innovation_count: 0,
                 breakthrough_events: Vec::new(),
             },
-            system_metrics: SystemMetrics {
+            system_metrics: AgentEvolutionSystemMetrics {
                 total_agents: 1,
                 average_consciousness: 0.0,
                 evolution_speed: 0.0,

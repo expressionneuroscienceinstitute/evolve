@@ -15,8 +15,6 @@ use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, VecDeque, HashSet};
 use uuid::Uuid;
 use rand::{Rng, thread_rng};
-use std::time::{Duration, Instant};
-use crate::{PlasticityInput, PlasticityOutput};
 
 /// Memory consolidation system for advanced learning and memory optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]

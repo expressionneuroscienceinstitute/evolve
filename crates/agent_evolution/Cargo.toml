@@ -18,3 +18,19 @@ physics_types = { path = "../physics_types" }
 
 [features]
 unstable-agent = []
+
+[[bin]]
+name = "standalone_demo"
+path = "src/bin/standalone_demo.rs"
+
+[[bin]]
+name = "physics_integration_demo"
+path = "src/bin/physics_integration_demo.rs"
+
+[[bin]]
+name = "embodied_demo"
+path = "src/bin/embodied_demo.rs"
+
+[[bin]]
+name = "enhanced_environmental_demo"
+path = "src/bin/enhanced_environmental_demo.rs"

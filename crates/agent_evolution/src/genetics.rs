@@ -35,7 +35,7 @@ impl Nucleotide {
 /// Represents a DNA sequence, composed of nucleotides.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Dna {
-    sequence: Vec<Nucleotide>,
+    pub sequence: Vec<Nucleotide>,
 }
 
 impl Dna {

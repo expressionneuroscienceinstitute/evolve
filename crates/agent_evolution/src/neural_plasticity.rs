@@ -12,7 +12,6 @@
 //! - Neural Network Growth and Pruning (Huttenlocher, 1990)
 
 use anyhow::Result;
-use nalgebra::{DVector, DMatrix};
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;

@@ -30,6 +30,15 @@ pub enum ValidationError {
     
     #[error("Invalid temperature: T = {temperature:.2e} K")]
     InvalidTemperature { temperature: f64 },
+    
+    #[error("Index out of bounds")]  
+    OutOfBounds,
+    
+    #[error("Dimension mismatch between operands")]  
+    DimensionMismatch,
+    
+    #[error("Energy conservation violated beyond tolerance")]  
+    EnergyConservationViolation,
 }
 
 /// Check energy conservation (R1: Mass-Energy Conservation)

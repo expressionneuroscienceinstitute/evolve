@@ -160,6 +160,7 @@ pub const SPEED_OF_LIGHT: f64 = 299_792_458.0;          // m/s
 pub const C: f64 = SPEED_OF_LIGHT;                      // Alias for speed of light
 pub const PLANCK_CONSTANT: f64 = 6.626_070_15e-34;      // J⋅s
 pub const REDUCED_PLANCK_CONSTANT: f64 = 1.054_571_817e-34; // J⋅s
+pub const HBAR: f64 = REDUCED_PLANCK_CONSTANT; // Alias for ℏ
 pub const GRAVITATIONAL_CONSTANT: f64 = 6.674_30e-11;   // m³⋅kg⁻¹⋅s⁻²
 pub const G: f64 = GRAVITATIONAL_CONSTANT;              // Alias for gravitational constant
 pub const BOLTZMANN: f64 = 1.380_649e-23;               // J/K

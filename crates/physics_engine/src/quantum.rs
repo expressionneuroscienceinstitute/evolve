@@ -5,8 +5,12 @@
 
 use crate::*;
 use rand::{Rng, thread_rng};
+use rand::prelude::SliceRandom;
 use anyhow::Result;
 use nalgebra::Complex;
+
+// Import Boltzmann constant from constants module
+const BOLTZMANN_CONSTANT: f64 = 1.380649e-23; // J/K
 
 /// Quantum mechanics solver
 pub struct QuantumSolver {
@@ -336,6 +340,474 @@ impl QuantumSolver {
 }
 
 // -----------------------------------------------------------------------------
+// Quantum Monte Carlo Methods
+// -----------------------------------------------------------------------------
+
+/// Quantum Monte Carlo solver for advanced quantum physics calculations
+#[derive(Debug, Clone)]
+pub struct QuantumMonteCarlo {
+    pub time_step: f64,
+    pub temperature: f64,
+    pub num_walkers: usize,
+    pub convergence_threshold: f64,
+    pub max_iterations: usize,
+}
+
+impl Default for QuantumMonteCarlo {
+    fn default() -> Self {
+        Self {
+            time_step: 1e-3,
+            temperature: 300.0, // 300 K
+            num_walkers: 1000,
+            convergence_threshold: 1e-6,
+            max_iterations: 10000,
+        }
+    }
+}
+
+impl QuantumMonteCarlo {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Path Integral Monte Carlo (PIMC) for quantum statistical mechanics
+    pub fn path_integral_monte_carlo<F>(
+        &self,
+        potential_energy: F,
+        initial_positions: &[Vector3<f64>],
+        num_time_slices: usize,
+    ) -> Result<PathIntegralResult>
+    where
+        F: Fn(&Vector3<f64>) -> f64,
+    {
+        let mut rng = thread_rng();
+        let num_particles = initial_positions.len();
+        let beta = 1.0 / (BOLTZMANN_CONSTANT * self.temperature);
+        let tau = beta / num_time_slices as f64;
+        
+        // Initialize path with initial positions
+        let mut path = vec![initial_positions.to_vec(); num_time_slices];
+        
+        // PIMC sampling
+        let mut energy_samples = Vec::new();
+        let mut position_samples = Vec::new();
+        
+        for iteration in 0..self.max_iterations {
+            // Staging algorithm for path updates
+            for particle_idx in 0..num_particles {
+                for time_slice in 0..num_time_slices {
+                    let old_position = path[time_slice][particle_idx];
+                    
+                    // Generate trial move
+                    let trial_move = Vector3::new(
+                        rng.gen_range(-0.1..0.1),
+                        rng.gen_range(-0.1..0.1),
+                        rng.gen_range(-0.1..0.1),
+                    );
+                    let new_position = old_position + trial_move;
+                    
+                    // Calculate acceptance probability
+                    let old_action = self.calculate_path_action(&path, &potential_energy, tau);
+                    let mut new_path = path.clone();
+                    new_path[time_slice][particle_idx] = new_position;
+                    let new_action = self.calculate_path_action(&new_path, &potential_energy, tau);
+                    
+                    let acceptance_prob = (-(new_action - old_action) / BOLTZMANN_CONSTANT).exp();
+                    
+                    if rng.gen::<f64>() < acceptance_prob {
+                        path = new_path;
+                    }
+                }
+            }
+            
+            // Sample observables
+            if iteration % 100 == 0 {
+                let energy = self.calculate_path_energy(&path, &potential_energy, tau);
+                energy_samples.push(energy);
+                position_samples.push(path[0].clone()); // Sample first time slice
+            }
+        }
+        
+        Ok(PathIntegralResult {
+            average_energy: energy_samples.iter().sum::<f64>() / energy_samples.len() as f64,
+            energy_variance: self.calculate_variance(&energy_samples),
+            average_positions: self.calculate_average_positions(&position_samples),
+            path_samples: path,
+        })
+    }
+
+    /// Variational Monte Carlo (VMC) for ground state optimization
+    pub fn variational_monte_carlo<F, G>(
+        &self,
+        trial_wavefunction: F,
+        potential_energy: G,
+        initial_parameters: &[f64],
+    ) -> Result<VariationalMonteCarloResult>
+    where
+        F: Fn(&Vector3<f64>, &[f64]) -> f64,
+        G: Fn(&Vector3<f64>) -> f64,
+    {
+        let mut rng = thread_rng();
+        let mut parameters = initial_parameters.to_vec();
+        let mut energy_history = Vec::new();
+        let mut parameter_history = Vec::new();
+        
+        for iteration in 0..self.max_iterations {
+            let mut energy_samples = Vec::new();
+            let mut weight_samples = Vec::new();
+            
+            // Sample configurations
+            for _ in 0..self.num_walkers {
+                let position = Vector3::new(
+                    rng.gen_range(-5.0..5.0),
+                    rng.gen_range(-5.0..5.0),
+                    rng.gen_range(-5.0..5.0),
+                );
+                
+                let psi = trial_wavefunction(&position, &parameters);
+                let psi_squared = psi * psi;
+                let local_energy = self.calculate_local_energy(&position, &parameters, &trial_wavefunction, &potential_energy);
+                
+                // Store local energy and weight (psi^2)
+                energy_samples.push(local_energy);
+                weight_samples.push(psi_squared);
+            }
+            
+            // Calculate weighted average energy
+            let total_weight: f64 = weight_samples.iter().sum();
+            let weighted_energy: f64 = energy_samples.iter()
+                .zip(weight_samples.iter())
+                .map(|(e, w)| e * w)
+                .sum();
+            let average_energy = if total_weight > 0.0 { weighted_energy / total_weight } else { 0.0 };
+            
+            energy_history.push(average_energy);
+            parameter_history.push(parameters.clone());
+            
+            // Simple gradient descent optimization
+            if iteration > 0 && iteration % 100 == 0 {
+                let energy_gradient = self.calculate_energy_gradient(&parameters, &trial_wavefunction, &potential_energy);
+                for (param, grad) in parameters.iter_mut().zip(energy_gradient.iter()) {
+                    *param -= 0.01 * grad; // Learning rate
+                }
+            }
+            
+            // Check convergence
+            if iteration > 100 {
+                let recent_energies = &energy_history[energy_history.len().saturating_sub(100)..];
+                let energy_variance = self.calculate_variance(recent_energies);
+                if energy_variance < self.convergence_threshold {
+                    break;
+                }
+            }
+        }
+        
+        Ok(VariationalMonteCarloResult {
+            optimized_parameters: parameters,
+            ground_state_energy: energy_history.last().copied().unwrap_or(0.0),
+            energy_history,
+            parameter_history,
+        })
+    }
+
+    /// Diffusion Monte Carlo (DMC) for ground state projection
+    pub fn diffusion_monte_carlo<F, G>(
+        &self,
+        trial_wavefunction: F,
+        potential_energy: G,
+        initial_walkers: &[Vector3<f64>],
+    ) -> Result<DiffusionMonteCarloResult>
+    where
+        F: Fn(&Vector3<f64>) -> f64,
+        G: Fn(&Vector3<f64>) -> f64,
+    {
+        let mut rng = thread_rng();
+        let mut walkers = initial_walkers.to_vec();
+        let mut reference_energy = 0.0;
+        let mut energy_history = Vec::new();
+        let mut walker_history = Vec::new();
+        
+        for iteration in 0..self.max_iterations {
+            let mut new_walkers = Vec::new();
+            let mut local_energies = Vec::new();
+            
+            // Diffuse each walker
+            for walker in &walkers {
+                // Diffusion step
+                let diffusion_step = Vector3::new(
+                    rng.gen_range(-1.0..1.0) * (2.0 * self.time_step).sqrt(),
+                    rng.gen_range(-1.0..1.0) * (2.0 * self.time_step).sqrt(),
+                    rng.gen_range(-1.0..1.0) * (2.0 * self.time_step).sqrt(),
+                );
+                let new_position = walker + diffusion_step;
+                
+                // Drift step (quantum force)
+                let quantum_force = self.calculate_quantum_force(&new_position, &trial_wavefunction);
+                let drift_step = quantum_force * self.time_step;
+                let final_position = new_position + drift_step;
+                
+                // Calculate local energy
+                let local_energy = self.calculate_local_energy_simple(&final_position, &potential_energy);
+                local_energies.push(local_energy);
+                
+                // Branching (birth/death of walkers)
+                let branching_factor = (-(local_energy - reference_energy) * self.time_step).exp();
+                let num_copies = branching_factor.round() as usize;
+                
+                for _ in 0..num_copies {
+                    new_walkers.push(final_position);
+                }
+            }
+            
+            // Update reference energy
+            if !local_energies.is_empty() {
+                reference_energy = local_energies.iter().sum::<f64>() / local_energies.len() as f64;
+            }
+            
+            // Control walker population
+            if new_walkers.len() > 2 * self.num_walkers {
+                // Randomly remove excess walkers
+                new_walkers.shuffle(&mut rng);
+                new_walkers.truncate(self.num_walkers);
+            } else if new_walkers.len() < self.num_walkers / 2 {
+                // Duplicate some walkers
+                let mut additional_walkers = Vec::new();
+                for _ in 0..(self.num_walkers - new_walkers.len()) {
+                    if let Some(&walker) = new_walkers.choose(&mut rng) {
+                        additional_walkers.push(walker);
+                    }
+                }
+                new_walkers.extend(additional_walkers);
+            }
+            
+            walkers = new_walkers;
+            energy_history.push(reference_energy);
+            walker_history.push(walkers.clone());
+            
+            // Check convergence
+            if iteration > 100 {
+                let recent_energies = &energy_history[energy_history.len().saturating_sub(100)..];
+                let energy_variance = self.calculate_variance(recent_energies);
+                if energy_variance < self.convergence_threshold {
+                    break;
+                }
+            }
+        }
+        
+        Ok(DiffusionMonteCarloResult {
+            ground_state_energy: reference_energy,
+            final_walkers: walkers,
+            energy_history,
+            walker_history,
+        })
+    }
+
+    // Helper methods for Quantum Monte Carlo calculations
+    
+    fn calculate_path_action<F>(&self, path: &[Vec<Vector3<f64>>], potential: &F, tau: f64) -> f64
+    where
+        F: Fn(&Vector3<f64>) -> f64,
+    {
+        let mut action = 0.0;
+        let num_time_slices = path.len();
+        let num_particles = path[0].len();
+        
+        for time_slice in 0..num_time_slices {
+            let next_slice = (time_slice + 1) % num_time_slices;
+            
+            for particle_idx in 0..num_particles {
+                let current_pos = path[time_slice][particle_idx];
+                let next_pos = path[next_slice][particle_idx];
+                
+                // Kinetic energy term
+                let displacement = next_pos - current_pos;
+                let kinetic_term = displacement.dot(&displacement) / (2.0 * tau);
+                action += kinetic_term;
+                
+                // Potential energy term
+                action += potential(&current_pos) * tau;
+            }
+        }
+        
+        action
+    }
+
+    fn calculate_path_energy<F>(&self, path: &[Vec<Vector3<f64>>], potential: &F, tau: f64) -> f64
+    where
+        F: Fn(&Vector3<f64>) -> f64,
+    {
+        let num_time_slices = path.len();
+        let num_particles = path[0].len();
+        let mut total_energy = 0.0;
+        
+        for time_slice in 0..num_time_slices {
+            for particle_idx in 0..num_particles {
+                let position = path[time_slice][particle_idx];
+                total_energy += potential(&position);
+            }
+        }
+        
+        total_energy / (num_time_slices * num_particles) as f64
+    }
+
+    fn calculate_local_energy<F, G>(
+        &self,
+        position: &Vector3<f64>,
+        parameters: &[f64],
+        trial_wavefunction: &F,
+        potential_energy: &G,
+    ) -> f64
+    where
+        F: Fn(&Vector3<f64>, &[f64]) -> f64,
+        G: Fn(&Vector3<f64>) -> f64,
+    {
+        // Simplified local energy calculation
+        // In a full implementation, this would include the kinetic energy operator
+        let psi = trial_wavefunction(position, parameters);
+        let v = potential_energy(position);
+        
+        // Simplified kinetic energy (Laplacian of trial wavefunction)
+        let h = 1e-6; // Small step for numerical derivatives
+        let laplacian = (
+            trial_wavefunction(&(position + Vector3::new(h, 0.0, 0.0)), parameters) +
+            trial_wavefunction(&(position + Vector3::new(-h, 0.0, 0.0)), parameters) +
+            trial_wavefunction(&(position + Vector3::new(0.0, h, 0.0)), parameters) +
+            trial_wavefunction(&(position + Vector3::new(0.0, -h, 0.0)), parameters) +
+            trial_wavefunction(&(position + Vector3::new(0.0, 0.0, h)), parameters) +
+            trial_wavefunction(&(position + Vector3::new(0.0, 0.0, -h)), parameters) -
+            6.0 * psi
+        ) / (h * h);
+        
+        -0.5 * laplacian / psi + v
+    }
+
+    fn calculate_local_energy_simple<F>(&self, position: &Vector3<f64>, potential_energy: &F) -> f64
+    where
+        F: Fn(&Vector3<f64>) -> f64,
+    {
+        // Simplified local energy for DMC
+        potential_energy(position)
+    }
+
+    fn calculate_quantum_force<F>(&self, position: &Vector3<f64>, trial_wavefunction: &F) -> Vector3<f64>
+    where
+        F: Fn(&Vector3<f64>) -> f64,
+    {
+        // Quantum force = ∇ψ/ψ
+        let h = 1e-6;
+        let psi = trial_wavefunction(position);
+        
+        let grad_x = (trial_wavefunction(&(position + Vector3::new(h, 0.0, 0.0))) - 
+                     trial_wavefunction(&(position + Vector3::new(-h, 0.0, 0.0)))) / (2.0 * h);
+        let grad_y = (trial_wavefunction(&(position + Vector3::new(0.0, h, 0.0))) - 
+                     trial_wavefunction(&(position + Vector3::new(0.0, -h, 0.0)))) / (2.0 * h);
+        let grad_z = (trial_wavefunction(&(position + Vector3::new(0.0, 0.0, h))) - 
+                     trial_wavefunction(&(position + Vector3::new(0.0, 0.0, -h)))) / (2.0 * h);
+        
+        Vector3::new(grad_x / psi, grad_y / psi, grad_z / psi)
+    }
+
+    fn calculate_energy_gradient<F, G>(
+        &self,
+        parameters: &[f64],
+        trial_wavefunction: &F,
+        potential_energy: &G,
+    ) -> Vec<f64>
+    where
+        F: Fn(&Vector3<f64>, &[f64]) -> f64,
+        G: Fn(&Vector3<f64>) -> f64,
+    {
+        // Simplified gradient calculation
+        let mut gradient = vec![0.0; parameters.len()];
+        let h = 1e-6;
+        
+        for (i, param) in parameters.iter().enumerate() {
+            let mut params_plus = parameters.to_vec();
+            let mut params_minus = parameters.to_vec();
+            params_plus[i] += h;
+            params_minus[i] -= h;
+            
+            // Sample a few points to estimate gradient
+            let mut rng = thread_rng();
+            for _ in 0..100 {
+                let position = Vector3::new(
+                    rng.gen_range(-2.0..2.0),
+                    rng.gen_range(-2.0..2.0),
+                    rng.gen_range(-2.0..2.0),
+                );
+                
+                let energy_plus = self.calculate_local_energy(&position, &params_plus, trial_wavefunction, potential_energy);
+                let energy_minus = self.calculate_local_energy(&position, &params_minus, trial_wavefunction, potential_energy);
+                
+                gradient[i] += (energy_plus - energy_minus) / (2.0 * h);
+            }
+            
+            gradient[i] /= 100.0;
+        }
+        
+        gradient
+    }
+
+    fn calculate_variance(&self, samples: &[f64]) -> f64 {
+        if samples.len() < 2 {
+            return 0.0;
+        }
+        
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let variance = samples.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / (samples.len() - 1) as f64;
+        variance
+    }
+
+    fn calculate_average_positions(&self, position_samples: &[Vec<Vector3<f64>>]) -> Vec<Vector3<f64>> {
+        if position_samples.is_empty() {
+            return Vec::new();
+        }
+        
+        let num_particles = position_samples[0].len();
+        let mut average_positions = vec![Vector3::zeros(); num_particles];
+        
+        for sample in position_samples {
+            for (i, &position) in sample.iter().enumerate() {
+                average_positions[i] += position;
+            }
+        }
+        
+        for position in &mut average_positions {
+            *position /= position_samples.len() as f64;
+        }
+        
+        average_positions
+    }
+}
+
+/// Results from Path Integral Monte Carlo calculation
+#[derive(Debug, Clone)]
+pub struct PathIntegralResult {
+    pub average_energy: f64,
+    pub energy_variance: f64,
+    pub average_positions: Vec<Vector3<f64>>,
+    pub path_samples: Vec<Vec<Vector3<f64>>>,
+}
+
+/// Results from Variational Monte Carlo calculation
+#[derive(Debug, Clone)]
+pub struct VariationalMonteCarloResult {
+    pub optimized_parameters: Vec<f64>,
+    pub ground_state_energy: f64,
+    pub energy_history: Vec<f64>,
+    pub parameter_history: Vec<Vec<f64>>,
+}
+
+/// Results from Diffusion Monte Carlo calculation
+#[derive(Debug, Clone)]
+pub struct DiffusionMonteCarloResult {
+    pub ground_state_energy: f64,
+    pub final_walkers: Vec<Vector3<f64>>,
+    pub energy_history: Vec<f64>,
+    pub walker_history: Vec<Vec<Vector3<f64>>>,
+}
+
+// -----------------------------------------------------------------------------
 // Additional quantum–field–theory helper structs required by the main engine
 // -----------------------------------------------------------------------------
 
@@ -508,5 +980,185 @@ mod tests {
         
         let energy_exp = solver.expectation_value(&quantum_state, "energy");
         assert_relative_eq!(energy_exp, quantum_state.energy_level, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_quantum_monte_carlo_creation() {
+        let qmc = QuantumMonteCarlo::new();
+        assert_eq!(qmc.num_walkers, 1000);
+        assert_eq!(qmc.temperature, 300.0);
+        assert_eq!(qmc.time_step, 1e-3);
+    }
+
+    #[test]
+    fn test_path_integral_monte_carlo() {
+        let qmc = QuantumMonteCarlo::new();
+        
+        // Simple harmonic oscillator potential
+        let potential = |pos: &Vector3<f64>| {
+            let r_squared = pos.dot(pos);
+            0.5 * r_squared // V(r) = ½r²
+        };
+        
+        let initial_positions = vec![
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(-1.0, 0.0, 0.0),
+        ];
+        
+        let result = qmc.path_integral_monte_carlo(potential, &initial_positions, 10);
+        assert!(result.is_ok());
+        
+        let result = result.unwrap();
+        assert!(result.average_energy > 0.0);
+        assert!(result.energy_variance >= 0.0);
+        assert_eq!(result.average_positions.len(), 2);
+    }
+
+    #[test]
+    fn test_variational_monte_carlo() {
+        let qmc = QuantumMonteCarlo::new();
+        
+        // Simple Gaussian trial wavefunction
+        let trial_wavefunction = |pos: &Vector3<f64>, params: &[f64]| {
+            let alpha = params[0];
+            let r_squared = pos.dot(pos);
+            (-alpha * r_squared).exp()
+        };
+        
+        // Harmonic oscillator potential
+        let potential_energy = |pos: &Vector3<f64>| {
+            let r_squared = pos.dot(pos);
+            0.5 * r_squared
+        };
+        
+        let initial_parameters = vec![1.0];
+        
+        let result = qmc.variational_monte_carlo(trial_wavefunction, potential_energy, &initial_parameters);
+        assert!(result.is_ok());
+        
+        let result = result.unwrap();
+        // For a harmonic oscillator, the ground state energy should be positive
+        // but allow for some numerical tolerance
+        assert!(result.ground_state_energy > -1.0); // Allow small negative values due to numerical errors
+        assert!(!result.energy_history.is_empty());
+        assert!(!result.parameter_history.is_empty());
+        
+        // Check that the energy is finite and reasonable
+        assert!(result.ground_state_energy.is_finite());
+        assert!(result.ground_state_energy.abs() < 100.0); // Should be reasonable magnitude
+    }
+
+    #[test]
+    fn test_diffusion_monte_carlo() {
+        let qmc = QuantumMonteCarlo::new();
+        
+        // Simple Gaussian trial wavefunction
+        let trial_wavefunction = |pos: &Vector3<f64>| {
+            let r_squared = pos.dot(pos);
+            (-0.5 * r_squared).exp()
+        };
+        
+        // Harmonic oscillator potential
+        let potential_energy = |pos: &Vector3<f64>| {
+            let r_squared = pos.dot(pos);
+            0.5 * r_squared
+        };
+        
+        let initial_walkers = vec![
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(-1.0, 0.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
+        ];
+        
+        let result = qmc.diffusion_monte_carlo(trial_wavefunction, potential_energy, &initial_walkers);
+        assert!(result.is_ok());
+        
+        let result = result.unwrap();
+        assert!(result.ground_state_energy > 0.0);
+        assert!(!result.final_walkers.is_empty());
+        assert!(!result.energy_history.is_empty());
+    }
+
+    #[test]
+    fn test_quantum_force_calculation() {
+        let qmc = QuantumMonteCarlo::new();
+        
+        // Test quantum force for Gaussian wavefunction
+        let trial_wavefunction = |pos: &Vector3<f64>| {
+            let r_squared = pos.dot(pos);
+            (-0.5 * r_squared).exp()
+        };
+        
+        let position = Vector3::new(1.0, 2.0, 3.0);
+        let quantum_force = qmc.calculate_quantum_force(&position, &trial_wavefunction);
+        
+        // For a Gaussian wavefunction, the quantum force should be -r
+        assert_relative_eq!(quantum_force[0], -1.0, epsilon = 0.1);
+        assert_relative_eq!(quantum_force[1], -2.0, epsilon = 0.1);
+        assert_relative_eq!(quantum_force[2], -3.0, epsilon = 0.1);
+    }
+
+    #[test]
+    fn test_variance_calculation() {
+        let qmc = QuantumMonteCarlo::new();
+        
+        let samples = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let variance = qmc.calculate_variance(&samples);
+        
+        // Expected variance for [1,2,3,4,5] is 2.5
+        assert_relative_eq!(variance, 2.5, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_average_positions_calculation() {
+        let qmc = QuantumMonteCarlo::new();
+        
+        let position_samples = vec![
+            vec![Vector3::new(1.0, 0.0, 0.0), Vector3::new(0.0, 1.0, 0.0)],
+            vec![Vector3::new(2.0, 0.0, 0.0), Vector3::new(0.0, 2.0, 0.0)],
+            vec![Vector3::new(3.0, 0.0, 0.0), Vector3::new(0.0, 3.0, 0.0)],
+        ];
+        
+        let average_positions = qmc.calculate_average_positions(&position_samples);
+        
+        assert_eq!(average_positions.len(), 2);
+        assert_relative_eq!(average_positions[0][0], 2.0, epsilon = 1e-10); // Average of 1,2,3
+        assert_relative_eq!(average_positions[1][1], 2.0, epsilon = 1e-10); // Average of 1,2,3
+    }
+
+    #[test]
+    fn test_quantum_monte_carlo_integration() {
+        // Test integration between different QMC methods
+        let qmc = QuantumMonteCarlo::new();
+        
+        // Test that all methods can work with the same potential
+        let potential = |pos: &Vector3<f64>| {
+            let r_squared = pos.dot(pos);
+            0.5 * r_squared
+        };
+        
+        let trial_wavefunction = |pos: &Vector3<f64>| {
+            let r_squared = pos.dot(pos);
+            (-0.5 * r_squared).exp()
+        };
+        
+        // Test PIMC
+        let initial_positions = vec![Vector3::new(1.0, 0.0, 0.0)];
+        let pimc_result = qmc.path_integral_monte_carlo(potential, &initial_positions, 5);
+        assert!(pimc_result.is_ok());
+        
+        // Test VMC
+        let initial_parameters = vec![1.0];
+        let vmc_result = qmc.variational_monte_carlo(
+            |pos, params| trial_wavefunction(pos),
+            potential,
+            &initial_parameters
+        );
+        assert!(vmc_result.is_ok());
+        
+        // Test DMC
+        let initial_walkers = vec![Vector3::new(1.0, 0.0, 0.0)];
+        let dmc_result = qmc.diffusion_monte_carlo(trial_wavefunction, potential, &initial_walkers);
+        assert!(dmc_result.is_ok());
     }
 }

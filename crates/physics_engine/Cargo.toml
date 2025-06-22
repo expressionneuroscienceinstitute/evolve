@@ -9,6 +9,7 @@ ndarray = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_distr = { workspace = true }
+fastrand = "1.9"
 serde = { workspace = true }
 serde_arrays = { workspace = true }
 anyhow = { workspace = true }

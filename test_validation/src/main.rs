@@ -26,13 +26,13 @@ fn main() {
     
     println!("Testing energy conservation...");
     match check_energy_conservation(&states, &constants) {
-        Ok(()) => println!("✓ Energy conservation check passed"),
+        Ok(total_energy) => println!("✓ Energy conservation check passed, total energy: {}", total_energy),
         Err(e) => println!("✗ Energy conservation check failed: {}", e),
     }
     
     println!("Testing momentum conservation...");
     match check_momentum_conservation(&states) {
-        Ok(()) => println!("✓ Momentum conservation check passed"),
+        Ok(total_momentum) => println!("✓ Momentum conservation check passed, total momentum: {:?}", total_momentum),
         Err(e) => println!("✗ Momentum conservation check failed: {}", e),
     }
     

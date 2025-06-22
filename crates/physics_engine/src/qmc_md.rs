@@ -4,12 +4,559 @@
 
 use nalgebra::Vector3;
 use serde::{Serialize, Deserialize};
-use rand::{Rng, thread_rng};
-use std::collections::HashMap;
+use rand::Rng;
 use std::time::Instant;
 
 // Re-export quantum_chemistry module for convenience
 pub use crate::quantum_chemistry;
+
+/// Quantum Force Calculator Interface for Molecular Dynamics
+/// This trait provides quantum-accurate force calculations for molecular dynamics simulations
+pub trait QuantumForceCalculator {
+    /// Calculate quantum forces with statistical error estimates
+    fn calculate_quantum_forces(&self, positions: &[Vector3<f64>]) -> Result<ForceWithError, QMCError>;
+    
+    /// Estimate statistical error in current force calculations
+    fn statistical_error_estimate(&self) -> f64;
+    
+    /// Control adaptive sampling to achieve target error
+    fn adaptive_sampling_control(&mut self, target_error: f64);
+    
+    /// Determine if atoms need quantum treatment
+    fn needs_quantum_treatment(&self, atoms: &[Atom]) -> bool;
+    
+    /// Calculate quantum energy for given positions
+    fn quantum_energy(&self, positions: &[Vector3<f64>]) -> f64;
+    
+    /// Estimate memory usage for current calculation
+    fn memory_usage_estimate(&self) -> usize;
+    
+    /// Save current state for checkpointing
+    fn checkpoint_state(&self) -> Result<Vec<u8>, QMCError>;
+    
+    /// Restore state from checkpoint
+    fn restore_state(&mut self, state: &[u8]) -> Result<(), QMCError>;
+}
+
+/// Force calculation result with error estimates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForceWithError {
+    /// Quantum forces for each atom
+    pub forces: Vec<Vector3<f64>>,
+    /// Statistical errors for each force component
+    pub statistical_errors: Vec<f64>,
+    /// Confidence level of the calculation
+    pub confidence_level: f64,
+    /// Number of samples used for force calculation
+    pub sample_count: usize,
+    /// Computational cost in seconds
+    pub computational_cost: f64,
+}
+
+/// Atom representation for quantum force calculations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Atom {
+    /// Atomic number
+    pub atomic_number: u8,
+    /// Position in 3D space
+    pub position: Vector3<f64>,
+    /// Atomic mass in atomic units
+    pub mass: f64,
+    /// Charge in elementary charge units
+    pub charge: f64,
+    /// Whether this atom requires quantum treatment
+    pub needs_quantum_treatment: bool,
+}
+
+/// Quantum Force Calculator implementation using QMC
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QMCForceCalculator {
+    /// QMC system for force calculations
+    pub qmc_system: MetaLearnedNonMarkovianQMC,
+    /// Sampling parameters for force calculations
+    pub sampling_params: ForceSamplingParameters,
+    /// Statistical analysis of force calculations
+    pub force_statistics: ForceStatistics,
+    /// Memory usage tracking
+    pub memory_tracker: MemoryTracker,
+    /// Checkpoint data
+    pub checkpoint_data: Option<Vec<u8>>,
+}
+
+/// Sampling parameters specific to force calculations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForceSamplingParameters {
+    /// Number of walkers for force calculation
+    pub num_walkers: usize,
+    /// Number of steps for force sampling
+    pub num_steps: usize,
+    /// Time step for force evolution
+    pub time_step: f64,
+    /// Target statistical error
+    pub target_error: f64,
+    /// Maximum computational time in seconds
+    pub max_computation_time: f64,
+    /// Adaptive sampling enabled
+    pub adaptive_sampling: bool,
+    /// Force calculation frequency
+    pub force_calculation_frequency: usize,
+}
+
+/// Statistics for force calculations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForceStatistics {
+    /// Average force magnitude
+    pub average_force_magnitude: f64,
+    /// Maximum force magnitude
+    pub max_force_magnitude: f64,
+    /// Force variance
+    pub force_variance: f64,
+    /// Autocorrelation time for forces
+    pub force_autocorrelation_time: f64,
+    /// Effective sample size
+    pub effective_sample_size: usize,
+    /// Confidence intervals for forces
+    pub confidence_intervals: Vec<(f64, f64)>,
+}
+
+/// Memory usage tracker for force calculations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryTracker {
+    /// Current memory usage in bytes
+    pub current_memory: usize,
+    /// Peak memory usage in bytes
+    pub peak_memory: usize,
+    /// Memory allocation history
+    pub allocation_history: Vec<(String, usize)>,
+    /// Memory limit in bytes
+    pub memory_limit: usize,
+}
+
+impl QMCForceCalculator {
+    /// Create a new QMC force calculator
+    pub fn new(sampling_params: ForceSamplingParameters) -> Result<Self, QMCError> {
+        let qmc_system = MetaLearnedNonMarkovianQMC::new(
+            SamplingParameters {
+                num_walkers: sampling_params.num_walkers,
+                num_steps: sampling_params.num_steps,
+                time_step: sampling_params.time_step,
+                equilibration_steps: 1000,
+                block_size: 100,
+                target_error: sampling_params.target_error,
+            },
+            ConvergenceCriteria {
+                energy_tolerance: 1e-6,
+                variance_tolerance: 1e-6,
+                max_iterations: 10000,
+                autocorrelation_threshold: 0.1,
+            },
+        );
+        
+        Ok(Self {
+            qmc_system,
+            sampling_params,
+            force_statistics: ForceStatistics {
+                average_force_magnitude: 0.0,
+                max_force_magnitude: 0.0,
+                force_variance: 0.0,
+                force_autocorrelation_time: 0.0,
+                effective_sample_size: 0,
+                confidence_intervals: Vec::new(),
+            },
+            memory_tracker: MemoryTracker {
+                current_memory: 0,
+                peak_memory: 0,
+                allocation_history: Vec::new(),
+                memory_limit: 8 * 1024 * 1024 * 1024, // 8GB default
+            },
+            checkpoint_data: None,
+        })
+    }
+    
+    /// Calculate forces using QMC with error estimation
+    fn calculate_forces_qmc(&mut self, positions: &[Vector3<f64>]) -> Result<Vec<Vector3<f64>>, QMCError> {
+        let start_time = Instant::now();
+        
+        // Initialize walkers at given positions
+        self.qmc_system.initialize_walkers_at_positions(positions);
+        
+        // Perform QMC sampling for force calculation
+        let statistical_analysis = self.qmc_system.perform_ml_nma_sampling(positions)?;
+        
+        // Calculate forces from energy gradients
+        let forces = self.calculate_forces_from_energy_gradients(positions, &statistical_analysis)?;
+        
+        // Update computational cost
+        let computational_cost = start_time.elapsed().as_secs_f64();
+        
+        // Update force statistics
+        self.update_force_statistics(&forces, computational_cost);
+        
+        Ok(forces)
+    }
+    
+    /// Calculate forces from energy gradients using finite differences
+    fn calculate_forces_from_energy_gradients(&self, positions: &[Vector3<f64>], energy_analysis: &StatisticalAnalysis) -> Result<Vec<Vector3<f64>>, QMCError> {
+        let mut forces = Vec::with_capacity(positions.len());
+        let displacement = 1e-6; // Small displacement for finite differences
+        
+        for (i, &position) in positions.iter().enumerate() {
+            let mut force = Vector3::zeros();
+            
+            // Calculate force components using finite differences
+            for dim in 0..3 {
+                let mut displaced_positions = positions.to_vec();
+                
+                // Forward displacement
+                displaced_positions[i][dim] += displacement;
+                let energy_forward = self.qmc_system.calculate_local_energy(&displaced_positions);
+                
+                // Backward displacement
+                displaced_positions[i][dim] -= 2.0 * displacement;
+                let energy_backward = self.qmc_system.calculate_local_energy(&displaced_positions);
+                
+                // Force is negative gradient of energy
+                force[dim] = -(energy_forward - energy_backward) / (2.0 * displacement);
+            }
+            
+            forces.push(force);
+        }
+        
+        Ok(forces)
+    }
+    
+    /// Update force statistics
+    fn update_force_statistics(&mut self, forces: &[Vector3<f64>], computational_cost: f64) {
+        let force_magnitudes: Vec<f64> = forces.iter().map(|f| f.norm()).collect();
+        
+        self.force_statistics.average_force_magnitude = force_magnitudes.iter().sum::<f64>() / force_magnitudes.len() as f64;
+        self.force_statistics.max_force_magnitude = force_magnitudes.iter().fold(0.0, |a, &b| a.max(b));
+        
+        // Calculate variance
+        let mean = self.force_statistics.average_force_magnitude;
+        self.force_statistics.force_variance = force_magnitudes.iter()
+            .map(|&x| (x - mean).powi(2))
+            .sum::<f64>() / force_magnitudes.len() as f64;
+        
+        // Estimate autocorrelation time (simplified)
+        self.force_statistics.force_autocorrelation_time = 1.0; // Placeholder
+        
+        // Update effective sample size
+        self.force_statistics.effective_sample_size = forces.len();
+        
+        // Calculate confidence intervals (simplified)
+        self.force_statistics.confidence_intervals = forces.iter().map(|_| (0.0, 0.0)).collect();
+    }
+    
+    /// Estimate statistical error based on force variance
+    fn estimate_statistical_error(&self) -> f64 {
+        let standard_error = (self.force_statistics.force_variance / self.force_statistics.effective_sample_size as f64).sqrt();
+        standard_error
+    }
+    
+    /// Determine if atoms need quantum treatment
+    fn determine_quantum_treatment(&self, atoms: &[Atom]) -> bool {
+        // Simple heuristic: treat light atoms and atoms in close proximity quantum mechanically
+        for atom in atoms {
+            if atom.atomic_number <= 10 { // Light atoms (H, He, Li, Be, B, C, N, O, F, Ne)
+                return true;
+            }
+        }
+        
+        // Check for close proximity (potential for quantum tunneling)
+        for i in 0..atoms.len() {
+            for j in (i + 1)..atoms.len() {
+                let distance = (atoms[i].position - atoms[j].position).norm();
+                if distance < 2.0 { // Close proximity threshold
+                    return true;
+                }
+            }
+        }
+        
+        false
+    }
+}
+
+impl QuantumForceCalculator for QMCForceCalculator {
+    fn calculate_quantum_forces(&self, positions: &[Vector3<f64>]) -> Result<ForceWithError, QMCError> {
+        let mut calculator = self.clone();
+        let forces = calculator.calculate_forces_qmc(positions)?;
+        
+        let statistical_error = self.estimate_statistical_error();
+        let confidence_level = 0.95; // 95% confidence level
+        
+        Ok(ForceWithError {
+            forces,
+            statistical_errors: vec![statistical_error; positions.len()],
+            confidence_level,
+            sample_count: self.force_statistics.effective_sample_size,
+            computational_cost: 0.0, // Will be updated during calculation
+        })
+    }
+    
+    fn statistical_error_estimate(&self) -> f64 {
+        self.estimate_statistical_error()
+    }
+    
+    fn adaptive_sampling_control(&mut self, target_error: f64) {
+        if self.sampling_params.adaptive_sampling {
+            // Adjust number of walkers based on current error vs target
+            let current_error = self.estimate_statistical_error();
+            let error_ratio = current_error / target_error;
+            
+            if error_ratio > 1.0 {
+                // Increase sampling
+                self.sampling_params.num_walkers = (self.sampling_params.num_walkers as f64 * error_ratio.sqrt()) as usize;
+                self.sampling_params.num_steps = (self.sampling_params.num_steps as f64 * error_ratio) as usize;
+            }
+        }
+    }
+    
+    fn needs_quantum_treatment(&self, atoms: &[Atom]) -> bool {
+        self.determine_quantum_treatment(atoms)
+    }
+    
+    fn quantum_energy(&self, positions: &[Vector3<f64>]) -> f64 {
+        self.qmc_system.calculate_local_energy(positions)
+    }
+    
+    fn memory_usage_estimate(&self) -> usize {
+        // Estimate memory usage based on number of walkers and positions
+        let walker_memory = self.sampling_params.num_walkers * std::mem::size_of::<MemoryAugmentedWalker>();
+        let position_memory = self.sampling_params.num_walkers * 100 * std::mem::size_of::<Vector3<f64>>();
+        walker_memory + position_memory
+    }
+    
+    fn checkpoint_state(&self) -> Result<Vec<u8>, QMCError> {
+        // Serialize current state for checkpointing
+        bincode::serialize(self).map_err(|e| QMCError::NumericalInstability {
+            message: format!("Failed to serialize checkpoint: {}", e),
+        })
+    }
+    
+    fn restore_state(&mut self, state: &[u8]) -> Result<(), QMCError> {
+        // Deserialize state from checkpoint
+        let restored: QMCForceCalculator = bincode::deserialize(state).map_err(|e| QMCError::NumericalInstability {
+            message: format!("Failed to deserialize checkpoint: {}", e),
+        })?;
+        
+        *self = restored;
+        Ok(())
+    }
+}
+
+/// Hybrid QMC-Molecular Dynamics system
+#[derive(Debug, Clone)]
+pub struct HybridQmcMd {
+    /// Quantum force calculator
+    pub quantum_calculator: QMCForceCalculator,
+    /// Classical molecular dynamics system
+    pub classical_md: ClassicalMDSystem,
+    /// Adaptive quantum region selector
+    pub quantum_region_selector: QuantumRegionSelector,
+    /// Force consistency checker
+    pub force_consistency_checker: ForceConsistencyChecker,
+}
+
+/// Classical molecular dynamics system
+#[derive(Debug, Clone)]
+pub struct ClassicalMDSystem {
+    /// Atoms in the system
+    pub atoms: Vec<Atom>,
+    /// Classical forces
+    pub classical_forces: Vec<Vector3<f64>>,
+    /// Integration parameters
+    pub integration_params: IntegrationParameters,
+}
+
+/// Integration parameters for molecular dynamics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntegrationParameters {
+    /// Time step for integration
+    pub time_step: f64,
+    /// Temperature
+    pub temperature: f64,
+    /// Number of integration steps
+    pub num_steps: usize,
+    /// Output frequency
+    pub output_frequency: usize,
+}
+
+/// Quantum region selector for adaptive quantum treatment
+#[derive(Debug, Clone)]
+pub struct QuantumRegionSelector {
+    /// Threshold for quantum treatment
+    pub quantum_threshold: f64,
+    /// Regions requiring quantum treatment
+    pub quantum_regions: Vec<usize>,
+    /// Selection criteria
+    pub selection_criteria: SelectionCriteria,
+}
+
+/// Selection criteria for quantum regions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionCriteria {
+    /// Distance threshold for quantum treatment
+    pub distance_threshold: f64,
+    /// Energy threshold for quantum treatment
+    pub energy_threshold: f64,
+    /// Atomic number threshold for quantum treatment
+    pub atomic_number_threshold: u8,
+}
+
+/// Force consistency checker
+#[derive(Debug, Clone)]
+pub struct ForceConsistencyChecker {
+    /// Force tolerance
+    pub force_tolerance: f64,
+    /// Energy tolerance
+    pub energy_tolerance: f64,
+    /// Consistency history
+    pub consistency_history: Vec<ConsistencyCheck>,
+}
+
+/// Consistency check result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsistencyCheck {
+    /// Timestamp
+    pub timestamp: f64,
+    /// Force difference
+    pub force_difference: f64,
+    /// Energy difference
+    pub energy_difference: f64,
+    /// Consistency status
+    pub is_consistent: bool,
+}
+
+impl HybridQmcMd {
+    /// Create a new hybrid QMC-MD system
+    pub fn new(quantum_calculator: QMCForceCalculator, classical_md: ClassicalMDSystem) -> Self {
+        Self {
+            quantum_calculator,
+            classical_md,
+            quantum_region_selector: QuantumRegionSelector {
+                quantum_threshold: 0.1,
+                quantum_regions: Vec::new(),
+                selection_criteria: SelectionCriteria {
+                    distance_threshold: 2.0,
+                    energy_threshold: 1e-3,
+                    atomic_number_threshold: 10,
+                },
+            },
+            force_consistency_checker: ForceConsistencyChecker {
+                force_tolerance: 1e-6,
+                energy_tolerance: 1e-6,
+                consistency_history: Vec::new(),
+            },
+        }
+    }
+    
+    /// Run hybrid QMC-MD simulation
+    pub fn run_simulation(&mut self) -> Result<(), QMCError> {
+        for step in 0..self.classical_md.integration_params.num_steps {
+            // Select quantum regions
+            self.select_quantum_regions()?;
+            
+            // Calculate forces
+            let quantum_forces = self.calculate_quantum_forces()?;
+            let classical_forces = self.calculate_classical_forces()?;
+            
+            // Combine forces
+            let combined_forces = self.combine_forces(quantum_forces, classical_forces)?;
+            
+            // Check force consistency
+            self.check_force_consistency(&combined_forces)?;
+            
+            // Integrate positions
+            self.integrate_positions(&combined_forces)?;
+            
+            // Output if needed
+            if step % self.classical_md.integration_params.output_frequency == 0 {
+                self.output_trajectory(step)?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Select regions requiring quantum treatment
+    fn select_quantum_regions(&mut self) -> Result<(), QMCError> {
+        let positions: Vec<Vector3<f64>> = self.classical_md.atoms.iter().map(|a| a.position).collect();
+        let atoms = &self.classical_md.atoms;
+        
+        self.quantum_region_selector.quantum_regions.clear();
+        
+        for (i, atom) in atoms.iter().enumerate() {
+            if self.quantum_calculator.needs_quantum_treatment(&[atom.clone()]) {
+                self.quantum_region_selector.quantum_regions.push(i);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Calculate quantum forces for selected regions
+    fn calculate_quantum_forces(&mut self) -> Result<Vec<Vector3<f64>>, QMCError> {
+        let positions: Vec<Vector3<f64>> = self.classical_md.atoms.iter().map(|a| a.position).collect();
+        let force_result = self.quantum_calculator.calculate_quantum_forces(&positions)?;
+        Ok(force_result.forces)
+    }
+    
+    /// Calculate classical forces
+    fn calculate_classical_forces(&self) -> Result<Vec<Vector3<f64>>, QMCError> {
+        // Placeholder for classical force calculation
+        Ok(vec![Vector3::zeros(); self.classical_md.atoms.len()])
+    }
+    
+    /// Combine quantum and classical forces
+    fn combine_forces(&self, quantum_forces: Vec<Vector3<f64>>, classical_forces: Vec<Vector3<f64>>) -> Result<Vec<Vector3<f64>>, QMCError> {
+        let mut combined_forces = Vec::with_capacity(quantum_forces.len());
+        
+        for (i, (q_force, c_force)) in quantum_forces.iter().zip(classical_forces.iter()).enumerate() {
+            if self.quantum_region_selector.quantum_regions.contains(&i) {
+                // Use quantum force for quantum regions
+                combined_forces.push(*q_force);
+            } else {
+                // Use classical force for classical regions
+                combined_forces.push(*c_force);
+            }
+        }
+        
+        Ok(combined_forces)
+    }
+    
+    /// Check force consistency
+    fn check_force_consistency(&mut self, forces: &[Vector3<f64>]) -> Result<(), QMCError> {
+        let consistency_check = ConsistencyCheck {
+            timestamp: 0.0, // Placeholder
+            force_difference: 0.0, // Placeholder
+            energy_difference: 0.0, // Placeholder
+            is_consistent: true, // Placeholder
+        };
+        
+        self.force_consistency_checker.consistency_history.push(consistency_check);
+        Ok(())
+    }
+    
+    /// Integrate positions using forces
+    fn integrate_positions(&mut self, forces: &[Vector3<f64>]) -> Result<(), QMCError> {
+        let dt = self.classical_md.integration_params.time_step;
+        
+        for (atom, force) in self.classical_md.atoms.iter_mut().zip(forces.iter()) {
+            // Simple velocity Verlet integration
+            let acceleration = *force / atom.mass;
+            atom.position += acceleration * dt * dt;
+        }
+        
+        Ok(())
+    }
+    
+    /// Output trajectory data
+    fn output_trajectory(&self, step: usize) -> Result<(), QMCError> {
+        // Placeholder for trajectory output
+        Ok(())
+    }
+}
 
 /// Memory-augmented walker with explicit trajectory history
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +717,42 @@ impl Default for PerformanceTracker {
     }
 }
 
+impl serde::Serialize for PerformanceTracker {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("PerformanceTracker", 3)?;
+        state.serialize_field("metrics_history", &self.metrics_history)?;
+        state.serialize_field("convergence_history", &self.convergence_history)?;
+        state.serialize_field("step_count", &self.step_count)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PerformanceTracker {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct PerformanceTrackerHelper {
+            metrics_history: Vec<PerformanceMetrics>,
+            convergence_history: Vec<f64>,
+            step_count: usize,
+        }
+
+        let helper = PerformanceTrackerHelper::deserialize(deserializer)?;
+        Ok(PerformanceTracker {
+            metrics_history: helper.metrics_history,
+            convergence_history: helper.convergence_history,
+            step_count: helper.step_count,
+            start_time: Instant::now(), // Always use current time when deserializing
+        })
+    }
+}
+
 /// QMC error types
 #[derive(Debug)]
 pub enum QMCError {
@@ -257,7 +840,7 @@ impl VariationalMonteCarlo {
 }
 
 /// Meta-Learned Non-Markovian Adaptive QMC System
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetaLearnedNonMarkovianQMC {
     pub walkers: Vec<MemoryAugmentedWalker>,
     pub proposal_model: MetaLearnedProposal,

@@ -13,7 +13,8 @@ use log::debug;
 use crate::quantum_math::{
     boys_function, gaussian_normalization, 
     gaussian_product_center,
-    kinetic_integral_obara_saika, ObSaWorkspace
+    kinetic_integral_obara_saika, ObSaWorkspace,
+    two_electron_integral_obara_saika, integral_screening_threshold
 };
 
 
@@ -958,31 +959,61 @@ impl QuantumChemistryEngine {
     /// Calculate electron repulsion integral (ij|kl) using simplified Gaussian model
     /// This is a placeholder for the complex four-center two-electron integral calculation
     fn calculate_electron_repulsion_integral(&self, i: usize, j: usize, k: usize, l: usize, molecule: &Molecule) -> Result<f64> {
-        // Simplified model using exponential decay with distance
-        // Real implementation would use Obara-Saika recursion or other advanced methods
-        
+        // Validate indices
         if i >= molecule.atoms.len() || j >= molecule.atoms.len() || 
            k >= molecule.atoms.len() || l >= molecule.atoms.len() {
             return Ok(0.0);
         }
         
-        let pos_i = molecule.atoms[i].position;
-        let pos_j = molecule.atoms[j].position;
-        let pos_k = molecule.atoms[k].position;
-        let pos_l = molecule.atoms[l].position;
+        // Get atom positions and properties
+        let atom_i = &molecule.atoms[i];
+        let atom_j = &molecule.atoms[j];
+        let atom_k = &molecule.atoms[k];
+        let atom_l = &molecule.atoms[l];
         
-        // Distance-based approximation for electron repulsion
-        let r_ij = (pos_i - pos_j).norm();
-        let r_kl = (pos_k - pos_l).norm();
-        let r_ik = (pos_i - pos_k).norm();
-        let r_jl = (pos_j - pos_l).norm();
+        // For now, use simplified basis functions (s orbitals) at atomic centers
+        // In a full implementation, these would come from the basis set
+        let alpha_i = 1.0; // Effective exponent for atom i (would come from basis set)
+        let alpha_j = 1.0; // Effective exponent for atom j
+        let alpha_k = 1.0; // Effective exponent for atom k
+        let alpha_l = 1.0; // Effective exponent for atom l
         
-        // Simplified electron repulsion integral using Slater-type approximation
-        let zeta = 1.0; // Effective nuclear charge (simplified)
-        let integral = (1.0 / (4.0 * PI * constants::VACUUM_PERMITTIVITY)) * 
-                      constants::ELEMENTARY_CHARGE.powi(2) *
-                      (-zeta * (r_ij + r_kl + r_ik + r_jl) / 4.0).exp() /
-                      (1.0 + r_ij + r_kl + r_ik + r_jl);
+        let center_i = atom_i.position;
+        let center_j = atom_j.position;
+        let center_k = atom_k.position;
+        let center_l = atom_l.position;
+        
+        // Angular momentum (s orbitals = 0,0,0)
+        let ang_i = (0, 0, 0);
+        let ang_j = (0, 0, 0);
+        let ang_k = (0, 0, 0);
+        let ang_l = (0, 0, 0);
+        
+        // Create workspace for Obara-Saika calculations
+        let mut workspace = ObSaWorkspace::new(4); // Support up to g orbitals
+        
+        // Apply integral screening using Schwarz inequality
+        let screening_threshold = integral_screening_threshold(
+            alpha_i, center_i, ang_i,
+            alpha_j, center_j, ang_j,
+            alpha_k, center_k, ang_k,
+            alpha_l, center_l, ang_l,
+            &mut workspace,
+        );
+        
+        // Skip integral if below screening threshold
+        if screening_threshold < 1e-12 {
+            return Ok(0.0);
+        }
+        
+        // Compute the two-electron integral using Obara-Saika recursion
+        let integral = two_electron_integral_obara_saika(
+            alpha_i, center_i, ang_i,
+            alpha_j, center_j, ang_j,
+            alpha_k, center_k, ang_k,
+            alpha_l, center_l, ang_l,
+            &mut workspace,
+        );
         
         Ok(integral)
     }

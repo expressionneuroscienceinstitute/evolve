@@ -43,8 +43,146 @@ use winit::{
 };
 use serde_json::Value;
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+use num_complex::Complex;
 
-// pub use universe_sim::UniverseSimulation;
+// === QUANTUM FIELD VISUALIZATION SYSTEM ===
+
+/// Quantum Field State Vector for quantum-accurate visualization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantumFieldStateVector {
+    pub amplitude: Complex<f64>,                    // Complex field amplitude
+    pub phase: f64,                                // Quantum phase
+    pub superposition_states: Vec<Complex<f64>>,   // Multiple quantum states
+    pub entanglement_map: HashMap<usize, f64>,     // Entanglement correlations
+    pub decoherence_rate: f64,                     // Rate of quantum-to-classical transition
+    pub scale_factor: f64,                         // Multi-scale quantum effects
+    pub uncertainty_position: f64,                 // Position uncertainty (Heisenberg)
+    pub uncertainty_momentum: f64,                 // Momentum uncertainty (Heisenberg)
+    pub coherence_time: f64,                       // Quantum coherence lifetime
+    pub field_type: QuantumFieldType,              // Type of quantum field
+}
+
+impl Default for QuantumFieldStateVector {
+    fn default() -> Self {
+        Self {
+            amplitude: Complex::new(1.0, 0.0),
+            phase: 0.0,
+            superposition_states: vec![Complex::new(1.0, 0.0)],
+            entanglement_map: HashMap::new(),
+            decoherence_rate: 0.0,
+            scale_factor: 1.0,
+            uncertainty_position: 1e-10, // 1 angstrom
+            uncertainty_momentum: 1e-24, // kg⋅m/s
+            coherence_time: 1e-12,       // 1 picosecond
+            field_type: QuantumFieldType::Scalar,
+        }
+    }
+}
+
+/// Types of quantum fields for visualization
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum QuantumFieldType {
+    Scalar,     // Higgs field, etc.
+    Fermion,    // Electron field, quark fields
+    Vector,     // Photon field, gluon fields
+    Tensor,     // Graviton field
+}
+
+/// Quantum visualization modes for different quantum phenomena
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum QuantumVisualizationMode {
+    Classical,          // Traditional particle visualization
+    Superposition,      // Show quantum superposition states
+    Entanglement,       // Visualize quantum entanglement
+    Decoherence,        // Show quantum-to-classical transitions
+    FieldFluctuations,  // Vacuum energy and virtual particles
+    MultiScale,         // Scale-dependent quantum effects
+    Interference,       // Quantum interference patterns
+    Tunneling,          // Quantum tunneling effects
+}
+
+/// Extended particle vertex with quantum field data
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[repr(C)]
+pub struct QuantumParticleVertex {
+    // Classical particle data
+    pub position: [f32; 3],
+    pub velocity: [f32; 3], 
+    pub mass: f32,
+    pub charge: f32,
+    pub temperature: f32,
+    pub particle_type: f32,
+    pub interaction_count: f32,
+    
+    // Quantum field data
+    pub quantum_amplitude_real: f32,    // Real part of quantum amplitude
+    pub quantum_amplitude_imag: f32,    // Imaginary part of quantum amplitude
+    pub quantum_phase: f32,             // Quantum phase
+    pub decoherence_rate: f32,          // Rate of quantum-to-classical transition
+    pub uncertainty_position: f32,      // Position uncertainty
+    pub uncertainty_momentum: f32,      // Momentum uncertainty
+    pub coherence_time: f32,            // Quantum coherence lifetime
+    pub entanglement_strength: f32,     // Strength of entanglement
+    pub field_type: f32,                // Quantum field type
+    pub scale_factor: f32,              // Multi-scale quantum effects
+    
+    // GPU alignment padding
+    pub _padding: [f32; 2],
+}
+
+impl Default for QuantumParticleVertex {
+    fn default() -> Self {
+        Self {
+            position: [0.0, 0.0, 0.0],
+            velocity: [0.0, 0.0, 0.0],
+            mass: 0.0,
+            charge: 0.0,
+            temperature: 0.0,
+            particle_type: 0.0,
+            interaction_count: 0.0,
+            quantum_amplitude_real: 1.0,
+            quantum_amplitude_imag: 0.0,
+            quantum_phase: 0.0,
+            decoherence_rate: 0.0,
+            uncertainty_position: 1e-10,
+            uncertainty_momentum: 1e-24,
+            coherence_time: 1e-12,
+            entanglement_strength: 0.0,
+            field_type: 0.0,
+            scale_factor: 1.0,
+            _padding: [0.0, 0.0],
+        }
+    }
+}
+
+/// Quantum field visualization parameters
+#[derive(Debug, Clone)]
+pub struct QuantumVisualizationParams {
+    pub mode: QuantumVisualizationMode,
+    pub superposition_threshold: f32,   // Threshold for showing superposition
+    pub entanglement_threshold: f32,    // Threshold for showing entanglement
+    pub decoherence_scale: f32,         // Scale factor for decoherence effects
+    pub field_fluctuation_amplitude: f32, // Amplitude of field fluctuations
+    pub interference_visibility: f32,   // Visibility of interference patterns
+    pub tunneling_probability_scale: f32, // Scale for tunneling visualization
+    pub multi_scale_transition: f32,    // Scale for quantum-classical transition
+}
+
+impl Default for QuantumVisualizationParams {
+    fn default() -> Self {
+        Self {
+            mode: QuantumVisualizationMode::Classical,
+            superposition_threshold: 0.1,
+            entanglement_threshold: 0.5,
+            decoherence_scale: 1.0,
+            field_fluctuation_amplitude: 0.1,
+            interference_visibility: 1.0,
+            tunneling_probability_scale: 1.0,
+            multi_scale_transition: 1e-9, // 1 nanometer
+        }
+    }
+}
 
 // === BUFFER POOL IMPLEMENTATION ===
 
@@ -440,6 +578,16 @@ pub struct NativeRenderer<'window> {
     #[cfg(feature = "heavy")]
     compute_bind_group: Option<wgpu::BindGroup>,
     
+    // Quantum visualization: quantum field pipeline
+    #[cfg(feature = "quantum-visualization")]
+    quantum_pipeline: Option<wgpu::RenderPipeline>,
+    #[cfg(feature = "quantum-visualization")]
+    quantum_vertex_buffer: Option<wgpu::Buffer>,
+    #[cfg(feature = "quantum-visualization")]
+    quantum_uniform_buffer: Option<wgpu::Buffer>,
+    #[cfg(feature = "quantum-visualization")]
+    quantum_bind_group: Option<wgpu::BindGroup>,
+    
     // Camera and view state
     camera: Camera,
     #[allow(dead_code)]
@@ -464,6 +612,16 @@ pub struct NativeRenderer<'window> {
     interaction_heatmap: Vec<f32>,
     #[cfg(feature = "heavy")]
     temperature_field: Vec<Vector3<f32>>,
+
+    // Quantum visualization state
+    #[cfg(feature = "quantum-visualization")]
+    quantum_mode_enabled: bool,
+    #[cfg(feature = "quantum-visualization")]
+    quantum_visualization_params: QuantumVisualizationParams,
+    #[cfg(feature = "quantum-visualization")]
+    quantum_field_states: Vec<QuantumFieldStateVector>,
+    #[cfg(feature = "quantum-visualization")]
+    quantum_particles: Vec<QuantumParticleVertex>,
 
     // Text rendering (glyphon)
     font_system: FontSystem,
@@ -502,7 +660,7 @@ pub struct NativeRenderer<'window> {
     pub interaction_heatmap: Vec<InteractionHeatmapCell>,
 }
 
-/// Uniform data sent to GPU with heavy mode extensions
+/// Uniform data sent to GPU with heavy mode and quantum visualization extensions
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct Uniforms {
@@ -511,7 +669,16 @@ struct Uniforms {
     scale: f32,
     color_mode: f32,
     filter_threshold: f32,
-    _padding: [f32; 4], // Exactly 96 bytes total (16 bytes padding)
+    // Quantum visualization parameters
+    quantum_mode: f32,                    // Quantum visualization mode
+    superposition_threshold: f32,         // Threshold for superposition display
+    entanglement_threshold: f32,          // Threshold for entanglement display
+    decoherence_scale: f32,               // Scale factor for decoherence effects
+    field_fluctuation_amplitude: f32,     // Amplitude of field fluctuations
+    interference_visibility: f32,         // Visibility of interference patterns
+    tunneling_probability_scale: f32,     // Scale for tunneling visualization
+    multi_scale_transition: f32,          // Scale for quantum-classical transition
+    _padding: [f32; 2],                   // GPU alignment padding
 }
 
 impl Default for Camera {
@@ -1150,6 +1317,15 @@ impl<'window> NativeRenderer<'window> {
             #[cfg(feature = "heavy")]
             compute_bind_group: None,
             
+            #[cfg(feature = "quantum-visualization")]
+            quantum_pipeline: None,
+            #[cfg(feature = "quantum-visualization")]
+            quantum_vertex_buffer: None,
+            #[cfg(feature = "quantum-visualization")]
+            quantum_uniform_buffer: None,
+            #[cfg(feature = "quantum-visualization")]
+            quantum_bind_group: None,
+            
             camera,
             #[allow(dead_code)]
             view_matrix: Matrix4::identity(),
@@ -1168,6 +1344,15 @@ impl<'window> NativeRenderer<'window> {
             interaction_heatmap: Vec::new(),
             #[cfg(feature = "heavy")]
             temperature_field: Vec::new(),
+
+            #[cfg(feature = "quantum-visualization")]
+            quantum_mode_enabled: false,
+            #[cfg(feature = "quantum-visualization")]
+            quantum_visualization_params: QuantumVisualizationParams::default(),
+            #[cfg(feature = "quantum-visualization")]
+            quantum_field_states: Vec::new(),
+            #[cfg(feature = "quantum-visualization")]
+            quantum_particles: Vec::new(),
 
             // Text rendering (glyphon)
             font_system,
@@ -1511,7 +1696,15 @@ impl<'window> NativeRenderer<'window> {
             },
             color_mode: self.camera.color_mode as u32 as f32,
             filter_threshold: self.camera.filter_threshold,
-            _padding: [0.0; 4],
+            quantum_mode: 0.0,
+            superposition_threshold: 0.0,
+            entanglement_threshold: 0.0,
+            decoherence_scale: 0.0,
+            field_fluctuation_amplitude: 0.0,
+            interference_visibility: 0.0,
+            tunneling_probability_scale: 0.0,
+            multi_scale_transition: 0.0,
+            _padding: [0.0; 2],
         };
         
         self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));

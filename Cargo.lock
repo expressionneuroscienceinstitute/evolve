@@ -2712,6 +2712,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "approx 0.5.1",
+ "bincode",
  "endf_parser",
  "fastrand 1.9.0",
  "itertools",
@@ -2721,6 +2722,7 @@ dependencies = [
  "ndarray",
  "once_cell",
  "ordered-float",
+ "parking_lot",
  "physics_types",
  "rand",
  "rand_chacha",

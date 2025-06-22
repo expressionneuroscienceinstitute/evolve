@@ -22,6 +22,7 @@ pub mod atomic_molecular_bridge;
 
 use anyhow::Result;
 use nalgebra::Vector3;
+use rand::Rng;
 
 use crate::{PhysicsState, constants::{ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY}};
 use crate::molecular_dynamics::force_fields::{LennardJonesParams, apply_lennard_jones_forces};
@@ -242,6 +243,8 @@ impl MolecularDynamicsEngine {
         let k_b = 1.380649e-23;
         let velocity_scale = (3.0 * k_b * temperature / mass).sqrt();
         
+        let mut rng = rand::thread_rng();
+
         for i in 0..n_particles_per_dim {
             for j in 0..n_particles_per_dim {
                 for k in 0..n_particles_per_dim {
@@ -253,9 +256,9 @@ impl MolecularDynamicsEngine {
                     
                     // Initialize velocities with Maxwell-Boltzmann distribution
                     let velocity = [
-                        velocity_scale * (rand::random() - 0.5),
-                        velocity_scale * (rand::random() - 0.5),
-                        velocity_scale * (rand::random() - 0.5),
+                        velocity_scale * (rng.gen::<f64>() - 0.5),
+                        velocity_scale * (rng.gen::<f64>() - 0.5),
+                        velocity_scale * (rng.gen::<f64>() - 0.5),
                     ];
                     
                     particles.push(Particle {
@@ -339,34 +342,6 @@ pub struct SystemProperties {
     pub kinetic_energy: f64,
     pub n_particles: usize,
     pub neighbor_pairs: usize,
-}
-
-/// Initialize random number generator for velocity initialization
-/// 
-/// This is a simple implementation - in production, use a proper RNG crate
-mod rand {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::SystemTime;
-    
-    static mut SEED: u64 = 0;
-    
-    pub fn random() -> f64 {
-        unsafe {
-            if SEED == 0 {
-                SEED = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos() as u64;
-            }
-            
-            let mut hasher = DefaultHasher::new();
-            SEED.hash(&mut hasher);
-            SEED = hasher.finish();
-            
-            (SEED as f64) / (u64::MAX as f64)
-        }
-    }
 }
 
 fn particles_to_physics_states(particles: &[Particle]) -> Vec<PhysicsState> {

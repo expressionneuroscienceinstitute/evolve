@@ -18,9 +18,7 @@
 use anyhow::Result;
 use nalgebra::Vector3;
 use crate::atomic_physics::Atom;
-use crate::atomic_structures::{AtomicNucleus, ChemicalBond, BondType, Molecule};
 use crate::molecular_dynamics::{System, Particle};
-use crate::constants::RYDBERG_ENERGY;
 
 // Define BOHR_RADIUS constant if not available
 const BOHR_RADIUS: f64 = 5.29177210903e-11; // meters
@@ -734,7 +732,7 @@ impl AtomicMolecularBridge {
         total_time: f64,
     ) -> MolecularDynamicsTrajectory {
         let mut trajectory = MolecularDynamicsTrajectory::new();
-        let mut current_atoms = atoms.to_vec();
+        let current_atoms = atoms.to_vec();
         let mut velocities = self.initialize_velocities(atoms, temperature);
         
         let num_steps = (total_time / time_step) as usize;

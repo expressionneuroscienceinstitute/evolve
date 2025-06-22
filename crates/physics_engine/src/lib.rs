@@ -58,6 +58,9 @@ pub mod conservation;
 // QMC module for Meta-Learned Non-Markovian Quantum Monte Carlo
 pub mod qmc_md;
 
+// Revolutionary Quantum Neural Field Theory (QNFT)
+pub mod quantum_neural_field_theory;
+
 // Re-export atomic molecular bridge for easy access
 pub use molecular_dynamics::atomic_molecular_bridge::{
     AtomicMolecularBridge, AtomicMolecularParameters, ReactionKinetics, 

@@ -19,3 +19,4 @@ docs/research_proposals/2025-01-27_Agent_QMC_Optimizer_NovelQMCOptimizations.md
 docs/research_proposals/2025-01-27_Agent_Quantum_Physics_QuantumMonteCarloMolecularDynamics.md
 crates/agent_evolution/interaction_data.json
 crates/agent_evolution/trajectory_data.json
+docs/research_proposals/*

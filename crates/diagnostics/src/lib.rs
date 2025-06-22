@@ -8,6 +8,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use sysinfo::{System, Networks, Disks, Components};
+use std::fmt::Write;
 
 /// Main diagnostics system for monitoring simulation performance
 #[derive(Debug)]
@@ -516,6 +517,63 @@ impl DiagnosticsSystem {
             25.0 // Default to 25 degrees Celsius if no temperature sensors are found
         }
     }
+
+    /// Export current diagnostics in Prometheus exposition format
+    ///
+    /// This follows the OpenMetrics text format so metrics can be scraped by
+    /// Prometheus or compatible systems without adding a heavy runtime
+    /// dependency.  Each summary statistic (mean/median/std_dev/etc.) is
+    /// exposed as a separate sample with a `stat` label so that querying tools
+    /// can aggregate as desired.
+    pub fn to_prometheus(&self) -> String {
+        let mut out = String::new();
+
+        // Helper closure for emitting a statistical timeseries
+        let mut emit_ts = |base: &str, ts: &TimeSeries| {
+            // Help + type once per metric family
+            let _ = writeln!(out, "# HELP {} Summary statistics for {}", base, base);
+            let _ = writeln!(out, "# TYPE {} summary", base);
+            let stats = &ts.stats;
+            let _ = writeln!(out, "{0}{{stat=\"mean\"}} {1}", base, stats.mean);
+            let _ = writeln!(out, "{0}{{stat=\"median\"}} {1}", base, stats.median);
+            let _ = writeln!(out, "{0}{{stat=\"std_dev\"}} {1}", base, stats.std_dev);
+            let _ = writeln!(out, "{0}{{stat=\"min\"}} {1}", base, stats.min);
+            let _ = writeln!(out, "{0}{{stat=\"max\"}} {1}", base, stats.max);
+            let _ = writeln!(out, "{0}{{stat=\"p95\"}} {1}", base, stats.percentile_95);
+            let _ = writeln!(out, "{0}{{stat=\"p99\"}} {1}", base, stats.percentile_99);
+        };
+
+        // Emit primary performance timeseries
+        emit_ts("physics_step_time_ms", &self.metrics.physics_step_times);
+        emit_ts("universe_tick_time_ms", &self.metrics.universe_tick_times);
+        emit_ts("interaction_rate", &self.metrics.interaction_rates);
+        emit_ts("allocation_rate_bytes", &self.metrics.allocation_rates);
+        emit_ts("frame_rate_fps", &self.metrics.frame_rates);
+        emit_ts("rpc_latency_ms", &self.metrics.rpc_latency);
+
+        // System load gauges
+        let _ = writeln!(out, "# HELP system_cpu_usage_percent Current CPU usage percentage");
+        let _ = writeln!(out, "# TYPE system_cpu_usage_percent gauge");
+        let _ = writeln!(out, "system_cpu_usage_percent {}", self.metrics.system_load.cpu_usage);
+
+        let _ = writeln!(out, "# HELP system_memory_usage_bytes Current memory usage in bytes");
+        let _ = writeln!(out, "# TYPE system_memory_usage_bytes gauge");
+        let _ = writeln!(out, "system_memory_usage_bytes {}", self.metrics.system_load.memory_usage);
+
+        let _ = writeln!(out, "# HELP system_disk_usage_percent Current disk usage percentage");
+        let _ = writeln!(out, "# TYPE system_disk_usage_percent gauge");
+        let _ = writeln!(out, "system_disk_usage_percent {}", self.metrics.system_load.disk_usage);
+
+        let _ = writeln!(out, "# HELP system_network_bandwidth_bytes_per_sec Aggregate network bandwidth");
+        let _ = writeln!(out, "# TYPE system_network_bandwidth_bytes_per_sec gauge");
+        let _ = writeln!(out, "system_network_bandwidth_bytes_per_sec {}", self.metrics.system_load.network_bandwidth);
+
+        let _ = writeln!(out, "# HELP system_temperature_celsius Average system temperature in Celsius");
+        let _ = writeln!(out, "# TYPE system_temperature_celsius gauge");
+        let _ = writeln!(out, "system_temperature_celsius {}", self.metrics.system_load.temperature);
+
+        out
+    }
 }
 
 /// Performance report for external consumption
@@ -679,4 +737,19 @@ impl SystemMonitor {
 /// Export main diagnostics function for backwards compatibility
 pub fn diagnose() -> DiagnosticsSystem {
     DiagnosticsSystem::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prometheus_output_non_empty() {
+        let diag = DiagnosticsSystem::new();
+        let output = diag.to_prometheus();
+        assert!(
+            !output.trim().is_empty(),
+            "Prometheus exporter returned empty output"
+        );
+    }
 }

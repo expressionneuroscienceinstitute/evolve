@@ -41,6 +41,7 @@ use winit::{
     keyboard::{KeyCode, ModifiersState},
     window::Window,
 };
+use serde_json::Value;
 
 // pub use universe_sim::UniverseSimulation;
 
@@ -489,6 +490,15 @@ pub struct NativeRenderer<'window> {
     buffer_pool: BufferPool,
     // Track submission indices for proper cleanup
     last_submission_index: Option<wgpu::SubmissionIndex>,
+
+    pub multi_agent_overlay_enabled: bool,
+    pub multi_agent_network_json: Option<Value>,
+
+    // Add to NativeRenderer struct:
+    pub agent_visualization_mode: AgentVisualizationMode,
+    pub selected_agent_id: Option<String>,
+    pub agent_timeline_data: Vec<AgentTimelineEvent>,
+    pub interaction_heatmap: Vec<InteractionHeatmapCell>,
 }
 
 /// Uniform data sent to GPU with heavy mode extensions
@@ -1184,6 +1194,15 @@ impl<'window> NativeRenderer<'window> {
             buffer_pool: BufferPool::new(),
             // Initialize submission tracking
             last_submission_index: None,
+
+            multi_agent_overlay_enabled: false,
+            multi_agent_network_json: None,
+
+            // Add to NativeRenderer struct:
+            agent_visualization_mode: AgentVisualizationMode::Overview,
+            selected_agent_id: None,
+            agent_timeline_data: Vec::new(),
+            interaction_heatmap: Vec::new(),
         })
     }
     
@@ -1585,6 +1604,11 @@ impl<'window> NativeRenderer<'window> {
             warn!("Debug panel rendering failed: {}", e);
         }
 
+        // ---- Multi-Agent Overlay ----
+        if let Err(e) = self.render_multi_agent_overlay(&mut encoder, &view) {
+            warn!("Multi-Agent overlay rendering failed: {}", e);
+        }
+
         // Submit GPU commands and present the frame
         let submission_index = self.queue.submit(std::iter::once(encoder.finish()));
         self.last_submission_index = Some(submission_index);
@@ -1921,6 +1945,36 @@ impl<'window> NativeRenderer<'window> {
                     };
                     self.camera.scale_mode = next_scale_mode;
                 }
+                // Multi-agent visualization controls
+                KeyCode::KeyM => {
+                    self.toggle_multi_agent_overlay();
+                    info!("Multi-agent overlay toggled: {}", self.multi_agent_overlay_enabled);
+                }
+                KeyCode::KeyN => {
+                    self.cycle_agent_visualization_mode();
+                    info!("Agent visualization mode: {:?}", self.agent_visualization_mode);
+                }
+                KeyCode::KeyI => {
+                    // Cycle through agents in inspector mode
+                    if let Some(ref json) = self.multi_agent_network_json {
+                        if let Some(agents) = json["agents"].as_array() {
+                            if let Some(current_selected) = &self.selected_agent_id {
+                                // Find current agent index and move to next
+                                if let Some(current_idx) = agents.iter().position(|a| a["id"].as_str() == Some(current_selected)) {
+                                    let next_idx = (current_idx + 1) % agents.len();
+                                    if let Some(next_agent) = agents.get(next_idx) {
+                                        self.selected_agent_id = next_agent["id"].as_str().map(|s| s.to_string());
+                                    }
+                                }
+                            } else {
+                                // Select first agent
+                                if let Some(first_agent) = agents.first() {
+                                    self.selected_agent_id = first_agent["id"].as_str().map(|s| s.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -2132,6 +2186,181 @@ impl<'window> NativeRenderer<'window> {
         self.device.poll(wgpu::Maintain::Wait);
         self.retired_text_buffers.clear();
     }
+
+    /// Accepts a JSON summary of the multi-agent system for visualization
+    pub fn set_multi_agent_network(&mut self, network_json: Value) {
+        self.multi_agent_network_json = Some(network_json);
+    }
+
+    /// Toggle the multi-agent overlay
+    pub fn toggle_multi_agent_overlay(&mut self) {
+        self.multi_agent_overlay_enabled = !self.multi_agent_overlay_enabled;
+    }
+
+    /// Set agent timeline data for visualization
+    pub fn set_agent_timeline(&mut self, timeline_data: Vec<AgentTimelineEvent>) {
+        self.agent_timeline_data = timeline_data;
+    }
+
+    /// Set interaction heatmap data
+    pub fn set_interaction_heatmap(&mut self, heatmap_data: Vec<InteractionHeatmapCell>) {
+        self.interaction_heatmap = heatmap_data;
+    }
+
+    /// Cycle through visualization modes
+    pub fn cycle_agent_visualization_mode(&mut self) {
+        self.agent_visualization_mode = match self.agent_visualization_mode {
+            AgentVisualizationMode::Overview => AgentVisualizationMode::Network,
+            AgentVisualizationMode::Network => AgentVisualizationMode::Timeline,
+            AgentVisualizationMode::Timeline => AgentVisualizationMode::Heatmap,
+            AgentVisualizationMode::Heatmap => AgentVisualizationMode::Inspector,
+            AgentVisualizationMode::Inspector => AgentVisualizationMode::Overview,
+        };
+    }
+
+    /// Enhanced multi-agent overlay rendering with multiple visualization modes
+    pub fn render_multi_agent_overlay(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> anyhow::Result<()> {
+        if !self.multi_agent_overlay_enabled { return Ok(()); }
+        
+        match self.agent_visualization_mode {
+            AgentVisualizationMode::Overview => self.render_agent_overview(encoder, view)?,
+            AgentVisualizationMode::Network => self.render_agent_network(encoder, view)?,
+            AgentVisualizationMode::Timeline => self.render_agent_timeline(encoder, view)?,
+            AgentVisualizationMode::Heatmap => self.render_interaction_heatmap(encoder, view)?,
+            AgentVisualizationMode::Inspector => self.render_agent_inspector(encoder, view)?,
+        }
+        Ok(())
+    }
+
+    /// Render basic agent overview
+    fn render_agent_overview(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> anyhow::Result<()> {
+        if let Some(ref json) = self.multi_agent_network_json {
+            let agent_count = json["agents"].as_array().map(|a| a.len()).unwrap_or(0);
+            let metrics = &json["metrics"];
+            let overlay_text = format!(
+                "=== AGENT OVERVIEW ===\nAgents: {}\nEfficiency: {:.2}\nCoordination: {:.2}\nCommunication: {:.2}\nMode: {:?}",
+                agent_count,
+                metrics["overall_efficiency"].as_f64().unwrap_or(0.0),
+                metrics["coordination_quality"].as_f64().unwrap_or(0.0),
+                metrics["communication_efficiency"].as_f64().unwrap_or(0.0),
+                self.agent_visualization_mode
+            );
+            self.render_debug_text(encoder, view, &overlay_text)?;
+        }
+        Ok(())
+    }
+
+    /// Render network graph visualization
+    fn render_agent_network(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> anyhow::Result<()> {
+        if let Some(ref json) = self.multi_agent_network_json {
+            let agents = json["agents"].as_array().unwrap_or(&Vec::new());
+            let connections = json["connections"].as_array().unwrap_or(&Vec::new());
+            
+            let mut network_text = String::from("=== AGENT NETWORK ===\n");
+            network_text.push_str(&format!("Nodes: {} | Edges: {}\n\n", agents.len(), connections.len()));
+            
+            // Show top connections by strength
+            let mut sorted_connections: Vec<_> = connections.iter()
+                .filter_map(|c| {
+                    let strength = c["strength"].as_f64()?;
+                    let source = c["source"].as_str()?;
+                    let target = c["target"].as_str()?;
+                    Some((strength, source, target))
+                })
+                .collect();
+            sorted_connections.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+            
+            for (strength, source, target) in sorted_connections.iter().take(5) {
+                network_text.push_str(&format!("{} ↔ {} ({:.2})\n", source, target, strength));
+            }
+            
+            self.render_debug_text(encoder, view, &network_text)?;
+        }
+        Ok(())
+    }
+
+    /// Render agent timeline visualization
+    fn render_agent_timeline(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> anyhow::Result<()> {
+        let mut timeline_text = String::from("=== AGENT TIMELINE ===\n");
+        
+        // Group events by agent
+        let mut agent_events: std::collections::HashMap<String, Vec<&AgentTimelineEvent>> = std::collections::HashMap::new();
+        for event in &self.agent_timeline_data {
+            agent_events.entry(event.agent_id.clone()).or_default().push(event);
+        }
+        
+        // Show recent events for each agent
+        for (agent_id, events) in agent_events.iter().take(3) {
+            timeline_text.push_str(&format!("\n{}:\n", agent_id));
+            for event in events.iter().take(3) {
+                timeline_text.push_str(&format!("  {:.1}s: {}\n", event.timestamp, event.description));
+            }
+        }
+        
+        self.render_debug_text(encoder, view, &timeline_text)?;
+        Ok(())
+    }
+
+    /// Render interaction heatmap
+    fn render_interaction_heatmap(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> anyhow::Result<()> {
+        let mut heatmap_text = String::from("=== INTERACTION HEATMAP ===\n");
+        
+        // Group interactions by type and show intensity
+        let mut interaction_types: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+        for cell in &self.interaction_heatmap {
+            *interaction_types.entry(cell.interaction_type.clone()).or_default() += cell.intensity;
+        }
+        
+        for (interaction_type, total_intensity) in interaction_types.iter().take(5) {
+            heatmap_text.push_str(&format!("{}: {:.2}\n", interaction_type, total_intensity));
+        }
+        
+        self.render_debug_text(encoder, view, &heatmap_text)?;
+        Ok(())
+    }
+
+    /// Render detailed agent inspector
+    fn render_agent_inspector(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> anyhow::Result<()> {
+        if let Some(ref json) = self.multi_agent_network_json {
+            let agents = json["agents"].as_array().unwrap_or(&Vec::new());
+            
+            let mut inspector_text = String::from("=== AGENT INSPECTOR ===\n");
+            
+            if let Some(ref selected_id) = self.selected_agent_id {
+                // Show details for selected agent
+                if let Some(agent) = agents.iter().find(|a| a["id"].as_str() == Some(selected_id)) {
+                    inspector_text.push_str(&format!("Selected: {}\n", selected_id));
+                    inspector_text.push_str(&format!("Type: {}\n", agent["type"].as_str().unwrap_or("Unknown")));
+                    inspector_text.push_str(&format!("Energy: {:.2}\n", agent["energy"].as_f64().unwrap_or(0.0)));
+                    
+                    if let Some(trust) = agent["trust"].as_object() {
+                        inspector_text.push_str("Trust connections:\n");
+                        for (target, strength) in trust.iter().take(3) {
+                            inspector_text.push_str(&format!("  {}: {:.2}\n", target, strength.as_f64().unwrap_or(0.0)));
+                        }
+                    }
+                }
+            } else {
+                // Show agent list
+                inspector_text.push_str("Select an agent to inspect:\n");
+                for agent in agents.iter().take(5) {
+                    let id = agent["id"].as_str().unwrap_or("Unknown");
+                    let agent_type = agent["type"].as_str().unwrap_or("Unknown");
+                    inspector_text.push_str(&format!("  {} ({})\n", id, agent_type));
+                }
+            }
+            
+            self.render_debug_text(encoder, view, &inspector_text)?;
+        }
+        Ok(())
+    }
+
+    /// Set comprehensive multi-agent visualization data
+    pub fn set_multi_agent_visualization_data(&mut self, data: MultiAgentVisualizationData) {
+        self.multi_agent_network_json = Some(data.network_summary);
+        self.agent_timeline_data = data.timeline_events;
+        self.interaction_heatmap = data.heatmap_data;
+    }
 }
 
 #[allow(dead_code)]
@@ -2334,4 +2563,37 @@ struct RendererState {
     window: winit::window::Window,
     renderer: NativeRenderer<'static>,
     window_size: winit::dpi::PhysicalSize<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AgentVisualizationMode {
+    Overview,      // Basic agent count and metrics
+    Network,       // Network graph visualization
+    Timeline,      // Agent activity timeline
+    Heatmap,       // Interaction heatmap
+    Inspector,     // Detailed agent inspection
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTimelineEvent {
+    pub agent_id: String,
+    pub timestamp: f64,
+    pub event_type: String,
+    pub description: String,
+    pub duration: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractionHeatmapCell {
+    pub x: f32,
+    pub y: f32,
+    pub intensity: f32,
+    pub interaction_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiAgentVisualizationData {
+    pub network_summary: serde_json::Value,
+    pub timeline_events: Vec<AgentTimelineEvent>,
+    pub heatmap_data: Vec<InteractionHeatmapCell>,
 }

@@ -5,6 +5,8 @@
 //! - Quantum coherence in microtubules
 //! - Gravitational collapse mechanisms
 //! - Integration time calculations
+//! - **NEW**: Quantum field-based neural network emergence
+//! - **NEW**: Consciousness emergence from quantum field dynamics
 
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
@@ -12,6 +14,17 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use nalgebra::{DVector, Complex};
 use rand::{Rng, thread_rng};
+
+// Import quantum field neural emergence types
+use crate::neural_physics::{
+    QuantumFieldNeuralEmergence, 
+    EmergentNeuralNetwork, 
+    EmergentNeuralNode, 
+    EmergentNeuralConnection,
+    FieldInteractionPattern,
+    NetworkEvolutionEvent
+};
+use physics_engine::{QuantumField, particle_types::FieldType};
 
 /// Quantum state of a microtubule
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +126,28 @@ pub struct CollapseEvent {
     pub gravitational_contribution: f64,
 }
 
+/// Coupling between quantum fields and consciousness emergence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldConsciousnessCoupling {
+    pub field_consciousness_strength: HashMap<FieldType, f64>,
+    pub network_consciousness_threshold: f64,
+    pub consciousness_emergence_rate: f64,
+    pub quantum_coherence_requirement: f64,
+    pub integration_threshold: f64,
+}
+
+impl FieldConsciousnessCoupling {
+    pub fn new() -> Self {
+        Self {
+            field_consciousness_strength: HashMap::new(),
+            network_consciousness_threshold: 0.7,
+            consciousness_emergence_rate: 0.1,
+            quantum_coherence_requirement: 0.5,
+            integration_threshold: 0.8,
+        }
+    }
+}
+
 /// Quantum Consciousness System implementing Orch-OR theory
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantumConsciousnessSystem {
@@ -125,6 +160,11 @@ pub struct QuantumConsciousnessSystem {
     pub quantum_coherence_time: f64,
     pub consciousness_history: Vec<ConsciousnessEvent>,
     pub orch_or_parameters: OrchORParameters,
+    // NEW: Quantum field neural emergence integration
+    pub quantum_field_emergence: QuantumFieldNeuralEmergence,
+    pub emergent_networks: HashMap<Uuid, EmergentNeuralNetwork>,
+    pub network_consciousness_mapping: HashMap<Uuid, f64>,
+    pub field_consciousness_coupling: FieldConsciousnessCoupling,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +197,16 @@ pub struct OrchORParameters {
     pub tubulin_mass: f64,          // kg
     pub coherence_threshold: f64,   // Minimum coherence for consciousness
     pub collapse_probability: f64,  // Probability of objective reduction
+}
+
+/// Summary of quantum field consciousness system
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantumFieldConsciousnessSummary {
+    pub total_emergent_networks: usize,
+    pub average_network_consciousness: f64,
+    pub total_evolution_events: usize,
+    pub field_consciousness_coupling: FieldConsciousnessCoupling,
+    pub network_consciousness_mapping: HashMap<Uuid, f64>,
 }
 
 impl QuantumConsciousnessSystem {
@@ -195,6 +245,176 @@ impl QuantumConsciousnessSystem {
             quantum_coherence_time: 1e-3,   // 1 millisecond coherence time
             consciousness_history: Vec::new(),
             orch_or_parameters: orch_or_params,
+            // NEW: Quantum field neural emergence integration
+            quantum_field_emergence: QuantumFieldNeuralEmergence::new(),
+            emergent_networks: HashMap::new(),
+            network_consciousness_mapping: HashMap::new(),
+            field_consciousness_coupling: FieldConsciousnessCoupling::new(),
+        }
+    }
+
+    /// NEW: Analyze quantum field interactions and generate emergent neural networks
+    pub fn analyze_quantum_field_emergence(&mut self, quantum_fields: &HashMap<FieldType, QuantumField>) -> Result<Vec<FieldInteractionPattern>> {
+        self.quantum_field_emergence.analyze_field_interactions(quantum_fields)
+    }
+
+    /// NEW: Generate emergent neural networks from quantum field interactions
+    pub fn generate_emergent_networks(&mut self, quantum_fields: &HashMap<FieldType, QuantumField>) -> Result<Vec<EmergentNeuralNetwork>> {
+        let networks = self.quantum_field_emergence.generate_emergent_networks(quantum_fields)?;
+        
+        // Store emergent networks and initialize consciousness mapping
+        for network in &networks {
+            self.emergent_networks.insert(network.id, network.clone());
+            self.network_consciousness_mapping.insert(network.id, 0.0);
+        }
+        
+        Ok(networks)
+    }
+
+    /// NEW: Update emergent neural networks and calculate consciousness from quantum fields
+    pub fn update_quantum_field_consciousness(&mut self, delta_time: f64, quantum_fields: &HashMap<FieldType, QuantumField>) -> Result<ConsciousnessOutput> {
+        // Update emergent neural networks
+        let evolution_events = self.quantum_field_emergence.update_networks(delta_time, quantum_fields)?;
+        
+        // Calculate consciousness level from emergent networks
+        let network_consciousness = self.calculate_network_consciousness(quantum_fields)?;
+        
+        // Calculate traditional microtubule consciousness
+        let microtubule_consciousness = self.calculate_consciousness_level()?;
+        
+        // Combine consciousness from both sources (quantum fields and microtubules)
+        let combined_consciousness = (network_consciousness + microtubule_consciousness) * 0.5;
+        
+        // Update consciousness level
+        self.consciousness_level = combined_consciousness;
+        
+        // Create consciousness output
+        let output = ConsciousnessOutput {
+            consciousness_level: combined_consciousness,
+            quantum_coherence: self.global_quantum_state.coherence_time,
+            gravitational_contribution: self.calculate_gravitational_contribution()?,
+            integration_measure: self.calculate_integration_measure()?,
+            subjective_experience: self.generate_subjective_experience(combined_consciousness),
+            collapse_events: evolution_events.len(),
+            quantum_information: self.global_quantum_state.quantum_information,
+        };
+        
+        // Record consciousness event
+        let consciousness_event = ConsciousnessEvent {
+            timestamp: delta_time,
+            consciousness_level: combined_consciousness,
+            quantum_coherence: self.global_quantum_state.coherence_time,
+            gravitational_contribution: self.calculate_gravitational_contribution()?,
+            integration_measure: self.calculate_integration_measure()?,
+            subjective_experience: output.subjective_experience.clone(),
+        };
+        self.consciousness_history.push(consciousness_event);
+        
+        Ok(output)
+    }
+
+    /// NEW: Calculate consciousness level from emergent neural networks
+    fn calculate_network_consciousness(&mut self, quantum_fields: &HashMap<FieldType, QuantumField>) -> Result<f64> {
+        let mut total_consciousness = 0.0;
+        let mut network_count = 0;
+        
+        // Collect network IDs to avoid borrowing issues
+        let network_ids: Vec<Uuid> = self.emergent_networks.keys().cloned().collect();
+        
+        for network_id in network_ids {
+            if let Some(network) = self.emergent_networks.get(&network_id) {
+                let network_consciousness = self.calculate_single_network_consciousness(network, quantum_fields)?;
+                self.network_consciousness_mapping.insert(network_id, network_consciousness);
+                total_consciousness += network_consciousness;
+                network_count += 1;
+            }
+        }
+        
+        Ok(if network_count > 0 { total_consciousness / network_count as f64 } else { 0.0 })
+    }
+
+    /// NEW: Calculate consciousness level for a single emergent neural network
+    fn calculate_single_network_consciousness(&self, network: &EmergentNeuralNetwork, quantum_fields: &HashMap<FieldType, QuantumField>) -> Result<f64> {
+        // Consciousness based on network properties and quantum field interactions
+        let network_complexity = network.connections.len() as f64 / network.nodes.len().max(1) as f64;
+        let average_coherence = network.nodes.iter().map(|n| n.quantum_coherence).sum::<f64>() / network.nodes.len().max(1) as f64;
+        let learning_capacity = network.learning_capacity;
+        let network_stability = network.network_stability;
+        
+        // Calculate field-mediated consciousness
+        let field_consciousness = self.calculate_field_mediated_consciousness(network, quantum_fields)?;
+        
+        // Combine factors for consciousness calculation
+        let consciousness = (network_complexity * average_coherence * learning_capacity * network_stability * field_consciousness).powf(0.2);
+        
+        Ok(consciousness.min(1.0)) // Cap at 1.0
+    }
+
+    /// NEW: Calculate field-mediated consciousness from quantum field interactions
+    fn calculate_field_mediated_consciousness(&self, network: &EmergentNeuralNetwork, quantum_fields: &HashMap<FieldType, QuantumField>) -> Result<f64> {
+        let mut field_consciousness = 0.0;
+        let mut field_count = 0;
+        
+        for node in &network.nodes {
+            for (field_type, coupling_strength) in &node.field_coupling {
+                if let Some(field) = quantum_fields.get(field_type) {
+                    let field_coherence = self.calculate_field_coherence(field)?;
+                    
+                    // Calculate average field energy from field values
+                    let mut field_energy = 0.0;
+                    let mut energy_count = 0;
+                    for i in 0..field.field_values.len() {
+                        for j in 0..field.field_values[i].len() {
+                            for k in 0..field.field_values[i][j].len() {
+                                field_energy += field.field_values[i][j][k].norm_sqr();
+                                energy_count += 1;
+                            }
+                        }
+                    }
+                    let avg_field_energy = if energy_count > 0 { field_energy / energy_count as f64 } else { 0.0 };
+                    
+                    // Field consciousness contribution based on coherence and energy
+                    let field_contribution = field_coherence * avg_field_energy * coupling_strength;
+                    field_consciousness += field_contribution;
+                    field_count += 1;
+                }
+            }
+        }
+        
+        Ok(if field_count > 0 { field_consciousness / field_count as f64 } else { 0.0 })
+    }
+
+    /// NEW: Calculate field coherence for consciousness
+    fn calculate_field_coherence(&self, field: &QuantumField) -> Result<f64> {
+        // Calculate quantum coherence based on field value phase relationships
+        let mut coherence_sum = 0.0;
+        let mut count = 0;
+        
+        for i in 0..field.field_values.len() {
+            for j in 0..field.field_values[i].len() {
+                for k in 0..field.field_values[i][j].len() {
+                    let phase = field.field_values[i][j][k].arg();
+                    coherence_sum += phase.cos().abs();
+                    count += 1;
+                }
+            }
+        }
+        
+        Ok(if count > 0 { coherence_sum / count as f64 } else { 0.0 })
+    }
+
+    /// NEW: Get quantum field consciousness summary
+    pub fn get_quantum_field_consciousness_summary(&self) -> QuantumFieldConsciousnessSummary {
+        let total_networks = self.emergent_networks.len();
+        let average_network_consciousness = self.network_consciousness_mapping.values().sum::<f64>() / total_networks.max(1) as f64;
+        let total_evolution_events = self.quantum_field_emergence.network_evolution_history.len();
+        
+        QuantumFieldConsciousnessSummary {
+            total_emergent_networks: total_networks,
+            average_network_consciousness,
+            total_evolution_events,
+            field_consciousness_coupling: self.field_consciousness_coupling.clone(),
+            network_consciousness_mapping: self.network_consciousness_mapping.clone(),
         }
     }
 
@@ -558,7 +778,11 @@ pub struct GlobalConsciousnessEvent {
 impl QuantumConsciousnessManager {
     /// Create a new quantum consciousness manager
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            systems: HashMap::new(),
+            global_consciousness: 0.0,
+            consciousness_history: Vec::new(),
+        }
     }
 
     /// Add a consciousness system
@@ -566,75 +790,122 @@ impl QuantumConsciousnessManager {
         self.systems.insert(system.id, system);
     }
 
-    /// Update all consciousness systems
-    pub fn update_all_systems(&mut self, delta_time: f64, inputs: &HashMap<Uuid, ConsciousnessInput>) -> Result<Vec<ConsciousnessOutput>> {
+    /// NEW: Update all systems with quantum field consciousness
+    pub fn update_all_systems_with_quantum_fields(&mut self, delta_time: f64, inputs: &HashMap<Uuid, ConsciousnessInput>, quantum_fields: &HashMap<FieldType, QuantumField>) -> Result<Vec<ConsciousnessOutput>> {
         let mut outputs = Vec::new();
-        let mut total_consciousness = 0.0;
-        let mut total_coherence = 0.0;
-        let mut total_quantum_info = 0.0;
-
-        for (id, system) in &mut self.systems {
-            let input = inputs.get(id).cloned().unwrap_or_else(|| ConsciousnessInput {
-                timestamp: 0.0,
-                sensory_data: DVector::zeros(10),
-                emotional_state: 0.0,
-                attention_level: 0.0,
-                memory_activation: 0.0,
-            });
-
-            let output = system.update(delta_time, &input)?;
-            outputs.push(output.clone());
-
-            total_consciousness += output.consciousness_level;
-            total_coherence += output.quantum_coherence;
-            total_quantum_info += output.quantum_information;
+        
+        // Create default input to avoid temporary value issues
+        let default_input = ConsciousnessInput {
+            timestamp: delta_time,
+            sensory_data: DVector::zeros(10),
+            emotional_state: 0.0,
+            attention_level: 0.0,
+            memory_activation: 0.0,
+        };
+        
+        for (system_id, system) in &mut self.systems {
+            let input = inputs.get(system_id).unwrap_or(&default_input);
+            
+            // Update with quantum field consciousness
+            let output = system.update_quantum_field_consciousness(delta_time, quantum_fields)?;
+            outputs.push(output);
         }
-
+        
         // Update global consciousness
-        let active_systems = self.systems.len();
-        if active_systems > 0 {
-            self.global_consciousness = total_consciousness / active_systems as f64;
-        }
-
+        self.global_consciousness = outputs.iter().map(|o| o.consciousness_level).sum::<f64>() / outputs.len().max(1) as f64;
+        
         // Record global consciousness event
         let global_event = GlobalConsciousnessEvent {
-            timestamp: 0.0, // Will be set by caller
+            timestamp: delta_time,
             global_consciousness: self.global_consciousness,
-            active_systems,
-            average_coherence: if active_systems > 0 { total_coherence / active_systems as f64 } else { 0.0 },
-            total_quantum_information: total_quantum_info,
+            active_systems: self.systems.len(),
+            average_coherence: outputs.iter().map(|o| o.quantum_coherence).sum::<f64>() / outputs.len().max(1) as f64,
+            total_quantum_information: outputs.iter().map(|o| o.quantum_information).sum(),
         };
-
         self.consciousness_history.push(global_event);
-
+        
         Ok(outputs)
     }
 
-    /// Get consciousness summary
-    pub fn get_consciousness_summary(&self) -> ConsciousnessSummary {
-        ConsciousnessSummary {
-            total_systems: self.systems.len(),
+    pub fn update_all_systems(&mut self, delta_time: f64, inputs: &HashMap<Uuid, ConsciousnessInput>) -> Result<Vec<ConsciousnessOutput>> {
+        let mut outputs = Vec::new();
+        
+        // Create default input to avoid temporary value issues
+        let default_input = ConsciousnessInput {
+            timestamp: delta_time,
+            sensory_data: DVector::zeros(10),
+            emotional_state: 0.0,
+            attention_level: 0.0,
+            memory_activation: 0.0,
+        };
+        
+        for (system_id, system) in &mut self.systems {
+            let input = inputs.get(system_id).unwrap_or(&default_input);
+            
+            let output = system.update(delta_time, input)?;
+            outputs.push(output);
+        }
+        
+        // Update global consciousness
+        self.global_consciousness = outputs.iter().map(|o| o.consciousness_level).sum::<f64>() / outputs.len().max(1) as f64;
+        
+        // Record global consciousness event
+        let global_event = GlobalConsciousnessEvent {
+            timestamp: delta_time,
             global_consciousness: self.global_consciousness,
-            average_coherence: self.consciousness_history.last().map(|e| e.average_coherence).unwrap_or(0.0),
-            total_quantum_information: self.consciousness_history.last().map(|e| e.total_quantum_information).unwrap_or(0.0),
-            consciousness_trend: self.calculate_consciousness_trend(),
+            active_systems: self.systems.len(),
+            average_coherence: outputs.iter().map(|o| o.quantum_coherence).sum::<f64>() / outputs.len().max(1) as f64,
+            total_quantum_information: outputs.iter().map(|o| o.quantum_information).sum(),
+        };
+        self.consciousness_history.push(global_event);
+        
+        Ok(outputs)
+    }
+
+    /// NEW: Get quantum field consciousness summary for all systems
+    pub fn get_quantum_field_consciousness_summary(&self) -> Vec<QuantumFieldConsciousnessSummary> {
+        self.systems.values().map(|system| system.get_quantum_field_consciousness_summary()).collect()
+    }
+
+    pub fn get_consciousness_summary(&self) -> ConsciousnessSummary {
+        let total_systems = self.systems.len();
+        let global_consciousness = self.global_consciousness;
+        let average_coherence = if total_systems > 0 {
+            self.systems.values().map(|s| s.global_quantum_state.coherence_time).sum::<f64>() / total_systems as f64
+        } else {
+            0.0
+        };
+        let total_quantum_information = self.systems.values().map(|s| s.global_quantum_state.quantum_information).sum();
+        let consciousness_trend = self.calculate_consciousness_trend();
+        
+        ConsciousnessSummary {
+            total_systems,
+            global_consciousness,
+            average_coherence,
+            total_quantum_information,
+            consciousness_trend,
         }
     }
 
-    /// Calculate consciousness trend
     fn calculate_consciousness_trend(&self) -> f64 {
         if self.consciousness_history.len() < 2 {
             return 0.0;
         }
-
-        let recent = self.consciousness_history.iter().rev().take(10).collect::<Vec<_>>();
-        if recent.len() < 2 {
+        
+        let recent_events: Vec<_> = self.consciousness_history.iter().rev().take(10).collect();
+        if recent_events.len() < 2 {
             return 0.0;
         }
-
-        let first = recent.last().unwrap().global_consciousness;
-        let last = recent.first().unwrap().global_consciousness;
-        (last - first) / recent.len() as f64
+        
+        let first_consciousness = recent_events.last().unwrap().global_consciousness;
+        let last_consciousness = recent_events.first().unwrap().global_consciousness;
+        let time_span = recent_events.first().unwrap().timestamp - recent_events.last().unwrap().timestamp;
+        
+        if time_span > 0.0 {
+            (last_consciousness - first_consciousness) / time_span
+        } else {
+            0.0
+        }
     }
 }
 

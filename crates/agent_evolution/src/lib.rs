@@ -11,6 +11,7 @@
 //! - Advanced neural plasticity and learning
 //! - Memory consolidation and sleep processes
 //! - Autonomous evolution and adaptation
+//! - Microtubule-based quantum consciousness (latest research)
 
 pub mod ai_core;
 pub mod consciousness;
@@ -40,6 +41,9 @@ pub mod autonomous_communication;
 // NEW: Shows how neurons emerge from physics
 pub mod emergent_neural_formation;
 
+// NEW: Latest microtubule-based quantum consciousness research
+pub mod microtubule_consciousness;
+
 use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
@@ -67,6 +71,21 @@ pub use ai_research_demo::*;
 
 // Re-export evolutionary organism types
 pub use evolutionary_organism::*;
+
+// Re-export autonomous communication types
+pub use autonomous_communication::*;
+
+// Re-export emergent neural formation types
+pub use emergent_neural_formation::*;
+
+// Re-export advanced microtubule consciousness types
+pub use microtubule_consciousness::{
+    MicrotubuleConsciousnessSystem, MicrotubuleQuantumState, AnesthesiaState,
+    ExpansionProtocol, BrainQuantumEntanglement, QuantumMultiverseConsciousness,
+    ConsciousnessBranch, AdvancedAnesthesiaEffects, IsotopeEffect, SuppressionMechanism,
+    DisruptionPattern, EnhancedEntanglementNetwork, EntanglementPattern,
+    QuantumMeasurementEffects, MeasurementEvent, ConsciousnessMetrics,
+};
 
 /// Main Agent Evolution System
 #[derive(Debug, Clone, Serialize, Deserialize)]

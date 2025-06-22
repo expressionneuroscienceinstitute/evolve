@@ -42,6 +42,7 @@ use winit::{
     window::Window,
 };
 use serde_json::Value;
+use serde::{Serialize, Deserialize};
 
 // pub use universe_sim::UniverseSimulation;
 
@@ -2253,8 +2254,10 @@ impl<'window> NativeRenderer<'window> {
     /// Render network graph visualization
     fn render_agent_network(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> anyhow::Result<()> {
         if let Some(ref json) = self.multi_agent_network_json {
-            let agents = json["agents"].as_array().unwrap_or(&Vec::new());
-            let connections = json["connections"].as_array().unwrap_or(&Vec::new());
+            let empty_agents = Vec::new();
+            let empty_connections = Vec::new();
+            let agents = json["agents"].as_array().unwrap_or(&empty_agents);
+            let connections = json["connections"].as_array().unwrap_or(&empty_connections);
             
             let mut network_text = String::from("=== AGENT NETWORK ===\n");
             network_text.push_str(&format!("Nodes: {} | Edges: {}\n\n", agents.len(), connections.len()));
@@ -2322,7 +2325,8 @@ impl<'window> NativeRenderer<'window> {
     /// Render detailed agent inspector
     fn render_agent_inspector(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> anyhow::Result<()> {
         if let Some(ref json) = self.multi_agent_network_json {
-            let agents = json["agents"].as_array().unwrap_or(&Vec::new());
+            let empty_agents = Vec::new();
+            let agents = json["agents"].as_array().unwrap_or(&empty_agents);
             
             let mut inspector_text = String::from("=== AGENT INSPECTOR ===\n");
             

@@ -55,6 +55,9 @@ pub use gravitational_collapse::{jeans_mass, jeans_length, SinkParticle};
 
 pub mod conservation;
 
+// QMC module for Meta-Learned Non-Markovian Quantum Monte Carlo
+pub mod qmc_md;
+
 // Re-export atomic molecular bridge for easy access
 pub use molecular_dynamics::atomic_molecular_bridge::{
     AtomicMolecularBridge, AtomicMolecularParameters, ReactionKinetics, 
@@ -80,10 +83,9 @@ pub use constants::*;
 use crate::types::{
     MeasurementBasis, DecayChannel, NuclearShellState,
     GluonField, ElectronicState, MolecularOrbital, VibrationalMode,
-    PotentialEnergySurface, ReactionCoordinate
+    PotentialEnergySurface, ReactionCoordinate, InteractionEvent
 };
 use crate::general_relativity::schwarzschild_radius;
-use crate::types::{PhysicsState, InteractionEvent};
 use crate::particle_types::BoundaryConditions;
 
 // Re-export canonical ParticleType from shared physics_types crate
@@ -2071,3 +2073,6 @@ struct QuantumInteractionResult {
     cross_section: f64,
     coupling_strength: f64,
 }
+
+pub use crate::types::PhysicsState;
+pub use crate::constants::PhysicsConstants;

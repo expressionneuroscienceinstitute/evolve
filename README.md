@@ -29,7 +29,7 @@ cargo run --bin universectl -- interactive
 ### Simulation Control
 ```bash
 # Basic simulation management
-universectl start [--serve-dash PORT] [--low-mem]
+universectl start [--low-mem]
 universectl stop
 universectl status
 universectl speed <FACTOR>    # 0.1-100.0
@@ -69,7 +69,7 @@ universectl --godmode set-constant <CONSTANT> <VALUE>
 - **Scientific Accuracy**: ENDF/B-VIII.0 nuclear data, CODATA constants, validated physics
 - **Scale**: 1M+ particles, 50K+ AI agents, 60+ UPS performance
 - **Persistence**: Binary checkpoints with compression and versioning
-- **Extensibility**: Modular FFI integration for external scientific libraries
+- **Extensibility**: 100% native Rust implementation—no external FFI required
 
 ## 🔬 Scientific Implementation
 

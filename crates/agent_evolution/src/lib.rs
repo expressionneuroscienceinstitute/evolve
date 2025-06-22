@@ -64,6 +64,9 @@ pub mod emergent_neural_formation;
 // NEW: Latest microtubule-based quantum consciousness research
 pub mod microtubule_consciousness;
 
+// NEW: Single-celled organism AI system
+pub mod single_celled_organism;
+
 pub mod meta_learning;
 
 pub mod hypernetwork;
@@ -157,6 +160,19 @@ pub use open_ended_evolution::{OpenEndedEvolution, NoveltyDetectionOutput, OpenE
 
 // Re-export embodied agent types
 pub use embodied_agent::{EmbodiedAgent, PhysicsEngineInterface, AgentStatistics};
+
+// Re-export physics-based evolutionary system
+pub use single_celled_organism::{
+    PhysicsBasedEntity,
+    PhysicsBasedConfig,
+    QuantumState,
+    MolecularState,
+    FieldInteractions,
+    EvolutionEvent,
+    EvolutionEventType,
+    EvolutionMetrics,
+    physics_based_action_set,
+};
 
 /// Main Agent Evolution System
 #[derive(Debug, Clone, Serialize, Deserialize)]

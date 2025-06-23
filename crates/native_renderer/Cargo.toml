@@ -40,6 +40,10 @@ cfg-if = "1.0"
 glyphon = "0.5"
 rand = "0.8.5"
 
+# Mac-specific dependencies
+core-graphics = "0.23"  # For Mac-specific graphics operations
+core-foundation = "0.9" # For Mac system integration
+
 [dev-dependencies]
 approx = "0.5"
 tokio = { version = "1.0", features = ["rt", "macros"] }
@@ -62,4 +66,14 @@ advanced-shaders = []
 multi-scale-rendering = []
 scientific-visualization = []
 quantum-visualization = []  # Quantum-accurate visualization features
-validation = [] 
+validation = []
+
+# Mac-specific features
+mac-optimized = []           # Mac-specific optimizations
+mac-retina = []              # Retina display support
+mac-touch-bar = []           # Touch Bar integration
+mac-metal-optimized = []     # Metal backend optimizations
+mac-performance-monitoring = [] # Mac performance monitoring
+mac-apple-silicon = []       # Apple Silicon specific optimizations
+mac-intel-gpu = []           # Intel GPU optimizations
+mac-discrete-gpu = []        # Discrete GPU optimizations 

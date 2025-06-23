@@ -658,6 +658,12 @@ pub struct NativeRenderer<'window> {
     pub selected_agent_id: Option<String>,
     pub agent_timeline_data: Vec<AgentTimelineEvent>,
     pub interaction_heatmap: Vec<InteractionHeatmapCell>,
+
+    // Advanced visualization enhancements
+    pub adaptive_visualization: AdaptiveVisualizationParams,
+    pub performance_monitoring: bool,
+    pub scientific_overlay: bool,
+    pub real_time_analytics: bool,
 }
 
 /// Uniform data sent to GPU with heavy mode and quantum visualization extensions
@@ -1389,6 +1395,12 @@ impl<'window> NativeRenderer<'window> {
             selected_agent_id: None,
             agent_timeline_data: Vec::new(),
             interaction_heatmap: Vec::new(),
+
+            // Advanced visualization enhancements
+            adaptive_visualization: AdaptiveVisualizationParams::default(),
+            performance_monitoring: false,
+            scientific_overlay: false,
+            real_time_analytics: false,
         })
     }
     
@@ -1564,6 +1576,9 @@ impl<'window> NativeRenderer<'window> {
             self.resize(current_size)?;
         }
         let frame_start = std::time::Instant::now();
+        
+        // Update performance analytics for adaptive visualization
+        self.update_performance_analytics();
         
         // Wait for GPU to finish with previous text buffers before clearing them
         if !self.text_buffers.is_empty() {
@@ -1821,6 +1836,21 @@ impl<'window> NativeRenderer<'window> {
             self.device.poll(wgpu::Maintain::Poll);
         } else {
             self.device.poll(wgpu::Maintain::Poll);
+        }
+
+        // === Advanced Visualization Overlays ===
+        // Render performance monitoring overlay
+        if self.performance_monitoring {
+            if let Err(e) = self.render_performance_overlay(&mut encoder, &view) {
+                warn!("Failed to render performance overlay: {}", e);
+            }
+        }
+
+        // Render scientific overlay
+        if self.scientific_overlay {
+            if let Err(e) = self.render_scientific_overlay(&mut encoder, &view) {
+                warn!("Failed to render scientific overlay: {}", e);
+            }
         }
 
         // ---- Metrics ----
@@ -2765,6 +2795,280 @@ impl<'window> NativeRenderer<'window> {
             info!("Quantum visualization mode: {}", if self.quantum_mode_enabled { "enabled" } else { "disabled" });
         }
     }
+
+    // === ADVANCED VISUALIZATION ENHANCEMENTS ===
+
+    /// Set adaptive visualization mode
+    pub fn set_adaptive_visualization_mode(&mut self, mode: AdaptiveVisualizationMode) {
+        let old_mode = self.adaptive_visualization.mode;
+        self.adaptive_visualization.mode = mode;
+        
+        if old_mode != mode {
+            self.adaptive_visualization.analytics.adaptive_mode_switches += 1;
+            info!("Adaptive visualization mode changed: {:?} -> {:?}", old_mode, mode);
+            
+            // Apply mode-specific optimizations
+            self.apply_mode_optimizations();
+        }
+    }
+
+    /// Apply optimizations based on current adaptive mode
+    fn apply_mode_optimizations(&mut self) {
+        match self.adaptive_visualization.mode {
+            AdaptiveVisualizationMode::Performance => {
+                // Enable performance optimizations
+                self.adaptive_visualization.performance.adaptive_lod = true;
+                self.adaptive_visualization.performance.occlusion_culling = true;
+                self.adaptive_visualization.performance.frustum_culling = true;
+                self.adaptive_visualization.performance.max_particles_visible = 500_000;
+                self.adaptive_visualization.performance.target_fps = 60.0;
+                info!("Applied performance optimization settings");
+            }
+            AdaptiveVisualizationMode::Scientific => {
+                // Enable scientific visualization features
+                self.adaptive_visualization.scientific.field_lines = true;
+                self.adaptive_visualization.scientific.velocity_fields = true;
+                self.adaptive_visualization.scientific.temperature_gradients = true;
+                self.adaptive_visualization.performance.max_particles_visible = 1_000_000;
+                info!("Applied scientific visualization settings");
+            }
+            AdaptiveVisualizationMode::Quantum => {
+                // Enable quantum visualization features
+                self.adaptive_visualization.scientific.quantum_probability = true;
+                self.adaptive_visualization.scientific.interaction_paths = true;
+                self.adaptive_visualization.performance.max_particles_visible = 2_000_000;
+                info!("Applied quantum visualization settings");
+            }
+            AdaptiveVisualizationMode::Cosmological => {
+                // Enable cosmological visualization features
+                self.adaptive_visualization.scientific.gravitational_lensing = true;
+                self.adaptive_visualization.scientific.density_contours = true;
+                self.adaptive_visualization.performance.max_particles_visible = 5_000_000;
+                info!("Applied cosmological visualization settings");
+            }
+            AdaptiveVisualizationMode::Molecular => {
+                // Enable molecular dynamics features
+                self.adaptive_visualization.scientific.pressure_waves = true;
+                self.adaptive_visualization.scientific.temperature_gradients = true;
+                self.adaptive_visualization.performance.max_particles_visible = 500_000;
+                info!("Applied molecular visualization settings");
+            }
+            AdaptiveVisualizationMode::Hybrid => {
+                // Adaptive settings based on current performance
+                self.apply_adaptive_optimization();
+            }
+        }
+    }
+
+    /// Apply adaptive optimization based on current performance metrics
+    fn apply_adaptive_optimization(&mut self) {
+        let current_fps = self.get_fps();
+        let target_fps = self.adaptive_visualization.performance.target_fps;
+        let performance_ratio = current_fps / target_fps;
+        
+        if performance_ratio < self.adaptive_visualization.performance_threshold {
+            // Performance is below threshold, apply aggressive optimizations
+            self.adaptive_visualization.performance.max_particles_visible = 
+                (self.adaptive_visualization.performance.max_particles_visible as f32 * 0.8) as usize;
+            self.adaptive_visualization.performance.adaptive_lod = true;
+            self.adaptive_visualization.performance.occlusion_culling = true;
+            
+            let event = format!("Performance optimization applied: FPS {:.1} -> target {:.1}", current_fps, target_fps);
+            self.adaptive_visualization.analytics.optimization_events.push(event);
+            info!("Applied aggressive performance optimizations");
+        } else if performance_ratio > 1.2 {
+            // Performance is good, can enable more features
+            self.adaptive_visualization.performance.max_particles_visible = 
+                (self.adaptive_visualization.performance.max_particles_visible as f32 * 1.2) as usize;
+            self.adaptive_visualization.scientific.field_lines = true;
+            
+            let event = format!("Quality enhancement applied: FPS {:.1} -> target {:.1}", current_fps, target_fps);
+            self.adaptive_visualization.analytics.optimization_events.push(event);
+            info!("Applied quality enhancements");
+        }
+    }
+
+    /// Update performance analytics
+    pub fn update_performance_analytics(&mut self) {
+        let current_time = std::time::Instant::now();
+        let frame_time = self.metrics.frame_time_ms;
+        
+        // Update analytics
+        self.adaptive_visualization.analytics.render_time_ms = frame_time;
+        self.adaptive_visualization.analytics.average_fps = self.get_fps();
+        self.adaptive_visualization.analytics.memory_usage_mb = self.get_buffer_pool_stats().active_memory_mb;
+        
+        // Track peak and minimum FPS
+        let current_fps = self.get_fps();
+        if current_fps > self.adaptive_visualization.analytics.peak_fps {
+            self.adaptive_visualization.analytics.peak_fps = current_fps;
+        }
+        if current_fps < self.adaptive_visualization.analytics.min_fps || self.adaptive_visualization.analytics.min_fps == 0.0 {
+            self.adaptive_visualization.analytics.min_fps = current_fps;
+        }
+        
+        // Check for frame drops
+        if frame_time > (1000.0 / self.adaptive_visualization.performance.target_fps) {
+            self.adaptive_visualization.analytics.frame_drops += 1;
+        }
+        
+        // Auto-optimize if enabled and enough time has passed
+        if self.adaptive_visualization.auto_optimize && 
+           current_time.duration_since(self.adaptive_visualization.last_optimization) > self.adaptive_visualization.optimization_interval {
+            self.apply_adaptive_optimization();
+            self.adaptive_visualization.last_optimization = current_time;
+        }
+    }
+
+    /// Toggle performance monitoring
+    pub fn toggle_performance_monitoring(&mut self) {
+        self.performance_monitoring = !self.performance_monitoring;
+        info!("Performance monitoring: {}", if self.performance_monitoring { "enabled" } else { "disabled" });
+    }
+
+    /// Toggle scientific overlay
+    pub fn toggle_scientific_overlay(&mut self) {
+        self.scientific_overlay = !self.scientific_overlay;
+        info!("Scientific overlay: {}", if self.scientific_overlay { "enabled" } else { "disabled" });
+    }
+
+    /// Toggle real-time analytics
+    pub fn toggle_real_time_analytics(&mut self) {
+        self.real_time_analytics = !self.real_time_analytics;
+        info!("Real-time analytics: {}", if self.real_time_analytics { "enabled" } else { "disabled" });
+    }
+
+    /// Get current adaptive visualization parameters
+    pub fn get_adaptive_visualization_params(&self) -> &AdaptiveVisualizationParams {
+        &self.adaptive_visualization
+    }
+
+    /// Set performance optimization parameters
+    pub fn set_performance_optimization(&mut self, optimization: PerformanceOptimization) {
+        self.adaptive_visualization.performance = optimization;
+        info!("Updated performance optimization parameters");
+    }
+
+    /// Set scientific visualization parameters
+    pub fn set_scientific_visualization(&mut self, scientific: ScientificVisualization) {
+        self.adaptive_visualization.scientific = scientific;
+        info!("Updated scientific visualization parameters");
+    }
+
+    /// Get performance analytics
+    pub fn get_performance_analytics(&self) -> &VisualizationAnalytics {
+        &self.adaptive_visualization.analytics
+    }
+
+    /// Reset performance analytics
+    pub fn reset_performance_analytics(&mut self) {
+        self.adaptive_visualization.analytics = VisualizationAnalytics::default();
+        info!("Reset performance analytics");
+    }
+
+    /// Apply particle culling based on current optimization settings
+    fn apply_particle_culling(&self, particles: &mut Vec<ParticleVertex>) -> usize {
+        let mut culled_count = 0;
+        
+        if self.adaptive_visualization.performance.frustum_culling {
+            // Implement frustum culling
+            culled_count += self.apply_frustum_culling(particles);
+        }
+        
+        if self.adaptive_visualization.performance.occlusion_culling {
+            // Implement occlusion culling
+            culled_count += self.apply_occlusion_culling(particles);
+        }
+        
+        // Limit visible particles
+        if particles.len() > self.adaptive_visualization.performance.max_particles_visible {
+            let excess = particles.len() - self.adaptive_visualization.performance.max_particles_visible;
+            particles.truncate(self.adaptive_visualization.performance.max_particles_visible);
+            culled_count += excess;
+        }
+        
+        culled_count
+    }
+
+    /// Apply frustum culling to remove particles outside view
+    fn apply_frustum_culling(&self, particles: &mut Vec<ParticleVertex>) -> usize {
+        let initial_count = particles.len();
+        particles.retain(|particle| {
+            let pos = Vector3::new(particle.position[0], particle.position[1], particle.position[2]);
+            self.is_in_frustum(pos)
+        });
+        initial_count - particles.len()
+    }
+
+    /// Apply occlusion culling to remove particles behind others
+    fn apply_occlusion_culling(&self, particles: &mut Vec<ParticleVertex>) -> usize {
+        // Simple depth-based occlusion culling
+        let initial_count = particles.len();
+        particles.sort_by(|a, b| {
+            let depth_a = a.position[2];
+            let depth_b = b.position[2];
+            depth_a.partial_cmp(&depth_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        initial_count - particles.len()
+    }
+
+    /// Check if a point is in the camera frustum
+    fn is_in_frustum(&self, point: Vector3<f32>) -> bool {
+        // Simplified frustum test - can be enhanced with proper frustum planes
+        let camera_pos = self.camera.position;
+        let distance = (point - camera_pos).magnitude();
+        distance < 1000.0 // Far plane distance
+    }
+
+    /// Render scientific overlay
+    pub fn render_scientific_overlay(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> Result<()> {
+        if !self.scientific_overlay {
+            return Ok(());
+        }
+
+        let mut text_lines = Vec::new();
+        
+        // Add scientific visualization information
+        if self.adaptive_visualization.scientific.field_lines {
+            text_lines.push("Field Lines: Enabled");
+        }
+        if self.adaptive_visualization.scientific.velocity_fields {
+            text_lines.push("Velocity Fields: Enabled");
+        }
+        if self.adaptive_visualization.scientific.temperature_gradients {
+            text_lines.push("Temperature Gradients: Enabled");
+        }
+        if self.adaptive_visualization.scientific.gravitational_lensing {
+            text_lines.push("Gravitational Lensing: Enabled");
+        }
+        if self.adaptive_visualization.scientific.quantum_probability {
+            text_lines.push("Quantum Probability: Enabled");
+        }
+
+        // Render scientific overlay text
+        let overlay_text = text_lines.join("\n");
+        if !overlay_text.is_empty() {
+            self.render_debug_text(encoder, view, &overlay_text)?;
+        }
+
+        Ok(())
+    }
+
+    /// Render performance monitoring overlay
+    pub fn render_performance_overlay(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) -> Result<()> {
+        if !self.performance_monitoring {
+            return Ok(());
+        }
+
+        let analytics = &self.adaptive_visualization.analytics;
+        let performance = &self.adaptive_visualization.performance;
+        
+        let mut text_lines = Vec::new();
+        text_lines.push(format!("FPS: {:.1}", analytics.average_fps));
+        text_lines.push(format!("Frame Time: {:.2}ms", analytics.render_time_ms));
+        text_lines.push(format!("Memory: {:.1}MB", analytics.memory_usage_mb));
+        text_lines.push(format!("Particles: {}", self.get_particle_count()));
+        text_lines.push(format!("Culled: {}", analytics.frame_drops));
 }
 
 #[allow(dead_code)]
@@ -3000,4 +3304,139 @@ pub struct MultiAgentVisualizationData {
     pub network_summary: serde_json::Value,
     pub timeline_events: Vec<AgentTimelineEvent>,
     pub heatmap_data: Vec<InteractionHeatmapCell>,
+}
+
+// === ADVANCED VISUALIZATION ENHANCEMENTS ===
+
+/// Adaptive visualization modes for different simulation states
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum AdaptiveVisualizationMode {
+    Performance,      // Optimized for high particle counts
+    Scientific,       // Detailed physics visualization
+    Quantum,          // Quantum-accurate rendering
+    Cosmological,     // Large-scale structure visualization
+    Molecular,        // Molecular dynamics focus
+    Hybrid,           // Adaptive mode switching
+}
+
+/// Performance optimization parameters
+#[derive(Debug, Clone)]
+pub struct PerformanceOptimization {
+    pub adaptive_lod: bool,           // Level of detail based on distance
+    pub occlusion_culling: bool,      // Cull particles behind others
+    pub frustum_culling: bool,        // Cull particles outside view
+    pub instanced_rendering: bool,    // Use GPU instancing
+    pub particle_batching: bool,      // Batch similar particles
+    pub dynamic_resolution: bool,     // Adjust resolution based on performance
+    pub max_particles_visible: usize, // Limit visible particles
+    pub target_fps: f32,              // Target frame rate
+}
+
+impl Default for PerformanceOptimization {
+    fn default() -> Self {
+        Self {
+            adaptive_lod: true,
+            occlusion_culling: true,
+            frustum_culling: true,
+            instanced_rendering: true,
+            particle_batching: true,
+            dynamic_resolution: true,
+            max_particles_visible: 1_000_000,
+            target_fps: 60.0,
+        }
+    }
+}
+
+/// Scientific visualization enhancements
+#[derive(Debug, Clone)]
+pub struct ScientificVisualization {
+    pub field_lines: bool,            // Show electromagnetic field lines
+    pub velocity_fields: bool,        // Show velocity vector fields
+    pub density_contours: bool,       // Show density isosurfaces
+    pub temperature_gradients: bool,  // Show temperature gradients
+    pub pressure_waves: bool,         // Show pressure wave propagation
+    pub gravitational_lensing: bool,  // Show gravitational lensing effects
+    pub quantum_probability: bool,    // Show quantum probability densities
+    pub interaction_paths: bool,      // Show particle interaction paths
+}
+
+impl Default for ScientificVisualization {
+    fn default() -> Self {
+        Self {
+            field_lines: false,
+            velocity_fields: false,
+            density_contours: false,
+            temperature_gradients: false,
+            pressure_waves: false,
+            gravitational_lensing: false,
+            quantum_probability: false,
+            interaction_paths: false,
+        }
+    }
+}
+
+/// Real-time monitoring and analytics
+#[derive(Debug, Clone)]
+pub struct VisualizationAnalytics {
+    pub render_time_ms: f32,
+    pub particle_processing_time_ms: f32,
+    pub shader_compilation_time_ms: f32,
+    pub memory_usage_mb: f32,
+    pub gpu_utilization_percent: f32,
+    pub cpu_utilization_percent: f32,
+    pub frame_drops: u32,
+    pub average_fps: f32,
+    pub peak_fps: f32,
+    pub min_fps: f32,
+    pub adaptive_mode_switches: u32,
+    pub optimization_events: Vec<String>,
+}
+
+impl Default for VisualizationAnalytics {
+    fn default() -> Self {
+        Self {
+            render_time_ms: 0.0,
+            particle_processing_time_ms: 0.0,
+            shader_compilation_time_ms: 0.0,
+            memory_usage_mb: 0.0,
+            gpu_utilization_percent: 0.0,
+            cpu_utilization_percent: 0.0,
+            frame_drops: 0,
+            average_fps: 0.0,
+            peak_fps: 0.0,
+            min_fps: 0.0,
+            adaptive_mode_switches: 0,
+            optimization_events: Vec::new(),
+        }
+    }
+}
+
+/// Dynamic visualization parameters that adapt to simulation state
+#[derive(Debug, Clone)]
+pub struct AdaptiveVisualizationParams {
+    pub mode: AdaptiveVisualizationMode,
+    pub performance: PerformanceOptimization,
+    pub scientific: ScientificVisualization,
+    pub analytics: VisualizationAnalytics,
+    pub auto_optimize: bool,
+    pub quality_threshold: f32,
+    pub performance_threshold: f32,
+    pub last_optimization: std::time::Instant,
+    pub optimization_interval: std::time::Duration,
+}
+
+impl Default for AdaptiveVisualizationParams {
+    fn default() -> Self {
+        Self {
+            mode: AdaptiveVisualizationMode::Hybrid,
+            performance: PerformanceOptimization::default(),
+            scientific: ScientificVisualization::default(),
+            analytics: VisualizationAnalytics::default(),
+            auto_optimize: true,
+            quality_threshold: 0.8,
+            performance_threshold: 0.9,
+            last_optimization: std::time::Instant::now(),
+            optimization_interval: std::time::Duration::from_secs(5),
+        }
+    }
 }

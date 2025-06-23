@@ -360,10 +360,11 @@ impl QuantumConsciousnessSystem {
                     // Calculate average field energy from field values
                     let mut field_energy = 0.0;
                     let mut energy_count = 0;
-                    for i in 0..field.field_values.len() {
-                        for j in 0..field.field_values[i].len() {
-                            for k in 0..field.field_values[i][j].len() {
-                                field_energy += field.field_values[i][j][k].norm_sqr();
+                    let (nx, ny, nz) = field.field_values.dim();
+                    for i in 0..nx {
+                        for j in 0..ny {
+                            for k in 0..nz {
+                                field_energy += field.field_values[[i, j, k]].norm_sqr();
                                 energy_count += 1;
                             }
                         }
@@ -387,10 +388,11 @@ impl QuantumConsciousnessSystem {
         let mut coherence_sum = 0.0;
         let mut count = 0;
         
-        for i in 0..field.field_values.len() {
-            for j in 0..field.field_values[i].len() {
-                for k in 0..field.field_values[i][j].len() {
-                    let phase = field.field_values[i][j][k].arg();
+        let (nx, ny, nz) = field.field_values.dim();
+        for i in 0..nx {
+            for j in 0..ny {
+                for k in 0..nz {
+                    let phase = field.field_values[[i, j, k]].arg();
                     coherence_sum += phase.cos().abs();
                     count += 1;
                 }

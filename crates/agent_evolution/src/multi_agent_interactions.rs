@@ -9,10 +9,9 @@
 //! - Emergent behavior patterns in distributed systems
 
 use serde::{Serialize, Deserialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use rand::{thread_rng, Rng};
 use serde_json;
 
 /// Multi-agent interaction system that manages complex agent dynamics

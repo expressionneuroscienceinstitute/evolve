@@ -15,15 +15,13 @@
 //! No hard-coded biological outcomes - purely algorithmic self-modification.
 
 use anyhow::Result;
-use crate::genetics::{Genome, Gene};
-use crate::ai_core::{AICore, NeuralNetwork, NeuralLayer};
-use crate::meta_learning::{MetaLearner, MetaParameter, MetaParamMap};
-use crate::curiosity::{CuriositySystem, CuriosityOutput};
-use crate::hypernetwork::{Hypernetwork, TaskEmbedding, GeneratedArchitecture};
-use nalgebra::DVector;
+use crate::genetics::Genome;
+use crate::ai_core::{AICore, NeuralLayer};
+use crate::meta_learning::{MetaLearner, MetaParameter};
+use crate::curiosity::CuriositySystem;
+use crate::hypernetwork::Hypernetwork;
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Advanced introspection system for self-analysis

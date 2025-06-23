@@ -15,12 +15,7 @@ use nalgebra::{DVector, Vector3};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::{
-    ai_core::AICore,
-    meta_learning::MetaLearner,
-    hypernetwork::Hypernetwork,
-    curiosity::{CuriositySystem, ActionType},
-    self_modification::AdvancedSelfModification,
-    open_ended_evolution::OpenEndedEvolution,
+    curiosity::ActionType,
     genetics::Genome,
 };
 

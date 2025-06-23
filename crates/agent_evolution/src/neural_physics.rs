@@ -849,11 +849,12 @@ impl QuantumFieldNeuralEmergence {
         let mut correlation_sum = 0.0;
         let mut count = 0;
         
-        for i in 0..field_1.field_values.len() {
-            for j in 0..field_1.field_values[i].len() {
-                for k in 0..field_1.field_values[i][j].len() {
-                    let val_1 = field_1.field_values[i][j][k].norm();
-                    let val_2 = field_2.field_values[i][j][k].norm();
+        let (nx, ny, nz) = field_1.field_values.dim();
+        for i in 0..nx {
+            for j in 0..ny {
+                for k in 0..nz {
+                    let val_1 = field_1.field_values[[i, j, k]].norm();
+                    let val_2 = field_2.field_values[[i, j, k]].norm();
                     correlation_sum += val_1 * val_2;
                     count += 1;
                 }
@@ -869,11 +870,12 @@ impl QuantumFieldNeuralEmergence {
         let mut correlation_sum = 0.0;
         let mut count = 0;
         
-        for i in 0..field_1.field_derivatives.len() {
-            for j in 0..field_1.field_derivatives[i].len() {
-                for k in 0..field_1.field_derivatives[i][j].len() {
-                    let deriv_1 = field_1.field_derivatives[i][j][k].norm();
-                    let deriv_2 = field_2.field_derivatives[i][j][k].norm();
+        let (nx, ny, nz) = field_1.field_derivatives.dim();
+        for i in 0..nx {
+            for j in 0..ny {
+                for k in 0..nz {
+                    let deriv_1 = field_1.field_derivatives[[i, j, k]].norm();
+                    let deriv_2 = field_2.field_derivatives[[i, j, k]].norm();
                     correlation_sum += deriv_1 * deriv_2;
                     count += 1;
                 }
@@ -888,11 +890,12 @@ impl QuantumFieldNeuralEmergence {
         let mut overlap_sum = 0.0;
         let mut count = 0;
         
-        for i in 0..field_1.field_values.len() {
-            for j in 0..field_1.field_values[i].len() {
-                for k in 0..field_1.field_values[i][j].len() {
-                    let val_1 = field_1.field_values[i][j][k];
-                    let val_2 = field_2.field_values[i][j][k];
+        let (nx, ny, nz) = field_1.field_values.dim();
+        for i in 0..nx {
+            for j in 0..ny {
+                for k in 0..nz {
+                    let val_1 = field_1.field_values[[i, j, k]];
+                    let val_2 = field_2.field_values[[i, j, k]];
                     overlap_sum += (val_1 * val_2.conj()).re;
                     count += 1;
                 }
@@ -918,19 +921,21 @@ impl QuantumFieldNeuralEmergence {
         let mut count_2 = 0;
         
         // Calculate average energy from field values
-        for i in 0..field_1.field_values.len() {
-            for j in 0..field_1.field_values[i].len() {
-                for k in 0..field_1.field_values[i][j].len() {
-                    energy_1 += field_1.field_values[i][j][k].norm_sqr();
+        let (nx1, ny1, nz1) = field_1.field_values.dim();
+        for i in 0..nx1 {
+            for j in 0..ny1 {
+                for k in 0..nz1 {
+                    energy_1 += field_1.field_values[[i, j, k]].norm_sqr();
                     count_1 += 1;
                 }
             }
         }
         
-        for i in 0..field_2.field_values.len() {
-            for j in 0..field_2.field_values[i].len() {
-                for k in 0..field_2.field_values[i][j].len() {
-                    energy_2 += field_2.field_values[i][j][k].norm_sqr();
+        let (nx2, ny2, nz2) = field_2.field_values.dim();
+        for i in 0..nx2 {
+            for j in 0..ny2 {
+                for k in 0..nz2 {
+                    energy_2 += field_2.field_values[[i, j, k]].norm_sqr();
                     count_2 += 1;
                 }
             }
@@ -958,10 +963,11 @@ impl QuantumFieldNeuralEmergence {
         let mut coherence_sum = 0.0;
         let mut count = 0;
         
-        for i in 0..field.field_values.len() {
-            for j in 0..field.field_values[i].len() {
-                for k in 0..field.field_values[i][j].len() {
-                    let phase = field.field_values[i][j][k].arg();
+        let (nx, ny, nz) = field.field_values.dim();
+        for i in 0..nx {
+            for j in 0..ny {
+                for k in 0..nz {
+                    let phase = field.field_values[[i, j, k]].arg();
                     coherence_sum += phase.cos().abs();
                     count += 1;
                 }
@@ -1038,10 +1044,11 @@ impl QuantumFieldNeuralEmergence {
         let mut nodes = Vec::new();
         
         // Create nodes at points of high field energy density
-        for i in 0..field.field_values.len() {
-            for j in 0..field.field_values[i].len() {
-                for k in 0..field.field_values[i][j].len() {
-                    let field_value = field.field_values[i][j][k];
+        let (nx, ny, nz) = field.field_values.dim();
+        for i in 0..nx {
+            for j in 0..ny {
+                for k in 0..nz {
+                    let field_value = field.field_values[[i, j, k]];
                     let energy_density = field_value.norm_sqr();
                     
                     // Create node if energy density is above threshold
@@ -1211,11 +1218,12 @@ impl QuantumFieldNeuralEmergence {
     /// Get field value at specific position
     fn get_field_value_at_position(field: &QuantumField, position: &[f64; 3]) -> Result<Complex<f64>> {
         // Interpolate field value at position
-        let i = ((position[0] / field.lattice_spacing) as usize).min(field.field_values.len().saturating_sub(1));
-        let j = ((position[1] / field.lattice_spacing) as usize).min(field.field_values[i].len().saturating_sub(1));
-        let k = ((position[2] / field.lattice_spacing) as usize).min(field.field_values[i][j].len().saturating_sub(1));
+        let (nx, ny, nz) = field.field_values.dim();
+        let i = ((position[0] / field.lattice_spacing) as usize).min(nx.saturating_sub(1));
+        let j = ((position[1] / field.lattice_spacing) as usize).min(ny.saturating_sub(1));
+        let k = ((position[2] / field.lattice_spacing) as usize).min(nz.saturating_sub(1));
         
-        Ok(field.field_values[i][j][k])
+        Ok(field.field_values[[i, j, k]])
     }
 
     /// Calculate connection strength based on quantum field interactions

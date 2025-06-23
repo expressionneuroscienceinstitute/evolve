@@ -17,13 +17,10 @@
 use anyhow::Result;
 use nalgebra::DVector;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashSet;
 use uuid::Uuid;
 use crate::ai_core::AICore;
 use crate::curiosity::{CuriositySystem, Experience};
-use crate::meta_learning::MetaLearner;
-use crate::self_modification::AdvancedSelfModification;
-use crate::hypernetwork::Hypernetwork;
 
 /// Open-ended evolution system
 #[derive(Debug, Clone, Serialize, Deserialize)]

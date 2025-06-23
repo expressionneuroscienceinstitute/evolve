@@ -21,7 +21,6 @@ use crate::ai_core::SensoryInput;
 use nalgebra::{DVector, Complex};
 use std::collections::HashMap;
 use uuid::Uuid;
-use std::f64::consts::PI;
 
 /// Represents the integrated information or "phi" value of a conscious state.
 /// In IIT, phi measures the degree to which a system's whole is greater than the sum of its parts.

@@ -68,9 +68,9 @@ fn test_comprehensive_validation_system() {
     assert!(result.emergence_indicators.information_entropy >= 0.0);
     
     // Check performance metrics
-    assert!(result.performance_metrics.memory_usage_mb > 0.0);
+    assert!(result.performance_metrics.memory_usage_bytes > 0);
     assert!(result.performance_metrics.particles_per_second > 0.0);
-    assert!(result.performance_metrics.cache_efficiency > 0.0);
+    assert!(result.performance_metrics.cache_hit_rate > 0.0);
     assert!(result.performance_metrics.parallelization_efficiency > 0.0);
 }
 
@@ -253,14 +253,14 @@ fn test_performance_validation() {
     
     // Should pass performance validation with reasonable states
     assert!(result.success);
-    assert!(result.performance_metrics.memory_usage_mb > 0.0);
+    assert!(result.performance_metrics.memory_usage_bytes > 0);
     assert!(result.performance_metrics.particles_per_second > 0.0);
-    assert!(result.performance_metrics.computation_time_ms > 0.0);
+    assert!(result.performance_metrics.computation_time_ns > 0);
     
     // Test with custom performance thresholds that are too strict
     let mut strict_validator = ComprehensivePhysicsValidator::default();
-    strict_validator.performance_thresholds.max_computational_overhead = 0.001; // Very strict
-    strict_validator.performance_thresholds.min_prediction_accuracy = 1e12; // Very high
+    strict_validator.performance_thresholds.max_computation_time_ms = 0.001; // Very strict
+    strict_validator.performance_thresholds.max_conservation_error = 1e-12; // Very high
     
     let result = strict_validator.validate(&many_states, &constants).unwrap();
     

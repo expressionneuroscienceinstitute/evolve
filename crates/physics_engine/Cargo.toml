@@ -10,7 +10,8 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_distr = { workspace = true }
 fastrand = "1.9"
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, optional = true }
 serde_arrays = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
@@ -26,11 +27,18 @@ itertools = "0.10"
 libm = "0.2"
 bincode = { workspace = true }
 parking_lot = "0.12.4"
+rustfft = "6.2.0"
+cosmology = "0.3.2"
+
+[build-dependencies]
+phf = { version = "0.11", features = ["macros"] }
+phf_codegen = "0.11"
 
 [features]
 default = ["gpu-acceleration"]
 # Enable full scientific fidelity at the cost of performance.
 heavy = ["quantum-chemistry", "climate-sim", "geodynamics-sim", "amr"]
+data-ingestion = ["serde_json"]
 gpu-acceleration = []
 simd = []
 quantum-chemistry = []

@@ -2060,3 +2060,9 @@ struct QuantumInteractionResult {
 
 pub use crate::types::PhysicsState;
 pub use crate::constants::PhysicsConstants;
+
+#[cfg(feature = "data-ingestion")]
+pub mod data_ingestion;
+
+/// Gravitational constant in N·(m/kg)²
+pub const G: f64 = 6.67430e-11;

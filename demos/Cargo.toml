@@ -11,9 +11,24 @@ path = "01_big_bang.rs"
 name = "weak_interactions_demo"
 path = "02_weak_interactions.rs"
 
+[[bin]]
+name = "cosmological_nbody_demo"
+path = "03_cosmological_nbody.rs"
+
+[[bin]]
+name = "cosmological_sph_demo"
+path = "04_cosmological_sph.rs"
+
+[[bin]]
+name = "tree_pm_gravity_demo"
+path = "05_tree_pm_gravity.rs"
+
+[[bin]]
+name = "statistical_analysis_demo"
+path = "06_statistical_analysis.rs"
+
 [dependencies]
 physics_engine = { path = "../crates/physics_engine" }
 anyhow = { workspace = true }
 nalgebra = { workspace = true }
 rand = { workspace = true }
-universe_sim = { path = "../crates/universe_sim", features = ["diagnostics"] }

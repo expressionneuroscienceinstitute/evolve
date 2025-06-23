@@ -13,9 +13,6 @@ endfb-viii.0-neutrons.zip
 agent_refactor_monitor.log
 sim_output.log
 docs/TODO.md
-docs/research_proposals/2025-01-27_Agent_Novel_Physics_Researcher_AdaptiveQuantumClassicalCoupling.md
-docs/research_proposals/2025-01-27_Agent_QMC_Optimizer_AdvancedOptimizations.md
-docs/research_proposals/2025-01-27_Agent_QMC_Optimizer_NovelQMCOptimizations.md
-docs/research_proposals/2025-01-27_Agent_Quantum_Physics_QuantumMonteCarloMolecularDynamics.md
+docs/research_proposals/*
 crates/agent_evolution/interaction_data.json
 crates/agent_evolution/trajectory_data.json

@@ -14,7 +14,6 @@ pub mod atomic_data;
 pub mod electromagnetic;
 pub mod emergent_properties;
 pub mod endf_data;
-// pub mod ffi; // TODO: Create this module
 pub mod geodynamics;
 pub mod general_relativity; // Externalised GR implementation
 pub mod interactions;
@@ -37,7 +36,6 @@ pub mod interaction_events;
 pub mod particle_types;
 
 // Temporary compatibility layer for missing QC helpers
-// mod qc_compat;
 pub mod quantum_chemistry;
 pub mod quantum_math;
 pub mod octree;
@@ -47,9 +45,9 @@ pub mod quantum_ca;
 pub mod sph;
 pub mod radiative_transfer;
 pub mod jeans_instability;
-pub mod gadget_gravity;
-
-// Add back missing modules
+pub mod cosmology;
+pub mod cosmological_nbody;
+pub mod cosmological_sph;
 pub mod gravitational_collapse;
 pub use gravitational_collapse::{jeans_mass, jeans_length, SinkParticle};
 
@@ -77,7 +75,6 @@ use log;
 use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
 use self::spatial::SpatialHashGrid;
 use self::octree::{Octree, AABB};
-// use self::constants::{BOLTZMANN, SPEED_OF_LIGHT, ELEMENTARY_CHARGE, REDUCED_PLANCK_CONSTANT, VACUUM_PERMITTIVITY};
 use physics_types as shared_types;
 
 pub use constants::*;
@@ -89,7 +86,6 @@ use crate::types::{
     PotentialEnergySurface, ReactionCoordinate, InteractionEvent
 };
 use crate::general_relativity::schwarzschild_radius;
-use crate::particle_types::BoundaryConditions;
 
 // Re-export canonical ParticleType from shared physics_types crate
 pub use physics_types::ParticleType;
@@ -224,27 +220,9 @@ impl SymmetryBreaking {
     }
 }
 
-/// Quantum field representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantumField {
-    pub field_type: FieldType,
-    pub field_values: Vec<Vec<Vec<Complex<f64>>>>, // 3D grid
-    pub field_derivatives: Vec<Vec<Vec<Vector3<Complex<f64>>>>>,
-    pub vacuum_expectation_value: Complex<f64>,
-    pub coupling_constants: HashMap<FieldType, f64>,
-    pub lattice_spacing: f64,
-    pub boundary_conditions: BoundaryConditions,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum FieldType {
-    ElectronField, MuonField, TauField,
-    ElectronNeutrinoField, MuonNeutrinoField, TauNeutrinoField,
-    UpQuarkField, DownQuarkField, CharmQuarkField, StrangeQuarkField, TopQuarkField, BottomQuarkField,
-    PhotonField, WBosonField, ZBosonField, GluonField,
-    HiggsField,
-    DarkMatterField,
-}
+// Re-export advanced quantum field types from quantum_fields module
+pub use quantum_fields::{QuantumField, FieldStatistics, QuantumFieldInteractionSystem};
+pub use particle_types::{FieldType, BoundaryConditions};
 
 /// Main physics engine for universe simulation
 #[derive(Debug)]
@@ -282,6 +260,9 @@ pub struct PhysicsEngine {
     pub spatial_grid: SpatialHashGrid,
     pub octree: Octree,
     pub interaction_history: Vec<InteractionEvent>,
+    pub force_accuracy: f64, // Accuracy parameter for force calculations
+    pub softening_length: f64, // Gravitational softening length
+    pub acceleration: Vector3<f64>, // Global acceleration (e.g., for external fields)
 }
 
 /// Atomic nucleus with detailed structure
@@ -463,6 +444,9 @@ impl PhysicsEngine {
             // A default, large boundary. Will be resized dynamically.
             octree: Octree::new(AABB::new(Vector3::zeros(), Vector3::new(1.0, 1.0, 1.0))),
             interaction_history: Vec::new(),
+            force_accuracy: 1e-6, // Accuracy parameter for force calculations
+            softening_length: 1e-3, // Gravitational softening length
+            acceleration: Vector3::zeros(), // Global acceleration (e.g., for external fields)
         };
 
         engine.initialize_particle_properties()?;
@@ -504,8 +488,12 @@ impl PhysicsEngine {
             FieldType::HiggsField, FieldType::DarkMatterField,
         ];
         
+        // Use new QuantumField constructor with vacuum fluctuations
+        let grid_size = (10, 10, 10); // 10x10x10 lattice
+        let lattice_spacing = 1e-15; // 1 femtometer spacing
+        
         for field_type in field_types {
-            let field = QuantumField::new(field_type, &self.spacetime_grid)?;
+            let field = QuantumField::new(field_type, grid_size, lattice_spacing);
             self.quantum_fields.insert(field_type, field);
         }
         
@@ -1099,7 +1087,7 @@ impl PhysicsEngine {
     /// Apply comprehensive cosmological expansion effects following ΛCDM model with full Friedmann equations
     fn apply_cosmological_expansion_to_particles(&mut self, dt: f64) -> Result<()> {
         use crate::constants::{GRAVITATIONAL_CONSTANT, SPEED_OF_LIGHT};
-        use crate::gadget_gravity::CosmologicalParameters;
+        use crate::cosmology::CosmologicalParameters;
         
         // Create default cosmological parameters (Planck 2018 values)
         let params = CosmologicalParameters::default();
@@ -1205,7 +1193,7 @@ impl PhysicsEngine {
     }
     
     /// Calculate scale factor a(t) from cosmic time using ΛCDM model
-    fn calculate_scale_factor_from_time(&self, params: &crate::gadget_gravity::CosmologicalParameters, time_seconds: f64) -> f64 {
+    fn calculate_scale_factor_from_time(&self, params: &crate::cosmology::CosmologicalParameters, time_seconds: f64) -> f64 {
         let h0_si = params.h0 * 1000.0 / 3.086e22; // Convert to SI units
         
         if params.omega_lambda.abs() < 1e-6 {
@@ -1992,18 +1980,11 @@ fn map_interaction_type(it: shared_types::InteractionType) -> crate::types::Inte
 }
 
 impl QuantumField {
-    pub fn new(_field_type: FieldType, _spacetime_grid: &SpacetimeGrid) -> Result<Self> {
-        Ok(Self {
-            field_type: _field_type,
-            field_values: vec![vec![vec![Complex::new(0.0, 0.0); 10]; 10]; 10],
-            field_derivatives: vec![vec![vec![Vector3::zeros(); 10]; 10]; 10],
-            vacuum_expectation_value: Complex::new(0.0, 0.0),
-            coupling_constants: HashMap::new(),
-            lattice_spacing: 1e-15,
-            boundary_conditions: BoundaryConditions::Periodic,
-        })
-    }
+    // Remove this entire duplicate implementation - the proper one is in quantum_fields.rs
 }
+
+// Using advanced QuantumField implementation from quantum_fields.rs
+// This provides proper vacuum fluctuations, field evolution, and quantum field theory
 
 // FFI integration stub module completely removed - all physics now handled by native Rust implementations
 

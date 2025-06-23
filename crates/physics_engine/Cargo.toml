@@ -24,7 +24,6 @@ endf_parser = "0.2.0"
 physics_types = { path = "../physics_types" }
 itertools = "0.10"
 libm = "0.2"
-litm = "0.2"
 bincode = { workspace = true }
 parking_lot = "0.12.4"
 

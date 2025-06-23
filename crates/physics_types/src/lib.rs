@@ -119,6 +119,9 @@ pub enum ParticleType {
     // Dark matter candidate
     DarkMatter,
     
+    // Cosmological gas for SPH simulations
+    Gas,
+    
     Other,
 }
 

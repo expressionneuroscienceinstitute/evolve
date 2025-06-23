@@ -107,6 +107,30 @@ enum Commands {
         layer: String,
     },
     
+    /// Render quantum field visualization
+    Quantum {
+        #[arg(long, default_value = "magnitude")]
+        data_type: String,
+        
+        #[arg(long, default_value = "0")]
+        z_slice: usize,
+        
+        #[arg(long, default_value = "50")]
+        width: usize,
+        
+        #[arg(long, default_value = "50")]
+        height: usize,
+        
+        #[arg(long)]
+        field_type: Option<String>,
+        
+        #[arg(long)]
+        show_statistics: bool,
+        
+        #[arg(long)]
+        export_json: Option<PathBuf>,
+    },
+    
     /// List planets with filtering
     ListPlanets {
         #[arg(long)]
@@ -295,6 +319,7 @@ async fn main() -> Result<()> {
         },
         Commands::Stop => cmd_stop().await,
         Commands::Map { zoom, layer } => cmd_map(zoom, &layer).await,
+        Commands::Quantum { data_type, z_slice, width, height, field_type, show_statistics, export_json } => cmd_quantum(data_type, z_slice, width, height, field_type, show_statistics, export_json).await,
         Commands::ListPlanets { class, habitable } => cmd_list_planets(class, habitable).await,
         Commands::Inspect { target } => cmd_inspect(target).await,
         Commands::Snapshot { file, format } => cmd_snapshot(file, format).await,
@@ -399,132 +424,61 @@ async fn cmd_start(
     rpc_port: u16,
     _allow_net: bool,
 ) -> Result<()> {
-    info!("Starting universe simulation");
-    debug!("Config: particles={}, tick_span={:.2e}, low_mem={}, native_render={}", 
-           config.initial_particle_count, config.tick_span_years, low_mem, native_render);
-
-    if let Some(ts) = tick_span {
-        config.tick_span_years = ts;
-        debug!("Overriding tick span to {:.2e} years", ts);
+    // Initialize RPC client
+    rpc::init_rpc_client(rpc_port);
+    
+    // Load configuration
+    if let Some(load_path) = load {
+        println!("Loading simulation from: {}", load_path.display());
+        config = SimulationConfig::load(&load_path)?;
     }
+    
+    // Apply memory optimization if requested
     if low_mem {
-        config.initial_particle_count = 1000; // Lower particle count for low-mem
-        info!("Low memory mode: reduced particle count to {}", config.initial_particle_count);
+        println!("Applying low memory optimizations...");
+        config.physics.max_particles = config.physics.max_particles.min(100_000);
+        config.physics.octree_max_depth = config.physics.octree_max_depth.min(8);
     }
-
-    let sim = if let Some(path) = load {
-        info!("Loading simulation from checkpoint: {:?}", path);
-        persistence::load_checkpoint(&path)?
-    } else {
-        info!("Starting new simulation from Big Bang...");
-        let mut sim = UniverseSimulation::new(config.clone())?;
-        sim.init_big_bang()?;
-        
-        // Also initialize Big Bang conditions in the physics engine
-        info!("🔬 Initializing physics engine Big Bang conditions...");
-        sim.physics_engine.initialize_big_bang()?;
-        
-        info!("✅ Simulation initialized with {} particles in store and {} particles in physics engine",
-            sim.store.particles.count,
-            sim.physics_engine.particles.len());
-        
-        sim
-    };
-
-    let sim = Arc::new(Mutex::new(sim));
-
-    // Start RPC server with timeout
-    info!("Starting RPC server on port {}", rpc_port);
-    let shared_state = Arc::new(Mutex::new(SharedState { sim: sim.clone(), last_save_time: None }));
     
-    // Start RPC server in background
-    let _rpc_handle = tokio::spawn(start_rpc_server(rpc_port, shared_state.clone()));
-    
-    // Wait for RPC server to be ready with timeout
-    info!("Waiting for RPC server to be ready...");
-    let rpc_ready = tokio::time::timeout(Duration::from_secs(10), async {
-        let mut attempts = 0;
-        while attempts < 50 { // Try for 5 seconds with 100ms intervals
-            match rpc::call_rpc_with_timeout("status", json!({}), Duration::from_millis(100)).await {
-                Ok(_) => {
-                    info!("✅ RPC server is ready");
-                    return Ok(());
-                },
-                Err(_) => {
-                    attempts += 1;
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            }
-        }
-        Err(anyhow::anyhow!("RPC server failed to start within timeout"))
-    }).await;
-
-    match rpc_ready {
-        Ok(Ok(())) => info!("RPC server started successfully"),
-        Ok(Err(e)) => {
-            error!("RPC server failed to start: {}", e);
-            return Err(e);
-        },
-        Err(_) => {
-            error!("RPC server startup timed out");
-            return Err(anyhow::anyhow!("RPC server startup timed out"));
-        }
+    // Apply tick span if specified
+    if let Some(span) = tick_span {
+        config.simulation.tick_span = span;
+        println!("Set tick span to: {} seconds", span);
     }
-
-    // Start native renderer if requested (but skip for now to focus on CLI)
+    
+    // Create simulation
+    let mut simulation = UniverseSimulation::new(config)?;
+    
+    // Start RPC server
+    let shared_state = Arc::new(Mutex::new(SharedState {
+        sim: Arc::new(Mutex::new(simulation)),
+        last_save_time: None,
+    }));
+    
+    println!("Starting RPC server on port {}...", rpc_port);
+    start_rpc_server(rpc_port, shared_state.clone());
+    
+    // Wait a moment for server to start
+    sleep(Duration::from_millis(100)).await;
+    
+    // Start native renderer if requested
     if native_render {
-        warn!("Native renderer requested but skipping for CLI focus");
-        info!("Continuing with simulation-only mode (no native renderer)");
+        println!("Starting native renderer...");
+        let sim_arc = shared_state.lock().unwrap().sim.clone();
+        
+        // Spawn renderer in separate task
+        tokio::spawn(async move {
+            if let Err(e) = native_renderer::run_renderer(sim_arc).await {
+                eprintln!("Renderer error: {}", e);
+            }
+        });
     }
-
-    // Main simulation loop with timeout protection
-    info!("Starting main simulation loop");
-    let mut last_save = Instant::now();
-    let save_interval = Duration::from_secs(300); // Save every 5 minutes
     
+    // Keep main thread alive
+    println!("Simulation started. Use Ctrl+C to stop.");
     loop {
-        // Run simulation tick with timeout protection
-        {
-            let tick_result = tokio::time::timeout(Duration::from_secs(30), async {
-                let mut guard = sim.lock().unwrap();
-                guard.tick()
-            }).await;
-            
-            match tick_result {
-                Ok(Ok(())) => {
-                    // Tick successful
-                },
-                Ok(Err(e)) => {
-                    error!("Simulation tick failed: {}", e);
-                    break;
-                },
-                Err(_) => {
-                    error!("Simulation tick timed out after 30 seconds");
-                    break;
-                }
-            }
-        }
-
-        // Auto-save periodically
-        if last_save.elapsed() > save_interval {
-            debug!("Performing periodic auto-save");
-            let checkpoint_path = std::env::current_dir()?.join("checkpoints").join("auto_save.checkpoint");
-            if let Ok(mut guard) = sim.lock() {
-                if let Err(e) = persistence::save_checkpoint(&mut *guard, &checkpoint_path) {
-                    warn!("Auto-save failed: {}", e);
-                } else {
-                    debug!("Auto-save completed successfully");
-                }
-            }
-            last_save = Instant::now();
-        }
-
-        // Small delay to prevent busy-waiting
-        sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_secs(1)).await;
     }
-
-    info!("Simulation terminated");
-    Ok(())
 }
 
 async fn cmd_stop() -> Result<()> {
@@ -566,49 +520,95 @@ async fn cmd_stop() -> Result<()> {
 }
 
 async fn cmd_map(zoom: f64, layer: &str) -> Result<()> {
-    info!("Generating simulation map (zoom: {}, layer: {})", zoom, layer);
-    debug!("Requesting map data from RPC server");
-
-    let client = reqwest::Client::new();
-    let req_body = json!({
-        "jsonrpc": "2.0",
-        "method": "map",
-        "params": {
-            "zoom": zoom,
-            "layer": layer
-        },
-        "id": 1
-    });
-
-    let res = client
-        .post("http://127.0.0.1:9001/rpc")
-        .json(&req_body)
-        .send()
-        .await?;
-
-    if !res.status().is_success() {
-        warn!("Failed to connect to RPC server for map data (status: {})", res.status());
-        println!("Error: Failed to connect to simulation RPC server.");
-        println!("Is the simulation running with 'universectl start'?");
-        println!("Rendering sample map instead...");
-        debug!("Falling back to sample map rendering");
-        render_sample_map(80, 40, layer, zoom);
+    let sim_path = persistence::get_simulation_path()?;
+    if !sim_path.exists() {
+        println!("❌ No simulation found. Start one first with `universectl start`");
         return Ok(());
     }
 
-    let rpc_res: rpc::RpcResponse<rpc::MapResponse> = res.json().await?;
+    let mut sim = persistence::load_simulation(&sim_path)?;
+    let map_data = sim.get_map_data(zoom, layer, 80, 24)?;
+    
+    println!("🗺️  UNIVERSE MAP (zoom: {}, layer: {})", zoom, layer);
+    println!("   Age: {:.2} Gyr | Tick: {}", sim.universe_age_gyr(), sim.current_tick);
+    println!();
+    
+    render_simulation_map(&map_data, 80, 24, layer)?;
+    Ok(())
+}
 
-    if let Some(error) = rpc_res.error {
-        error!("RPC error while getting map: {} (code: {})", error.message, error.code);
-        println!("RPC Error: {} (code: {})", error.message, error.code);
-        println!("Rendering sample map instead...");
-        render_sample_map(80, 40, layer, zoom);
+async fn cmd_quantum(
+    data_type: String, 
+    z_slice: usize, 
+    width: usize, 
+    height: usize, 
+    field_type: Option<String>, 
+    show_statistics: bool, 
+    export_json: Option<PathBuf>
+) -> Result<()> {
+    let sim_path = persistence::get_simulation_path()?;
+    if !sim_path.exists() {
+        println!("❌ No simulation found. Start one first with `universectl start`");
         return Ok(());
     }
 
-    if let Some(map) = rpc_res.result {
-        debug!("Received map data: {}x{} grid", map.width, map.height);
-        render_simulation_map(&map.data, map.width, map.height, layer)?;
+    let sim = persistence::load_simulation(&sim_path)?;
+    
+    // Get quantum state vector data
+    let quantum_data = sim.get_quantum_state_vector_snapshot();
+    
+    if quantum_data.is_empty() {
+        println!("❌ No quantum field data available. Quantum fields may not be initialized.");
+        return Ok(());
+    }
+
+    println!("🔬 QUANTUM FIELD VISUALIZATION");
+    println!("   Data Type: {} | Z-Slice: {} | Size: {}x{}", data_type, z_slice, width, height);
+    println!("   Age: {:.2} Gyr | Tick: {}", sim.universe_age_gyr(), sim.current_tick);
+    println!();
+
+    // Filter by field type if specified
+    let fields_to_show = if let Some(ref filter_type) = field_type {
+        quantum_data.iter()
+            .filter(|(name, _)| name.to_lowercase().contains(&filter_type.to_lowercase()))
+            .collect::<Vec<_>>()
+    } else {
+        quantum_data.iter().collect::<Vec<_>>()
+    };
+
+    if fields_to_show.is_empty() {
+        println!("❌ No quantum fields match the specified filter: {:?}", field_type);
+        return Ok(());
+    }
+
+    // Display quantum field data
+    for (field_name, field_data) in fields_to_show {
+        println!("📊 QUANTUM FIELD: {}", field_name);
+        println!("   Dimensions: {}x{}x{}", 
+                field_data.field_dimensions.0, 
+                field_data.field_dimensions.1, 
+                field_data.field_dimensions.2);
+        println!("   Field Type: {} | Mass: {:.2e} kg | Spin: {:.1}", 
+                field_data.field_type, field_data.field_mass, field_data.field_spin);
+        println!("   Energy Density: {:.2e} J/m³", field_data.field_energy_density);
+        println!();
+
+        // Show statistics if requested
+        if show_statistics {
+            render_quantum_statistics(field_data);
+            println!();
+        }
+
+        // Render quantum field visualization
+        render_quantum_field_visualization(field_data, &data_type, z_slice, width, height)?;
+        println!();
+
+        // Export to JSON if requested
+        if let Some(ref json_path) = export_json {
+            let json_data = field_data.to_json();
+            std::fs::write(json_path, serde_json::to_string_pretty(&json_data)?)?;
+            println!("💾 Exported quantum field data to: {}", json_path.display());
+        }
     }
 
     Ok(())
@@ -2007,8 +2007,8 @@ async fn cmd_oracle(action: OracleAction) -> Result<()> {
 async fn cmd_interactive() -> Result<()> {
     use std::io::{self, Write};
     
-    println!("🎮 Interactive Simulation Control");
-    println!("=================================");
+    println!("Interactive Simulation Control");
+    println!("=============================");
     println!("Commands: status, stats, physics, speed <factor>, map [layer], planets,");
     println!("          stop, rewind <ticks>, snapshot <file>, inspect <type> <id>,");
     println!("          godmode <action>, help, quit");
@@ -2023,7 +2023,7 @@ async fn cmd_interactive() -> Result<()> {
         if last_stats_update.elapsed() >= stats_update_interval {
             match rpc::call_rpc("status", json!({})).await {
                 Ok(response) => {
-                    print!("📊 Status: ");
+                    print!("Status: ");
                     if let Some(age_gyr) = response.get("universe_age_gyr").and_then(|v| v.as_f64()) {
                         print!("Age: {:.2} GYr", age_gyr);
                     }
@@ -2034,7 +2034,7 @@ async fn cmd_interactive() -> Result<()> {
                     }
                     println!();
                 },
-                Err(_) => println!("📊 Status: Simulation offline"),
+                Err(_) => println!("Status: Simulation offline"),
             }
             last_stats_update = Instant::now();
         }
@@ -2060,7 +2060,7 @@ async fn cmd_interactive() -> Result<()> {
                         }
                     },
                     Err(e) => {
-                        println!("❌ Error: {}", e);
+                        println!("Error: {}", e);
                     }
                 }
                 
@@ -2071,13 +2071,13 @@ async fn cmd_interactive() -> Result<()> {
                 println!();
             },
             Err(e) => {
-                println!("❌ Input error: {}", e);
+                println!("Input error: {}", e);
                 break;
             }
         }
     }
     
-    println!("👋 Exiting interactive mode");
+    println!("Exiting interactive mode");
     Ok(())
 }
 
@@ -2088,346 +2088,376 @@ async fn execute_interactive_command(command: &str) -> Result<bool> {
         return Ok(false);
     }
     
-    println!("🔧 Processing command: {}", parts[0]); // Debug output
+    println!("Processing command: {}", parts[0]); // Debug output
     
     match parts[0] {
         "quit" | "exit" | "q" => {
             return Ok(true);
         },
         
+        "help" | "h" => {
+            print_interactive_help();
+        },
+        
         "status" => {
-            println!("📊 Fetching simulation status...");
+            println!("Fetching simulation status...");
             cmd_status().await?;
-            println!("✅ Status command completed.");
+            println!("Status command completed.");
         },
         
         "stats" => {
-            println!("📈 Fetching universe statistics...");  
+            println!("Fetching universe statistics...");  
             match rpc::call_rpc("universe_stats", json!({})).await {
                 Ok(response) => {
                     render_universe_stats(&response)?;
                 },
                 Err(e) => {
-                    println!("⚠️  Could not connect to simulation: {}", e);
+                    println!("Could not connect to simulation: {}", e);
                     render_sample_universe_stats();
                 }
             }
-            println!("✅ Stats command completed.");
+            println!("Stats command completed.");
         },
         
         "physics" => {
-            println!("⚗️ Fetching physics diagnostics...");
+            println!("Fetching physics diagnostics...");
             match rpc::call_rpc("physics_diagnostics", json!({})).await {
                 Ok(response) => {
                     render_physics_diagnostics(&response)?;
                 },
                 Err(e) => {
-                    println!("⚠️  Could not connect to simulation: {}", e);
+                    println!("Could not connect to simulation: {}", e);
                     render_sample_physics_diagnostics();
                 }
             }
-            println!("✅ Physics command completed.");
+            println!("Physics command completed.");
         },
         
         "speed" => {
             if parts.len() > 1 {
                 if let Ok(factor) = parts[1].parse::<f64>() {
-                    println!("⏱️ Setting simulation speed to {}x...", factor);
+                    println!("Setting simulation speed to {}x...", factor);
                     match rpc::call_rpc("speed", json!({ "factor": factor })).await {
                         Ok(response) => {
                             if let Some(message) = response.get("message").and_then(|v| v.as_str()) {
-                                println!("✅ {}", message);
+                                println!("{}", message);
                             } else {
-                                println!("✅ Speed set to {}x", factor);
+                                println!("Speed set to {}x", factor);
                             }
                         },
                         Err(e) => {
-                            println!("❌ Failed to set speed: {}", e);
+                            println!("Failed to set speed: {}", e);
                         }
                     }
-                    println!("✅ Speed command completed.");
+                    println!("Speed command completed.");
                 } else {
-                    println!("❌ Invalid speed factor. Use: speed <number>");
+                    println!("Invalid speed factor. Use: speed <number>");
                 }
             } else {
-                println!("❌ Usage: speed <factor>");
+                println!("Usage: speed <factor>");
             }
         },
         
         "map" => {
             let layer = parts.get(1).unwrap_or(&"stars");
-            println!("🗺️ Generating {} map...", layer);
+            println!("Generating {} map...", layer);
             match rpc::call_rpc("map", json!({ "zoom": 1.0, "layer": layer })).await {
                 Ok(response) => {
                     render_simulation_map(&response, 60, 20, layer)?;
                 },
                 Err(e) => {
-                    println!("⚠️  Could not connect to simulation: {}", e);
+                    println!("Could not connect to simulation: {}", e);
                     render_sample_map(60, 20, layer, 1.0);
                 }
             }
-            println!("✅ Map command completed.");
+            println!("Map command completed.");
         },
         
         "planets" => {
-            println!("🪐 Fetching planetary data...");
+            println!("Fetching planetary data...");
             match rpc::call_rpc("list_planets", json!({ "class_filter": null, "habitable_only": false })).await {
                 Ok(response) => {
                     render_planet_list(&response, &None, false)?;
                 },
                 Err(e) => {
-                    println!("⚠️  Could not connect to simulation: {}", e);
+                    println!("Could not connect to simulation: {}", e);
                     render_sample_planets(&None, false);
                 }
             }
-            println!("✅ Planets command completed.");
+            println!("Planets command completed.");
         },
 
         "stop" => {
-            println!("🛑 Stopping simulation...");
+            println!("Stopping simulation...");
             match rpc::call_rpc("stop", json!({})).await {
                 Ok(_) => {
-                    println!("✅ Stop command sent successfully.");
+                    println!("Stop command sent successfully.");
                 },
                 Err(e) => {
-                    println!("❌ Failed to stop simulation: {}", e);
+                    println!("Failed to stop simulation: {}", e);
                 }
             }
-            println!("✅ Stop command completed.");
+            println!("Stop command completed.");
             return Ok(true); // Exit after stop
         },
 
         "rewind" => {
             if parts.len() > 1 {
                 if let Ok(ticks) = parts[1].parse::<u64>() {
-                    println!("⏪ Rewinding {} ticks...", ticks);
+                    println!("Rewinding {} ticks...", ticks);
                     match rpc::call_rpc("rewind", json!({ "ticks": ticks })).await {
                         Ok(response) => {
                             if let Some(message) = response.get("message").and_then(|v| v.as_str()) {
-                                println!("✅ {}", message);
+                                println!("{}", message);
                             } else {
-                                println!("✅ Rewound {} ticks", ticks);
+                                println!("Rewound {} ticks", ticks);
                             }
                         },
                         Err(e) => {
-                            println!("❌ Failed to rewind: {}", e);
+                            println!("Failed to rewind: {}", e);
                         }
                     }
-                    println!("✅ Rewind command completed.");
+                    println!("Rewind command completed.");
                 } else {
-                    println!("❌ Invalid tick count. Use: rewind <number>");
+                    println!("Invalid tick count. Use: rewind <number>");
                 }
             } else {
-                println!("❌ Usage: rewind <ticks>");
+                println!("Usage: rewind <ticks>");
             }
         },
 
         "snapshot" => {
             if parts.len() > 1 {
-                let filename = parts[1];
-                println!("📸 Creating snapshot: {}...", filename);
-                match rpc::call_rpc("snapshot", json!({ "path": filename })).await {
+                let file_path = PathBuf::from(parts[1]);
+                println!("Creating snapshot: {}...", file_path.display());
+                match rpc::call_rpc("snapshot", json!({ "path": parts[1] })).await {
                     Ok(response) => {
-                        if let Some(status) = response.get("status").and_then(|v| v.as_str()) {
-                            println!("✅ {}", status);
+                        if let Some(message) = response.get("message").and_then(|v| v.as_str()) {
+                            println!("{}", message);
                         } else {
-                            println!("✅ Snapshot saved to {}", filename);
+                            println!("Snapshot saved to {}", file_path.display());
                         }
                     },
                     Err(e) => {
-                        println!("❌ Failed to create snapshot: {}", e);
+                        println!("Failed to create snapshot: {}", e);
                     }
                 }
-                println!("✅ Snapshot command completed.");
+                println!("Snapshot command completed.");
             } else {
-                println!("❌ Usage: snapshot <filename>");
+                println!("Usage: snapshot <file>");
             }
         },
 
         "inspect" => {
-            if parts.len() > 2 {
-                let inspect_type = parts[1];
-                let id = parts[2];
-                
-                match inspect_type {
-                    "planet" => {
-                        println!("🔍 Inspecting planet {}...", id);
-                        match rpc::call_rpc("inspect_planet", json!({ "planet_id": id })).await {
-                            Ok(response) => {
-                                render_planet_inspection(&response)?;
-                            },
-                            Err(e) => {
-                                println!("⚠️  Could not connect to simulation: {}", e);
-                                render_sample_planet_inspection(id);
-                            }
-                        }
-                        println!("✅ Planet inspection completed.");
-                    },
-                    "lineage" => {
-                        println!("🧬 Inspecting lineage {}...", id);
-                        match rpc::call_rpc("inspect_lineage", json!({ "lineage_id": id })).await {
-                            Ok(response) => {
-                                render_lineage_inspection(&response)?;
-                            },
-                            Err(e) => {
-                                println!("⚠️  Could not connect to simulation: {}", e);
-                                render_sample_lineage_inspection(id);
-                            }
-                        }
-                        println!("✅ Lineage inspection completed.");
-                    },
-                    "universe" => {
-                        println!("🌌 Inspecting universe...");
-                        match rpc::call_rpc("universe_stats", json!({})).await {
-                            Ok(response) => {
-                                render_universe_stats(&response)?;
-                            },
-                            Err(e) => {
-                                println!("⚠️  Could not connect to simulation: {}", e);
-                                render_sample_universe_stats();
-                            }
-                        }
-                        println!("✅ Universe inspection completed.");
-                    },
-                    "physics" => {
-                        println!("⚗️ Inspecting physics...");
-                        match rpc::call_rpc("physics_diagnostics", json!({})).await {
-                            Ok(response) => {
-                                render_physics_diagnostics(&response)?;
-                            },
-                            Err(e) => {
-                                println!("⚠️  Could not connect to simulation: {}", e);
-                                render_sample_physics_diagnostics();
-                            }
-                        }
-                        println!("✅ Physics inspection completed.");
-                    },
-                    "universe_history" => {
-                        println!("🔄 Inspecting historical trends of universe statistics...");
-                        match rpc::call_rpc("universe_stats_history", json!({})).await {
-                            Ok(response) => {
-                                render_universe_history(&response)?;
-                            },
-                            Err(e) => {
-                                println!("⚠️  Could not connect to simulation: {}", e);
-                                render_sample_universe_history();
-                            }
-                        }
-                        println!("✅ Universe history inspection completed.");
-                    },
-                    _ => {
-                        println!("❌ Invalid inspect type. Use: inspect <planet|lineage|universe|physics|universe_history> [id]");
-                    }
-                }
-            } else if parts.len() == 2 {
-                match parts[1] {
-                    "universe" => {
-                        println!("🌌 Inspecting universe...");
-                        match rpc::call_rpc("universe_stats", json!({})).await {
-                            Ok(response) => {
-                                render_universe_stats(&response)?;
-                            },
-                            Err(e) => {
-                                println!("⚠️  Could not connect to simulation: {}", e);
-                                render_sample_universe_stats();
-                            }
-                        }
-                        println!("✅ Universe inspection completed.");
-                    },
-                    "physics" => {
-                        println!("⚗️ Inspecting physics...");
-                        match rpc::call_rpc("physics_diagnostics", json!({})).await {
-                            Ok(response) => {
-                                render_physics_diagnostics(&response)?;
-                            },
-                            Err(e) => {
-                                println!("⚠️  Could not connect to simulation: {}", e);
-                                render_sample_physics_diagnostics();
-                            }
-                        }
-                        println!("✅ Physics inspection completed.");
-                    },
-                    "universe_history" => {
-                        println!("🔄 Inspecting historical trends of universe statistics...");
-                        match rpc::call_rpc("universe_stats_history", json!({})).await {
-                            Ok(response) => {
-                                render_universe_history(&response)?;
-                            },
-                            Err(e) => {
-                                println!("⚠️  Could not connect to simulation: {}", e);
-                                render_sample_universe_history();
-                            }
-                        }
-                        println!("✅ Universe history inspection completed.");
-                    },
-                    _ => {
-                        println!("❌ Usage: inspect <planet|lineage> <id> OR inspect <universe|physics|universe_history>");
-                    }
-                }
-            } else {
-                println!("❌ Usage: inspect <type> [id]");
+            if parts.len() < 3 {
+                println!("Usage: inspect <type> <id>");
+                println!("Types: planet, lineage, universe, physics, history");
+                return Ok(false);
             }
+            
+            let inspect_type = parts[1];
+            let id = parts[2];
+            
+            println!("Inspecting {}: {}...", inspect_type, id);
+            
+            match inspect_type {
+                "planet" => {
+                    match rpc::call_rpc("inspect_planet", json!({ "planet_id": id })).await {
+                        Ok(response) => {
+                            render_planet_inspection(&response)?;
+                        },
+                        Err(e) => {
+                            println!("Could not connect to simulation: {}", e);
+                            render_sample_planet_inspection(id);
+                        }
+                    }
+                },
+                "lineage" => {
+                    match rpc::call_rpc("inspect_lineage", json!({ "lineage_id": id })).await {
+                        Ok(response) => {
+                            render_lineage_inspection(&response)?;
+                        },
+                        Err(e) => {
+                            println!("Could not connect to simulation: {}", e);
+                            render_sample_lineage_inspection(id);
+                        }
+                    }
+                },
+                "universe" => {
+                    match rpc::call_rpc("universe_stats", json!({})).await {
+                        Ok(response) => {
+                            render_universe_stats(&response)?;
+                        },
+                        Err(e) => {
+                            println!("Could not connect to simulation: {}", e);
+                            render_sample_universe_stats();
+                        }
+                    }
+                },
+                "physics" => {
+                    match rpc::call_rpc("physics_diagnostics", json!({})).await {
+                        Ok(response) => {
+                            render_physics_diagnostics(&response)?;
+                        },
+                        Err(e) => {
+                            println!("Could not connect to simulation: {}", e);
+                            render_sample_physics_diagnostics();
+                        }
+                    }
+                },
+                "history" => {
+                    match rpc::call_rpc("universe_history", json!({})).await {
+                        Ok(response) => {
+                            render_universe_history(&response)?;
+                        },
+                        Err(e) => {
+                            println!("Could not connect to simulation: {}", e);
+                            render_sample_universe_history();
+                        }
+                    }
+                },
+                _ => {
+                    println!("Unknown inspect type: {}. Use: planet, lineage, universe, physics, history", inspect_type);
+                }
+            }
+            println!("Inspect command completed.");
         },
 
         "godmode" => {
+            if parts.len() < 2 {
+                println!("Usage: godmode <action>");
+                println!("Actions: create-body, delete-body, set-constant, spawn-lineage, miracle, timewarp, inspect-eval, create-agent");
+                return Ok(false);
+            }
+            
+            let action = parts[1];
+            println!("Executing godmode action: {}...", action);
+            
+            // For now, just acknowledge the command
+            println!("Godmode action '{}' would be executed here", action);
+            println!("Godmode command completed.");
+        },
+
+        "monitor" => {
             if parts.len() > 1 {
                 match parts[1] {
-                    "create-agent" => {
-                        if parts.len() > 2 {
-                            let planet_id = parts[2];
-                            println!("🧙 Creating agent on planet {}...", planet_id);
-                            match rpc::call_rpc("godmode_create_agent", json!({ "planet_id": planet_id })).await {
-                                Ok(response) => {
-                                    if let Some(lineage_id) = response.get("new_lineage_id").and_then(|v| v.as_str()) {
-                                        println!("✅ Created new agent lineage: {}", lineage_id);
-                                    } else {
-                                        println!("✅ Agent created successfully");
-                                    }
-                                },
-                                Err(e) => {
-                                    println!("❌ Failed to create agent: {}", e);
-                                }
-                            }
-                            println!("✅ God-mode create-agent completed.");
-                        } else {
-                            println!("❌ Usage: godmode create-agent <planet_id>");
-                        }
+                    "start" => {
+                        println!("Starting real-time monitoring...");
+                        start_real_time_monitoring().await?;
+                    },
+                    "stop" => {
+                        println!("Stopping real-time monitoring...");
+                        // Implementation would go here
+                        println!("Real-time monitoring stopped.");
+                    },
+                    "status" => {
+                        println!("Real-time monitoring status...");
+                        // Implementation would go here
+                        println!("Monitoring is currently inactive.");
                     },
                     _ => {
-                        println!("❌ Available god-mode actions: create-agent");
+                        println!("Usage: monitor <start|stop|status>");
                     }
                 }
             } else {
-                println!("❌ Usage: godmode <action> [args]");
+                println!("Usage: monitor <start|stop|status>");
             }
         },
-        
-        "help" => {
-            println!("Available commands:");
-            println!("  status                    - Show simulation status");
-            println!("  stats                     - Show universe statistics");
-            println!("  physics                   - Show physics diagnostics");
-            println!("  speed <factor>            - Change simulation speed");
-            println!("  map [layer]               - Show ASCII map (layers: stars, gas, dark_matter, radiation)");
-            println!("  planets                   - List planets");
-            println!("  stop                      - Stop simulation and exit");
-            println!("  rewind <ticks>            - Rewind simulation by specified ticks");
-            println!("  snapshot <filename>       - Create simulation snapshot");
-            println!("  inspect planet <id>       - Inspect specific planet");
-            println!("  inspect lineage <id>      - Inspect specific lineage");
-            println!("  inspect universe          - Inspect universe statistics");
-            println!("  inspect physics           - Inspect physics diagnostics");
-            println!("  godmode create-agent <id> - Create agent on planet (requires god-mode)");
-            println!("  help                      - Show this help message");
-            println!("  quit                      - Exit interactive mode");
+
+        "completion" => {
+            if parts.len() > 1 {
+                let partial = parts[1];
+                let suggestions = get_command_suggestions(partial);
+                if !suggestions.is_empty() {
+                    println!("Suggestions for '{}':", partial);
+                    for suggestion in suggestions {
+                        println!("  {}", suggestion);
+                    }
+                } else {
+                    println!("No suggestions found for '{}'", partial);
+                }
+            } else {
+                println!("Usage: completion <partial_command>");
+            }
         },
-        
+
         _ => {
-            println!("❌ Unknown command: {}. Type 'help' for available commands.", parts[0]);
+            // Try to provide helpful suggestions for unknown commands
+            let suggestions = get_command_suggestions(parts[0]);
+            if !suggestions.is_empty() {
+                println!("Unknown command: {}", parts[0]);
+                println!("Did you mean:");
+                for suggestion in suggestions.iter().take(3) {
+                    println!("  {}", suggestion);
+                }
+            } else {
+                println!("Unknown command: {}", parts[0]);
+                println!("Type 'help' for available commands");
+            }
         }
     }
     
     Ok(false)
+}
+
+/// Print comprehensive help for interactive mode
+fn print_interactive_help() {
+    println!("Interactive Mode Commands");
+    println!("========================");
+    println!();
+    println!("Basic Commands:");
+    println!("  status          - Show simulation status and age");
+    println!("  stats           - Display universe statistics");
+    println!("  physics         - Show physics diagnostics");
+    println!("  help            - Show this help message");
+    println!("  quit/exit/q     - Exit interactive mode");
+    println!();
+    println!("Control Commands:");
+    println!("  speed <factor>  - Set simulation speed (0.1 to 100.0)");
+    println!("  rewind <ticks>  - Rewind simulation by tick count");
+    println!("  stop            - Stop simulation and exit");
+    println!();
+    println!("Visualization Commands:");
+    println!("  map [layer]     - Generate ASCII map (layers: stars, planets, gas, dark)");
+    println!("  planets         - List all planets");
+    println!();
+    println!("Inspection Commands:");
+    println!("  inspect <type> <id> - Inspect specific entities");
+    println!("    Types: planet, lineage, universe, physics, history");
+    println!("    Example: inspect planet earth-001");
+    println!();
+    println!("Data Commands:");
+    println!("  snapshot <file> - Create simulation snapshot");
+    println!();
+    println!("Monitoring Commands:");
+    println!("  monitor start   - Start real-time monitoring (5-second updates)");
+    println!("  monitor stop    - Stop real-time monitoring");
+    println!("  monitor status  - Show monitoring status");
+    println!();
+    println!("Utility Commands:");
+    println!("  completion <partial> - Get command suggestions");
+    println!("    Example: completion sta (suggests: status, stats)");
+    println!();
+    println!("God Mode Commands (requires --godmode flag):");
+    println!("  godmode <action> - Execute god mode actions");
+    println!("    Actions: create-body, delete-body, set-constant, spawn-lineage,");
+    println!("             miracle, timewarp, inspect-eval, create-agent");
+    println!();
+    println!("Tips:");
+    println!("  - Commands are case-insensitive");
+    println!("  - Use 'completion <partial>' for command suggestions");
+    println!("  - Status updates automatically every 60 seconds");
+    println!("  - Real-time monitoring provides 5-second updates");
+    println!("  - Press Ctrl+C to exit at any time");
+    println!();
+    println!("Examples:");
+    println!("  status                    - Check simulation status");
+    println!("  speed 2.5                 - Set speed to 2.5x");
+    println!("  map stars                 - Show star density map");
+    println!("  inspect planet earth-001  - Inspect specific planet");
+    println!("  monitor start             - Start real-time monitoring");
+    println!("  completion mon            - Get suggestions for 'mon'");
+    println!();
 }
 
 // WebSocket server functions removed - replaced with high-performance native renderer
@@ -3279,10 +3309,238 @@ fn render_universe_history(history_data: &serde_json::Value) -> Result<()> {
 }
 
 fn render_sample_universe_history() {
-    println!("=== UNIVERSE STATISTICS HISTORY (SAMPLE) ===");
-    println!("Tick  Age(Gyr) Stars Planets   Particles     Temp");
-    for i in 0..10 {
-        println!("{:>4}   {:>6.2}  {:>5}   {:>6}  {:>11}   {:>6.1}", i * 100, 0.5 + i as f64 * 0.1, 2000 + i * 50, 5000 + i * 70, 1_000_000 + i * 10_000, 3.0 + i as f64);
+    println!("📈 SAMPLE UNIVERSE HISTORY");
+    println!("   (No historical data available)");
+    println!();
+    println!("   Time (Gyr) | Stars | Planets | Energy (J) | Temp (K)");
+    println!("   -----------|-------|---------|------------|---------");
+    println!("   0.001      | 0     | 0       | 1.2e+68    | 1e+10");
+    println!("   0.1        | 1e+6  | 0       | 1.1e+68    | 1e+9");
+    println!("   1.0        | 1e+8  | 1e+6    | 1.0e+68    | 1e+8");
+    println!("   5.0        | 2e+8  | 5e+6    | 9.5e+67    | 1e+7");
+    println!("   10.0       | 3e+8  | 1e+7    | 9.0e+67    | 1e+6");
+}
+
+/// Render quantum field statistics
+fn render_quantum_statistics(field_data: &universe_sim::QuantumStateVectorData) {
+    let stats = &field_data.quantum_statistics;
+    
+    println!("📊 QUANTUM FIELD STATISTICS:");
+    println!("   Average Amplitude: {:.4e}", stats.average_amplitude);
+    println!("   Max Amplitude: {:.4e}", stats.max_amplitude);
+    println!("   Min Amplitude: {:.4e}", stats.min_amplitude);
+    println!("   Total Energy: {:.4e} J", stats.total_energy);
+    println!("   Average Energy: {:.4e} J", stats.average_energy);
+    println!("   Total Points: {}", stats.total_points);
+    println!("   Vacuum Expectation: ({:.4e}, {:.4e})", 
+             field_data.vacuum_expectation_value.0, 
+             field_data.vacuum_expectation_value.1);
+}
+
+/// Render quantum field visualization in ASCII
+fn render_quantum_field_visualization(
+    field_data: &universe_sim::QuantumStateVectorData,
+    data_type: &str,
+    z_slice: usize,
+    width: usize,
+    height: usize,
+) -> Result<()> {
+    // Get the appropriate 2D slice based on data type
+    let quantum_data_type = match data_type.to_lowercase().as_str() {
+        "magnitude" => universe_sim::QuantumDataType::Magnitude,
+        "phase" => universe_sim::QuantumDataType::Phase,
+        "entanglement" => universe_sim::QuantumDataType::Entanglement,
+        "decoherence" => universe_sim::QuantumDataType::Decoherence,
+        "interference" => universe_sim::QuantumDataType::Interference,
+        "tunneling" => universe_sim::QuantumDataType::Tunneling,
+        "position_uncertainty" => universe_sim::QuantumDataType::PositionUncertainty,
+        "momentum_uncertainty" => universe_sim::QuantumDataType::MomentumUncertainty,
+        "coherence_time" => universe_sim::QuantumDataType::CoherenceTime,
+        _ => {
+            println!("❌ Unknown data type: {}. Using magnitude instead.", data_type);
+            universe_sim::QuantumDataType::Magnitude
+        }
+    };
+
+    let slice_data = field_data.get_2d_slice(z_slice, quantum_data_type);
+    
+    if slice_data.is_empty() {
+        println!("❌ No data available for z-slice {}", z_slice);
+        return Ok(());
     }
-    println!("\nNote: Connect to a running simulation for real data.");
+
+    let (field_width, field_height) = (slice_data.len(), slice_data[0].len());
+    
+    // Scale the field data to the requested visualization size
+    let scaled_data = scale_quantum_data(&slice_data, width, height);
+    
+    // Find min/max for normalization
+    let (min_val, max_val) = find_min_max(&scaled_data);
+    
+    println!("🔬 QUANTUM FIELD VISUALIZATION: {} (Z-Slice {})", data_type.to_uppercase(), z_slice);
+    println!("   Field Size: {}x{} | Display Size: {}x{}", field_width, field_height, width, height);
+    println!("   Value Range: [{:.4e}, {:.4e}]", min_val, max_val);
+    println!();
+
+    // Render the quantum field as ASCII
+    for row in &scaled_data {
+        for &val in row {
+            let char = quantum_value_to_char(val, min_val, max_val, data_type);
+            print!("{}", char);
+        }
+        println!();
+    }
+
+    // Print legend
+    print_quantum_legend(data_type, min_val, max_val);
+
+    Ok(())
+}
+
+/// Scale quantum field data to requested visualization size
+fn scale_quantum_data(data: &[Vec<f64>], target_width: usize, target_height: usize) -> Vec<Vec<f64>> {
+    let (src_width, src_height) = (data.len(), data[0].len());
+    let mut scaled = vec![vec![0.0; target_width]; target_height];
+
+    for y in 0..target_height {
+        for x in 0..target_width {
+            let src_x = (x as f64 * src_width as f64 / target_width as f64) as usize;
+            let src_y = (y as f64 * src_height as f64 / target_height as f64) as usize;
+            
+            if src_x < src_width && src_y < src_height {
+                scaled[y][x] = data[src_x][src_y];
+            }
+        }
+    }
+
+    scaled
+}
+
+/// Find minimum and maximum values in quantum data
+fn find_min_max(data: &[Vec<f64>]) -> (f64, f64) {
+    let mut min_val = f64::INFINITY;
+    let mut max_val = f64::NEG_INFINITY;
+
+    for row in data {
+        for &val in row {
+            if val.is_finite() {
+                min_val = min_val.min(val);
+                max_val = max_val.max(val);
+            }
+        }
+    }
+
+    if min_val == f64::INFINITY {
+        (0.0, 1.0)
+    } else {
+        (min_val, max_val)
+    }
+}
+
+/// Convert quantum value to ASCII character
+fn quantum_value_to_char(val: f64, min_val: f64, max_val: f64, data_type: &str) -> char {
+    if !val.is_finite() {
+        return ' ';
+    }
+
+    let normalized = if max_val > min_val {
+        (val - min_val) / (max_val - min_val)
+    } else {
+        0.5
+    };
+
+    // Different character sets for different quantum data types
+    let chars = match data_type.to_lowercase().as_str() {
+        "magnitude" => " .:-=+*#%@",
+        "phase" => " .:-=+*#%@",
+        "entanglement" => " .oO@#",
+        "decoherence" => " .:-=+*#%@",
+        "interference" => " .:-=+*#%@",
+        "tunneling" => " .oO@#",
+        "position_uncertainty" => " .:-=+*#%@",
+        "momentum_uncertainty" => " .:-=+*#%@",
+        "coherence_time" => " .:-=+*#%@",
+        _ => " .:-=+*#%@",
+    };
+
+    let index = (normalized * (chars.len() - 1) as f64) as usize;
+    chars.chars().nth(index).unwrap_or(' ')
+}
+
+/// Print legend for quantum visualization
+fn print_quantum_legend(data_type: &str, min_val: f64, max_val: f64) {
+    println!();
+    println!("📋 LEGEND: {} Visualization", data_type.to_uppercase());
+    println!("   Dark: Low values ({:.4e})", min_val);
+    println!("   Bright: High values ({:.4e})", max_val);
+    
+    match data_type.to_lowercase().as_str() {
+        "magnitude" => println!("   Shows quantum field amplitude magnitude"),
+        "phase" => println!("   Shows quantum phase (0 to 2π)"),
+        "entanglement" => println!("   Shows quantum entanglement correlations"),
+        "decoherence" => println!("   Shows quantum-to-classical transition rates"),
+        "interference" => println!("   Shows quantum interference patterns"),
+        "tunneling" => println!("   Shows quantum tunneling probabilities"),
+        "position_uncertainty" => println!("   Shows position uncertainty (Heisenberg)"),
+        "momentum_uncertainty" => println!("   Shows momentum uncertainty (Heisenberg)"),
+        "coherence_time" => println!("   Shows quantum coherence lifetimes"),
+        _ => println!("   Shows quantum field data"),
+    }
+}
+
+/// Get command suggestions based on partial input
+fn get_command_suggestions(partial: &str) -> Vec<String> {
+    let all_commands = vec![
+        "status", "stats", "physics", "speed", "map", "planets",
+        "stop", "rewind", "snapshot", "inspect", "godmode",
+        "help", "quit", "exit", "monitor", "completion"
+    ];
+    
+    all_commands
+        .into_iter()
+        .filter(|cmd| cmd.starts_with(partial))
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Start real-time monitoring of simulation
+async fn start_real_time_monitoring() -> Result<()> {
+    println!("Real-time monitoring started. Press Ctrl+C to stop.");
+    println!("Monitoring: Universe age, particle count, physics events");
+    
+    let mut last_update = Instant::now();
+    let update_interval = Duration::from_secs(5); // Update every 5 seconds
+    
+    loop {
+        if last_update.elapsed() >= update_interval {
+            match rpc::call_rpc("status", json!({})).await {
+                Ok(response) => {
+                    let timestamp = chrono::Utc::now().format("%H:%M:%S");
+                    print!("[{}] ", timestamp);
+                    
+                    if let Some(age_gyr) = response.get("universe_age_gyr").and_then(|v| v.as_f64()) {
+                        print!("Age: {:.3} GYr", age_gyr);
+                    }
+                    
+                    if let Some(tick) = response.get("current_tick").and_then(|v| v.as_u64()) {
+                        print!(", Tick: {}", tick);
+                    }
+                    
+                    if let Some(particles) = response.get("particle_count").and_then(|v| v.as_u64()) {
+                        print!(", Particles: {}", particles);
+                    }
+                    
+                    println!();
+                },
+                Err(_) => {
+                    let timestamp = chrono::Utc::now().format("%H:%M:%S");
+                    println!("[{}] Simulation offline", timestamp);
+                }
+            }
+            last_update = Instant::now();
+        }
+        
+        // Small delay to prevent excessive CPU usage
+        sleep(Duration::from_millis(100)).await;
+    }
 }

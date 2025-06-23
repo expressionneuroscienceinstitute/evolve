@@ -5,6 +5,9 @@ use anyhow::Result;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::timeout;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
@@ -94,18 +97,30 @@ pub struct PlanetListResponse {
     pub planets: Vec<serde_json::Value>,
 }
 
+/// Enhanced RPC client with connection pooling and retry logic
+#[derive(Clone)]
 pub struct RpcClient {
     client: reqwest::Client,
     url: String,
     timeout: Duration,
+    max_retries: u32,
+    retry_delay: Duration,
+    connection_pool: Arc<Mutex<HashMap<String, reqwest::Client>>>,
 }
 
 impl RpcClient {
     pub fn new(rpc_port: u16) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .pool_max_idle_per_host(10)
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             url: format!("http://127.0.0.1:{}/rpc", rpc_port),
             timeout: Duration::from_secs(5), // Default 5 second timeout
+            max_retries: 3,
+            retry_delay: Duration::from_millis(100),
+            connection_pool: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -114,7 +129,31 @@ impl RpcClient {
         self
     }
 
+    pub fn with_retries(mut self, max_retries: u32, retry_delay: Duration) -> Self {
+        self.max_retries = max_retries;
+        self.retry_delay = retry_delay;
+        self
+    }
+
     pub async fn send_request(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+        let mut last_error = None;
+        
+        for attempt in 0..=self.max_retries {
+            match self.try_send_request(method, params.clone()).await {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < self.max_retries {
+                        tokio::time::sleep(self.retry_delay).await;
+                    }
+                }
+            }
+        }
+        
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("RPC request failed after {} attempts", self.max_retries + 1)))
+    }
+
+    async fn try_send_request(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
         let req_body = json!({
             "jsonrpc": "2.0",
             "method": method,
@@ -141,6 +180,34 @@ impl RpcClient {
         }
 
         rpc_res.result.ok_or_else(|| anyhow::anyhow!("No result in RPC response"))
+    }
+
+    /// Check if the RPC server is available
+    pub async fn is_available(&self) -> bool {
+        match self.send_request("status", json!({})).await {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// Get connection statistics
+    pub async fn get_connection_stats(&self) -> Result<serde_json::Value> {
+        self.send_request("connection_stats", json!({})).await
+    }
+
+    /// Subscribe to real-time updates
+    pub async fn subscribe(&self, event_type: &str) -> Result<serde_json::Value> {
+        self.send_request("subscribe", json!({ "event_type": event_type })).await
+    }
+
+    /// Unsubscribe from real-time updates
+    pub async fn unsubscribe(&self, subscription_id: &str) -> Result<serde_json::Value> {
+        self.send_request("unsubscribe", json!({ "subscription_id": subscription_id })).await
+    }
+
+    /// Get performance metrics
+    pub async fn get_performance_metrics(&self) -> Result<serde_json::Value> {
+        self.send_request("performance_metrics", json!({})).await
     }
 
     #[allow(dead_code)]
@@ -213,15 +280,17 @@ impl RpcClient {
         self.send_request("godmode_create_body", json!({
             "mass": mass,
             "body_type": body_type,
-            "position": pos
+            "x": pos[0],
+            "y": pos[1],
+            "z": pos[2]
         })).await
     }
-    
+
     #[allow(dead_code)]
     pub async fn godmode_delete_body(&self, id: String) -> Result<serde_json::Value> {
         self.send_request("godmode_delete_body", json!({ "id": id })).await
     }
-    
+
     #[allow(dead_code)]
     pub async fn godmode_set_constant(&self, name: String, value: f64) -> Result<serde_json::Value> {
         self.send_request("godmode_set_constant", json!({ "name": name, "value": value })).await
@@ -236,10 +305,10 @@ impl RpcClient {
     pub async fn godmode_create_agent(&self, planet_id: String) -> Result<serde_json::Value> {
         self.send_request("godmode_create_agent", json!({ "planet_id": planet_id })).await
     }
-    
+
     #[allow(dead_code)]
     pub async fn godmode_miracle(&self, planet_id: String, miracle_type: String, duration: Option<u64>, intensity: Option<f64>) -> Result<serde_json::Value> {
-        self.send_request("godmode_miracle", json!({ 
+        self.send_request("godmode_miracle", json!({
             "planet_id": planet_id,
             "miracle_type": miracle_type,
             "duration": duration,
@@ -248,14 +317,54 @@ impl RpcClient {
     }
 }
 
-/// Make a generic RPC call to the server with timeout
-pub async fn call_rpc(method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
-    let client = RpcClient::new(9001).with_timeout(Duration::from_secs(3)); // 3 second timeout for CLI
-    client.send_request(method, params).await
+/// Global RPC client instance
+static mut RPC_CLIENT: Option<RpcClient> = None;
+
+/// Initialize the global RPC client
+pub fn init_rpc_client(rpc_port: u16) {
+    unsafe {
+        RPC_CLIENT = Some(RpcClient::new(rpc_port));
+    }
 }
 
-/// Make a generic RPC call to the server with custom timeout
+/// Get the global RPC client
+pub fn get_rpc_client() -> Option<&'static RpcClient> {
+    unsafe {
+        RPC_CLIENT.as_ref()
+    }
+}
+
+/// Call RPC with default client
+pub async fn call_rpc(method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
+    if let Some(client) = get_rpc_client() {
+        client.send_request(method, params).await
+    } else {
+        // Fallback to default client
+        let client = RpcClient::new(9001);
+        client.send_request(method, params).await
+    }
+}
+
+/// Call RPC with custom timeout
 pub async fn call_rpc_with_timeout(method: &str, params: serde_json::Value, timeout: Duration) -> Result<serde_json::Value> {
-    let client = RpcClient::new(9001).with_timeout(timeout);
-    client.send_request(method, params).await
+    if let Some(client) = get_rpc_client() {
+        let client_with_timeout = client.clone().with_timeout(timeout);
+        client_with_timeout.send_request(method, params).await
+    } else {
+        // Fallback to default client
+        let client = RpcClient::new(9001).with_timeout(timeout);
+        client.send_request(method, params).await
+    }
+}
+
+/// Call RPC with retry logic
+pub async fn call_rpc_with_retry(method: &str, params: serde_json::Value, max_retries: u32, retry_delay: Duration) -> Result<serde_json::Value> {
+    if let Some(client) = get_rpc_client() {
+        let client_with_retry = client.clone().with_retries(max_retries, retry_delay);
+        client_with_retry.send_request(method, params).await
+    } else {
+        // Fallback to default client
+        let client = RpcClient::new(9001).with_retries(max_retries, retry_delay);
+        client.send_request(method, params).await
+    }
 } 

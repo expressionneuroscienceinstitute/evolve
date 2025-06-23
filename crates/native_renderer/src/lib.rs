@@ -2558,6 +2558,213 @@ impl<'window> NativeRenderer<'window> {
         self.agent_timeline_data = data.timeline_events;
         self.interaction_heatmap = data.heatmap_data;
     }
+
+    /// Update quantum state vector data for advanced quantum visualization
+    /// This method processes comprehensive quantum field data from the universe simulation
+    /// and prepares it for GPU-accelerated quantum visualization
+    pub fn update_quantum_state_vectors(&mut self, quantum_data: &HashMap<String, universe_sim::QuantumStateVectorData>) -> Result<()> {
+        #[cfg(feature = "quantum-visualization")]
+        {
+            self.quantum_field_states.clear();
+            self.quantum_particles.clear();
+
+            for (field_name, field_data) in quantum_data {
+                // Process each quantum field
+                self.process_quantum_field_data(field_name, field_data)?;
+            }
+
+            // Update quantum vertex buffer if we have quantum particles
+            if !self.quantum_particles.is_empty() {
+                self.update_quantum_vertex_buffer()?;
+            }
+
+            info!("Updated quantum state vectors: {} fields, {} particles", 
+                  quantum_data.len(), self.quantum_particles.len());
+        }
+
+        #[cfg(not(feature = "quantum-visualization"))]
+        {
+            warn!("Quantum visualization feature not enabled, skipping quantum state vector update");
+        }
+
+        Ok(())
+    }
+
+    /// Process individual quantum field data and convert to GPU-compatible format
+    #[cfg(feature = "quantum-visualization")]
+    fn process_quantum_field_data(&mut self, field_name: &str, field_data: &universe_sim::QuantumStateVectorData) -> Result<()> {
+        let (x_dim, y_dim, z_dim) = field_data.field_dimensions;
+        
+        // Process each lattice point in the quantum field
+        for i in 0..x_dim {
+            for j in 0..y_dim {
+                for k in 0..z_dim {
+                    // Create quantum particle vertex from field data
+                    let quantum_vertex = self.create_quantum_particle_vertex(field_data, i, j, k)?;
+                    self.quantum_particles.push(quantum_vertex);
+
+                    // Create quantum field state vector for advanced visualization
+                    let quantum_state = self.create_quantum_field_state_vector(field_data, i, j, k)?;
+                    self.quantum_field_states.push(quantum_state);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create quantum particle vertex from field data at specific lattice point
+    #[cfg(feature = "quantum-visualization")]
+    fn create_quantum_particle_vertex(&self, field_data: &universe_sim::QuantumStateVectorData, i: usize, j: usize, k: usize) -> Result<QuantumParticleVertex> {
+        // Get quantum data at this lattice point
+        let complex_amp = field_data.complex_amplitudes[i][j][k];
+        let phase = field_data.phases[i][j][k];
+        let magnitude = field_data.magnitudes[i][j][k];
+        let entanglement = field_data.entanglement_correlations[i][j][k];
+        let decoherence = field_data.decoherence_rates[i][j][k];
+        let interference = field_data.interference_patterns[i][j][k];
+        let tunneling = field_data.tunneling_probabilities[i][j][k];
+        let pos_uncertainty = field_data.uncertainty_position[i][j][k];
+        let mom_uncertainty = field_data.uncertainty_momentum[i][j][k];
+        let coherence_time = field_data.coherence_times[i][j][k];
+
+        // Convert lattice coordinates to world coordinates
+        let world_pos = self.lattice_to_world_coordinates(i, j, k, field_data.lattice_spacing);
+
+        // Determine field type for visualization
+        let field_type = match field_data.field_type.as_str() {
+            "ElectronField" => 1.0, // Fermion
+            "PhotonField" => 2.0,   // Vector
+            "HiggsField" => 0.0,    // Scalar
+            _ => 0.0,               // Default to scalar
+        };
+
+        // Calculate scale factor based on quantum properties
+        let scale_factor = self.calculate_quantum_scale_factor(magnitude, entanglement, decoherence);
+
+        Ok(QuantumParticleVertex {
+            position: [world_pos.x, world_pos.y, world_pos.z],
+            velocity: [0.0, 0.0, 0.0], // Quantum fields don't have classical velocity
+            mass: field_data.field_mass as f32,
+            charge: 0.0, // Charge determined by field type
+            temperature: 0.0, // Temperature not applicable to quantum fields
+            particle_type: field_type,
+            interaction_count: entanglement as f32,
+            quantum_amplitude_real: complex_amp.0 as f32,
+            quantum_amplitude_imag: complex_amp.1 as f32,
+            quantum_phase: phase as f32,
+            decoherence_rate: decoherence as f32,
+            uncertainty_position: pos_uncertainty as f32,
+            uncertainty_momentum: mom_uncertainty as f32,
+            coherence_time: coherence_time as f32,
+            entanglement_strength: entanglement as f32,
+            field_type,
+            scale_factor: scale_factor as f32,
+            _padding: [0.0, 0.0],
+        })
+    }
+
+    /// Create quantum field state vector for advanced quantum visualization
+    #[cfg(feature = "quantum-visualization")]
+    fn create_quantum_field_state_vector(&self, field_data: &universe_sim::QuantumStateVectorData, i: usize, j: usize, k: usize) -> Result<QuantumFieldStateVector> {
+        let complex_amp = field_data.complex_amplitudes[i][j][k];
+        let phase = field_data.phases[i][j][k];
+        let entanglement = field_data.entanglement_correlations[i][j][k];
+        let decoherence = field_data.decoherence_rates[i][j][k];
+        let pos_uncertainty = field_data.uncertainty_position[i][j][k];
+        let mom_uncertainty = field_data.uncertainty_momentum[i][j][k];
+        let coherence_time = field_data.coherence_times[i][j][k];
+
+        // Create superposition states (simplified - in reality this would be more complex)
+        let superposition_states = vec![
+            Complex::new(complex_amp.0, complex_amp.1),
+            Complex::new(complex_amp.0 * 0.5, complex_amp.1 * 0.5), // Second state
+        ];
+
+        // Create entanglement map (simplified)
+        let mut entanglement_map = HashMap::new();
+        if entanglement > 0.1 {
+            // Add some entanglement correlations
+            entanglement_map.insert(i * 1000 + j * 100 + k, entanglement);
+        }
+
+        // Determine field type
+        let field_type = match field_data.field_type.as_str() {
+            "ElectronField" => QuantumFieldType::Fermion,
+            "PhotonField" => QuantumFieldType::Vector,
+            "HiggsField" => QuantumFieldType::Scalar,
+            _ => QuantumFieldType::Scalar,
+        };
+
+        Ok(QuantumFieldStateVector {
+            amplitude: Complex::new(complex_amp.0, complex_amp.1),
+            phase,
+            superposition_states,
+            entanglement_map,
+            decoherence_rate: decoherence,
+            scale_factor: field_data.lattice_spacing,
+            uncertainty_position: pos_uncertainty,
+            uncertainty_momentum: mom_uncertainty,
+            coherence_time,
+            field_type,
+        })
+    }
+
+    /// Convert lattice coordinates to world coordinates
+    #[cfg(feature = "quantum-visualization")]
+    fn lattice_to_world_coordinates(&self, i: usize, j: usize, k: usize, lattice_spacing: f64) -> Vector3<f32> {
+        let x = (i as f64 - 50.0) * lattice_spacing * 1e9; // Scale to nanometers for visibility
+        let y = (j as f64 - 50.0) * lattice_spacing * 1e9;
+        let z = (k as f64 - 50.0) * lattice_spacing * 1e9;
+        
+        Vector3::new(x as f32, y as f32, z as f32)
+    }
+
+    /// Calculate quantum scale factor for visualization
+    #[cfg(feature = "quantum-visualization")]
+    fn calculate_quantum_scale_factor(&self, magnitude: f64, entanglement: f64, decoherence: f64) -> f64 {
+        // Base scale from magnitude
+        let base_scale = magnitude.max(0.1);
+        
+        // Enhance scale for strong entanglement
+        let entanglement_scale = 1.0 + entanglement * 2.0;
+        
+        // Reduce scale for high decoherence (classical behavior)
+        let decoherence_scale = 1.0 - decoherence * 0.5;
+        
+        base_scale * entanglement_scale * decoherence_scale
+    }
+
+    /// Update quantum vertex buffer with new quantum particle data
+    #[cfg(feature = "quantum-visualization")]
+    fn update_quantum_vertex_buffer(&mut self) -> Result<()> {
+        if let Some(ref mut quantum_vertex_buffer) = self.quantum_vertex_buffer {
+            // Update the quantum vertex buffer with new data
+            self.queue.write_buffer(
+                quantum_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.quantum_particles),
+            );
+        }
+        Ok(())
+    }
+
+    /// Set quantum visualization parameters
+    pub fn set_quantum_visualization_params(&mut self, params: QuantumVisualizationParams) {
+        #[cfg(feature = "quantum-visualization")]
+        {
+            self.quantum_visualization_params = params;
+        }
+    }
+
+    /// Toggle quantum visualization mode
+    pub fn toggle_quantum_visualization(&mut self) {
+        #[cfg(feature = "quantum-visualization")]
+        {
+            self.quantum_mode_enabled = !self.quantum_mode_enabled;
+            info!("Quantum visualization mode: {}", if self.quantum_mode_enabled { "enabled" } else { "disabled" });
+        }
+    }
 }
 
 #[allow(dead_code)]

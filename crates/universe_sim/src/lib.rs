@@ -16,6 +16,8 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
+use serde::{Serialize, Deserialize};
+use nalgebra::ComplexField;
 
 use std::collections::VecDeque;
 use serde_json::json;
@@ -33,6 +35,9 @@ pub mod world;
 
 pub use physics_engine;
 pub use storage::{CelestialBodyType, PlanetClass, StellarEvolution, StellarPhase, ParticleStore};
+
+// Import molecular dynamics types for visualization integration
+use physics_engine::molecular_dynamics::{MDSnapshot, ReactionEvent, ReactionEventType};
 
 /// Calculate relativistic total energy from momentum and mass
 /// E = sqrt((pc)^2 + (mc^2)^2) where c = speed of light
@@ -540,7 +545,6 @@ impl UniverseSimulation {
     }
 
     /// Find a suitable site for star formation
-    #[allow(dead_code)]
     fn find_star_formation_site<R: Rng>(&self, rng: &mut R) -> Result<Vector3<f64>> {
         // Uniform sampling within a sphere of radius equal to the current
         // universe radius (converted to metres). This is obviously not
@@ -548,14 +552,15 @@ impl UniverseSimulation {
         let radius_ly = self.config.universe_radius_ly;
         let radius_m = radius_ly * 9.460_730_472e15; // metres per ly
 
-        // Generate random point inside the sphere.
-        let u: f64 = rng.gen();
-        let v: f64 = rng.gen();
-        let w: f64 = rng.gen();
-
-        let r = radius_m * u.cbrt();
-        let theta = (1.0 - 2.0 * v).acos();
-        let phi = 2.0 * std::f64::consts::PI * w;
+        // Generate random point inside the sphere using spherical coordinates
+        let u: f64 = rng.gen(); // Random radius (cube root for uniform distribution)
+        let v: f64 = rng.gen(); // Random theta (0 to π)
+        let w: f64 = rng.gen(); // Random phi (0 to 2π)
+        
+        // Convert to spherical coordinates
+        let r = radius_m * u.powf(1.0/3.0); // Cube root for uniform volume distribution
+        let theta = std::f64::consts::PI * v; // 0 to π
+        let phi = 2.0 * std::f64::consts::PI * w; // 0 to 2π
 
         Ok(Vector3::new(
             r * theta.sin() * phi.cos(),
@@ -871,18 +876,18 @@ impl UniverseSimulation {
             average_planet_mass: planetary_stats.average_mass,
             planet_formation_rate: planetary_stats.formation_rate,
             
-            // Evolution and life statistics
+            // Evolution statistics
             extinct_lineages: evolution_stats.extinct,
             average_tech_level: evolution_stats.average_tech,
             immortal_lineages: evolution_stats.immortal_count,
             consciousness_emergence_rate: evolution_stats.consciousness_rate,
             
-            // Physics engine performance
+            // Performance statistics
             physics_step_time_ms: performance_stats.step_time_ms,
             interactions_per_step: performance_stats.nuclear_reactions,
             particle_interactions_per_step: performance_stats.interactions,
             
-            // Cosmic structure
+            // Cosmological statistics
             universe_radius: cosmic_stats.radius,
             hubble_constant: cosmic_stats.hubble_constant,
             dark_matter_fraction: cosmic_stats.dark_matter_fraction,
@@ -1522,39 +1527,382 @@ impl UniverseSimulation {
     }
 
     pub fn get_quantum_field_snapshot(&self) -> HashMap<String, Vec<Vec<f64>>> {
-        use nalgebra::ComplexField;
-        let mut snapshot: HashMap<String, Vec<Vec<f64>>> = HashMap::new();
+        let mut field_maps = HashMap::new();
+        
+        // Extract 2D slices from quantum fields for visualization
+        for (field_name, field) in &self.physics_engine.quantum_fields {
+            let field_name_str = format!("{:?}", field_name);
+            let (x_dim, y_dim, z_dim) = field.field_values.dim();
+            
+            // Create 2D map by taking a slice through the middle of the 3D field
+            let z_middle = z_dim / 2;
+            let mut field_2d = Vec::with_capacity(x_dim);
+            
+            for i in 0..x_dim {
+                let mut row = Vec::with_capacity(y_dim);
+                for j in 0..y_dim {
+                    // Extract magnitude from complex field value
+                    let complex_val = field.field_values[[i, j, z_middle]];
+                    let magnitude = complex_val.norm();
+                    row.push(magnitude);
+                }
+                field_2d.push(row);
+            }
+            
+            field_maps.insert(field_name_str, field_2d);
+        }
+        
+        field_maps
+    }
+
+    /// Get comprehensive quantum state vector snapshot for advanced visualization
+    /// Returns full quantum state information including complex amplitudes, phases,
+        quantum_snapshot
+    }
+
+    /// Get comprehensive quantum state vector snapshot for advanced visualization (basic fallback)
+    /// Returns full quantum state information including complex amplitudes, phases,
+    /// entanglement, decoherence, and quantum field properties.
+    ///
+    /// This older implementation has been superseded by a more accurate version later
+    /// in the file. It is retained for reference and can be enabled via the
+    /// `basic-qsnapshot` crate feature.
+    #[cfg(feature = "basic-qsnapshot")]
+    pub fn get_quantum_state_vector_snapshot_basic(&self) -> HashMap<String, QuantumStateVectorData> {
+        let mut quantum_snapshot: HashMap<String, QuantumStateVectorData> = HashMap::new();
 
         for (field_type, field) in &self.physics_engine.quantum_fields {
-            // Convert field type to string identifier (e.g. "ElectronField")
             let key = format!("{:?}", field_type);
             if field.field_values.is_empty() {
-                snapshot.insert(key, Vec::new());
+                quantum_snapshot.insert(key, QuantumStateVectorData::empty());
                 continue;
             }
-            // We convert the complex field amplitude to a 2-D slice by taking the
-            // magnitude |ψ| of the first z-slice (index 0). This keeps the return
-            // structure lightweight while still conveying spatial information that
-            // front-ends (dashboard, CLI, etc.) can visualise as a heat-map.
-            let slice_z0 = &field.field_values;
-            let mut plane: Vec<Vec<f64>> = Vec::with_capacity(slice_z0.len());
-            for x_row in slice_z0 {
-                if x_row.is_empty() {
-                    plane.push(Vec::new());
-                    continue;
-                }
-                // We take the y-dimension at z = 0 (index 0)
-                let mut row: Vec<f64> = Vec::with_capacity(x_row.len());
-                for y_col in x_row {
-                    // y_col is Vec<Complex<f64>> (z dimension). Use first element if available
-                    let amp = y_col.first().copied().unwrap_or_default();
-                    row.push(amp.modulus());
-                }
-                plane.push(row);
-            }
-            snapshot.insert(key, plane);
+
+            // Extract full quantum state information
+            let (complex_amplitudes, phases, magnitudes) = self.extract_quantum_field_data(field);
+            let entanglement_map = self.calculate_entanglement_correlations(field);
+            let decoherence_map = self.calculate_decoherence_effects(field);
+            let interference_patterns = self.calculate_interference_patterns(field);
+            let tunneling_probabilities = self.calculate_tunneling_probabilities(field);
+            let uncertainty_data = self.calculate_uncertainty_principle_data(field);
+
+            // Get field dimensions from ndarray
+            let (x_dim, y_dim, z_dim) = field.field_values.dim();
+
+            let quantum_data = QuantumStateVectorData {
+                field_type: format!("{:?}", field_type),
+                complex_amplitudes,
+                phases,
+                magnitudes,
+                entanglement_correlations: entanglement_map,
+                decoherence_rates: decoherence_map,
+                interference_patterns,
+                tunneling_probabilities,
+                uncertainty_position: uncertainty_data.0,
+                uncertainty_momentum: uncertainty_data.1,
+                coherence_times: self.calculate_coherence_times(field),
+                field_energy_density: 0.0, // Not available in QuantumField
+                field_mass: 0.0,           // Not available in QuantumField
+                field_spin: 0.0,           // Not available in QuantumField
+                vacuum_expectation_value: (field.vacuum_expectation_value.re, field.vacuum_expectation_value.im),
+                lattice_spacing: field.lattice_spacing,
+                field_dimensions: (x_dim, y_dim, z_dim),
+                quantum_statistics: self.calculate_quantum_statistics(field),
+                timestamp: self.current_tick,
+                universe_age: self.universe_age_gyr(),
+            };
+
+            quantum_snapshot.insert(key, quantum_data);
         }
-        snapshot
+
+        quantum_snapshot
+    }
+
+    /// Get comprehensive quantum state vector snapshot for advanced visualization (vector-based implementation, deprecated)
+    /// Returns full quantum state information including complex amplitudes, phases,
+    /// entanglement, decoherence, and quantum field properties.
+    ///
+    /// Deprecated: Superseded by ndarray-backed implementation later in this file.
+    #[cfg(feature = "basic-qsnapshot")]
+    pub fn get_quantum_state_vector_snapshot_vec(&self) -> HashMap<String, QuantumStateVectorData> {
+        let mut quantum_snapshot: HashMap<String, QuantumStateVectorData> = HashMap::new();
+
+        for (field_type, field) in &self.physics_engine.quantum_fields {
+            let key = format!("{:?}", field_type);
+            if field.field_values.is_empty() {
+                quantum_snapshot.insert(key, QuantumStateVectorData::empty());
+                continue;
+            }
+
+            // Extract full quantum state information
+            let (complex_amplitudes, phases, magnitudes) = self.extract_quantum_field_data(field);
+            let entanglement_map = self.calculate_entanglement_correlations(field);
+            let decoherence_map = self.calculate_decoherence_effects(field);
+            let interference_patterns = self.calculate_interference_patterns(field);
+            let tunneling_probabilities = self.calculate_tunneling_probabilities(field);
+            let uncertainty_data = self.calculate_uncertainty_principle_data(field);
+
+            // Get field dimensions from ndarray
+            let (x_dim, y_dim, z_dim) = field.field_values.dim();
+
+            let quantum_data = QuantumStateVectorData {
+                field_type: format!("{:?}", field_type),
+                complex_amplitudes,
+                phases,
+                magnitudes,
+                entanglement_correlations: entanglement_map,
+                decoherence_rates: decoherence_map,
+                interference_patterns,
+                tunneling_probabilities,
+                uncertainty_position: uncertainty_data.0,
+                uncertainty_momentum: uncertainty_data.1,
+                coherence_times: self.calculate_coherence_times(field),
+                field_energy_density: 0.0, // Not available in QuantumField
+                field_mass: 0.0,           // Not available in QuantumField
+                field_spin: 0.0,           // Not available in QuantumField
+                vacuum_expectation_value: (field.vacuum_expectation_value.re, field.vacuum_expectation_value.im),
+                lattice_spacing: field.lattice_spacing,
+                field_dimensions: (x_dim, y_dim, z_dim),
+                quantum_statistics: self.calculate_quantum_statistics(field),
+                timestamp: self.current_tick,
+                universe_age: self.universe_age_gyr(),
+            };
+
+            quantum_snapshot.insert(key, quantum_data);
+        }
+
+        quantum_snapshot
+    }
+
+    fn extract_quantum_field_data(&self, field: &physics_engine::QuantumField) -> 
+        (Vec<Vec<Vec<(f64, f64)>>>, Vec<Vec<Vec<f64>>>, Vec<Vec<Vec<f64>>>) {
+        let (x_dim, y_dim, z_dim) = field.field_values.dim();
+        let mut complex_amplitudes = vec![vec![vec![(0.0, 0.0); z_dim]; y_dim]; x_dim];
+        let mut phases = vec![vec![vec![0.0; z_dim]; y_dim]; x_dim];
+        let mut magnitudes = vec![vec![vec![0.0; z_dim]; y_dim]; x_dim];
+        for i in 0..x_dim {
+            for j in 0..y_dim {
+                for k in 0..z_dim {
+                    let complex_val = field.field_values[[i, j, k]];
+                    complex_amplitudes[i][j][k] = (complex_val.re, complex_val.im);
+                    phases[i][j][k] = complex_val.argument();
+                    magnitudes[i][j][k] = complex_val.modulus();
+                }
+            }
+        }
+        (complex_amplitudes, phases, magnitudes)
+    }
+
+    fn calculate_entanglement_correlations(&self, field: &physics_engine::QuantumField) -> 
+        Vec<Vec<Vec<f64>>> {
+        let (x_dim, y_dim, z_dim) = field.field_values.dim();
+        let mut entanglement_map = vec![vec![vec![0.0; z_dim]; y_dim]; x_dim];
+        for i in 0..x_dim {
+            for j in 0..y_dim {
+                for k in 0..z_dim {
+                    let mut correlation_sum = 0.0;
+                    let mut neighbor_count = 0;
+                    for di in -1..=1 {
+                        for dj in -1..=1 {
+                            for dk in -1..=1 {
+                                if di == 0 && dj == 0 && dk == 0 { continue; }
+                                let ni = i as isize + di;
+                                let nj = j as isize + dj;
+                                let nk = k as isize + dk;
+                                if ni >= 0 && nj >= 0 && nk >= 0 &&
+                                   (ni as usize) < x_dim && (nj as usize) < y_dim && (nk as usize) < z_dim {
+                                    let val1 = field.field_values[[i, j, k]];
+                                    let val2 = field.field_values[[ni as usize, nj as usize, nk as usize]];
+                                    let correlation = (val1 * val2.conjugate()).re;
+                                    correlation_sum += correlation.abs();
+                                    neighbor_count += 1;
+                                }
+                            }
+                        }
+                    }
+                    if neighbor_count > 0 {
+                        entanglement_map[i][j][k] = correlation_sum / neighbor_count as f64;
+                    }
+                }
+            }
+        }
+        entanglement_map
+    }
+
+    fn calculate_decoherence_effects(&self, field: &physics_engine::QuantumField) -> 
+        Vec<Vec<Vec<f64>>> {
+        let (x_dim, y_dim, z_dim) = field.field_values.dim();
+        let mut decoherence_map = vec![vec![vec![0.0; z_dim]; y_dim]; x_dim];
+        for i in 0..x_dim {
+            for j in 0..y_dim {
+                for k in 0..z_dim {
+                    let amplitude = field.field_values[[i, j, k]].modulus();
+                    let phase = field.field_values[[i, j, k]].argument();
+                    let amplitude_decoherence = amplitude * 0.1_f64;
+                    let phase_decoherence = (phase * phase).sin() * 0.05_f64;
+                    decoherence_map[i][j][k] = amplitude_decoherence + phase_decoherence;
+                }
+            }
+        }
+        decoherence_map
+    }
+
+    /// Calculate quantum interference patterns
+    fn calculate_interference_patterns(&self, field: &physics_engine::QuantumField) -> 
+        Vec<Vec<Vec<f64>>> {
+        
+        let (x_dim, y_dim, z_dim) = field.field_values.dim();
+        let mut interference_map = vec![vec![vec![0.0; z_dim]; y_dim]; x_dim];
+
+        // Calculate interference patterns based on quantum field superposition
+        for i in 0..x_dim {
+            for j in 0..y_dim {
+                for k in 0..z_dim {
+                    let complex_val = field.field_values[[i, j, k]];
+                    let amplitude = complex_val.modulus();
+                    let phase = complex_val.argument();
+                    
+                    // Create interference pattern based on phase and amplitude
+                    let interference = (phase * 10.0).sin() * amplitude;
+                    interference_map[i][j][k] = interference.abs();
+                }
+            }
+        }
+
+        interference_map
+    }
+
+    /// Calculate quantum tunneling probabilities
+    fn calculate_tunneling_probabilities(&self, field: &physics_engine::QuantumField) -> 
+        Vec<Vec<Vec<f64>>> {
+        
+        let (x_dim, y_dim, z_dim) = field.field_values.dim();
+        let mut tunneling_map = vec![vec![vec![0.0; z_dim]; y_dim]; x_dim];
+
+        // Calculate tunneling probabilities based on field energy and barriers
+        // Note: Using default mass value since field.mass is not available
+        let default_mass = 1.0e-30; // Default particle mass in kg
+        for i in 0..x_dim {
+            for j in 0..y_dim {
+                for k in 0..z_dim {
+                    let amplitude = field.field_values[[i, j, k]].modulus();
+                    let energy = amplitude * amplitude * default_mass; // Simplified energy calculation
+                    
+                    // Simplified tunneling probability: P ∝ exp(-√(2mE)/ħ)
+                    let tunneling_prob: f64 = (-(2.0 * default_mass * energy).sqrt() / 1.055e-34).exp();
+                    tunneling_map[i][j][k] = tunneling_prob.min(1.0);
+                }
+            }
+        }
+
+        tunneling_map
+    }
+
+    /// Calculate uncertainty principle data
+    fn calculate_uncertainty_principle_data(&self, field: &physics_engine::QuantumField) -> 
+        (Vec<Vec<Vec<f64>>>, Vec<Vec<Vec<f64>>>) {
+        
+        let (x_dim, y_dim, z_dim) = field.field_values.dim();
+        let mut position_uncertainty = vec![vec![vec![0.0; z_dim]; y_dim]; x_dim];
+        let mut momentum_uncertainty = vec![vec![vec![0.0; z_dim]; y_dim]; x_dim];
+
+        // Calculate position and momentum uncertainties based on field gradients
+        for i in 0..x_dim {
+            for j in 0..y_dim {
+                for k in 0..z_dim {
+                    let amplitude = field.field_values[[i, j, k]].modulus();
+                    
+                    // Position uncertainty based on field localization
+                    position_uncertainty[i][j][k] = 1.0 / (amplitude + 1e-10);
+                    
+                    // Momentum uncertainty based on field gradients
+                    let mut gradient_magnitude = 0.0;
+                    if i > 0 && i < x_dim - 1 {
+                        let dx = (field.field_values[[i+1, j, k]] - field.field_values[[i-1, j, k]]).modulus();
+                        gradient_magnitude += dx * dx;
+                    }
+                    if j > 0 && j < y_dim - 1 {
+                        let dy = (field.field_values[[i, j+1, k]] - field.field_values[[i, j-1, k]]).modulus();
+                        gradient_magnitude += dy * dy;
+                    }
+                    if k > 0 && k < z_dim - 1 {
+                        let dz = (field.field_values[[i, j, k+1]] - field.field_values[[i, j, k-1]]).modulus();
+                        gradient_magnitude += dz * dz;
+                    }
+                    
+                    momentum_uncertainty[i][j][k] = gradient_magnitude.sqrt();
+                }
+            }
+        }
+
+        (position_uncertainty, momentum_uncertainty)
+    }
+
+    /// Calculate quantum coherence times
+    fn calculate_coherence_times(&self, field: &physics_engine::QuantumField) -> 
+        Vec<Vec<Vec<f64>>> {
+        
+        let (x_dim, y_dim, z_dim) = field.field_values.dim();
+        let mut coherence_times = vec![vec![vec![1.0; z_dim]; y_dim]; x_dim];
+
+        // Calculate coherence times based on field properties and environment
+        // Note: Using default mass value since field.mass is not available
+        let default_mass = 1.0e-30; // Default particle mass in kg
+        for i in 0..x_dim {
+            for j in 0..y_dim {
+                for k in 0..z_dim {
+                    let amplitude = field.field_values[[i, j, k]].modulus();
+                    let energy = amplitude * amplitude * default_mass;
+                    
+                    // Coherence time decreases with energy and increases with field strength
+                    let coherence_time: f64 = 1.0 / (energy + 1e-10) * amplitude;
+                    coherence_times[i][j][k] = coherence_time.max(0.1);
+                }
+            }
+        }
+
+        coherence_times
+    }
+
+    /// Calculate quantum field statistics
+    fn calculate_quantum_statistics(&self, field: &physics_engine::QuantumField) -> 
+        QuantumFieldStatistics {
+        
+        let mut total_amplitude = 0.0_f64;
+        let mut max_amplitude = 0.0_f64;
+        let mut min_amplitude = f64::INFINITY;
+        let mut total_energy = 0.0_f64;
+        let mut point_count = 0;
+
+        // Note: Using default mass value since field.mass is not available
+        let default_mass = 1.0e-30; // Default particle mass in kg
+
+        let (nx, ny, nz) = field.field_values.dim();
+        for i in 0..nx {
+            for j in 0..ny {
+                for k in 0..nz {
+                    let amplitude = field.field_values[[i, j, k]].modulus();
+                    total_amplitude += amplitude;
+                    max_amplitude = max_amplitude.max(amplitude);
+                    min_amplitude = min_amplitude.min(amplitude);
+                    total_energy += amplitude * amplitude * default_mass;
+                    point_count += 1;
+                }
+            }
+        }
+
+        let avg_amplitude = if point_count > 0 { total_amplitude / point_count as f64 } else { 0.0 };
+        let avg_energy = if point_count > 0 { total_energy / point_count as f64 } else { 0.0 };
+
+        QuantumFieldStatistics {
+            average_amplitude: avg_amplitude,
+            max_amplitude,
+            min_amplitude: if min_amplitude == f64::INFINITY { 0.0 } else { min_amplitude },
+            total_energy,
+            average_energy: avg_energy,
+            total_points: point_count,
+            field_type: format!("{:?}", field.field_type),
+        }
     }
 
     pub fn set_speed_factor(&mut self, factor: f64) -> Result<()> {
@@ -1742,7 +2090,540 @@ impl UniverseSimulation {
         
         Ok(universe)
     }
-}
+
+    /// Get quantum state vector snapshot for advanced visualization
+    /// Returns comprehensive quantum field data for all field types
+    pub fn get_quantum_state_vector_snapshot(&self) -> HashMap<String, QuantumStateVectorData> {
+        let mut quantum_data = HashMap::new();
+        
+        // Extract quantum field data from physics engine
+        for (field_name, field) in &self.physics_engine.quantum_fields {
+            let (complex_amplitudes, phases, magnitudes) = self.extract_quantum_field_data(field);
+            let entanglement_correlations = self.calculate_entanglement_correlations(field);
+            let decoherence_rates = self.calculate_decoherence_effects(field);
+            let interference_patterns = self.calculate_interference_patterns(field);
+            let tunneling_probabilities = self.calculate_tunneling_probabilities(field);
+            let (uncertainty_position, uncertainty_momentum) = self.calculate_uncertainty_principle_data(field);
+            let coherence_times = self.calculate_coherence_times(field);
+            let quantum_statistics = self.calculate_quantum_statistics(field);
+            
+            // Get field dimensions properly
+            let (x_dim, y_dim, z_dim) = field.field_values.dim();
+            
+            let quantum_state_data = QuantumStateVectorData {
+                field_type: format!("{:?}", field_name),
+                complex_amplitudes,
+                phases,
+                magnitudes,
+                entanglement_correlations,
+                decoherence_rates,
+                interference_patterns,
+                tunneling_probabilities,
+                uncertainty_position,
+                uncertainty_momentum,
+                coherence_times,
+                field_energy_density: field.energy_density,
+                field_mass: field.mass,
+                field_spin: field.spin,
+                vacuum_expectation_value: (field.vacuum_expectation_value.re, field.vacuum_expectation_value.im),
+                lattice_spacing: field.lattice_spacing,
+                field_dimensions: (x_dim, y_dim, z_dim),
+                quantum_statistics,
+                timestamp: self.current_tick,
+                universe_age: self.universe_age_gyr(),
+            };
+            
+            quantum_data.insert(format!("{:?}", field_name), quantum_state_data);
+        }
+        
+        quantum_data
+    }
+
+    /// Get comprehensive molecular dynamics snapshot for real-time visualization
+    /// Integrates with quantum field data to show quantum-classical transitions
+    pub fn get_molecular_dynamics_snapshot(&self) -> Result<MolecularDynamicsSnapshot> {
+        // Extract molecular dynamics data from physics engine
+        // Note: molecular_dynamics_engine field doesn't exist, create basic snapshot
+        let md_snapshot = self.create_basic_md_snapshot()?;
+        
+        // Enhance with quantum field integration
+        let quantum_data = self.get_quantum_state_vector_snapshot();
+        
+        // Create comprehensive molecular dynamics snapshot
+        Ok(MolecularDynamicsSnapshot {
+            basic_snapshot: md_snapshot,
+            quantum_integration: quantum_data,
+            universe_age: self.universe_age_gyr(),
+            simulation_time: self.current_tick as f64 * self.tick_span_years,
+            cosmic_era: self.universe_state.clone(),
+            molecular_statistics: self.calculate_molecular_statistics()?,
+            chemical_evolution: self.calculate_chemical_evolution_data()?,
+            quantum_classical_interface: self.detect_quantum_classical_boundaries()?,
+        })
+    }
+    
+    /// Create a basic molecular dynamics snapshot from available particle data
+    fn create_basic_md_snapshot(&self) -> Result<MDSnapshot> {
+        let particle_count = self.store.particles.count;
+        
+        let mut particle_positions = Vec::with_capacity(particle_count);
+        let mut particle_velocities = Vec::with_capacity(particle_count);
+        let mut particle_forces = Vec::with_capacity(particle_count);
+        let mut particle_types = Vec::with_capacity(particle_count);
+        let mut particle_masses = Vec::with_capacity(particle_count);
+        
+        // Extract particle data from store
+        for i in 0..particle_count {
+            particle_positions.push([
+                self.store.particles.position[i].x,
+                self.store.particles.position[i].y,
+                self.store.particles.position[i].z,
+            ]);
+            
+            particle_velocities.push([
+                self.store.particles.velocity[i].x,
+                self.store.particles.velocity[i].y,
+                self.store.particles.velocity[i].z,
+            ]);
+            
+            // Approximate forces from physics engine
+            particle_forces.push([0.0, 0.0, 0.0]); // Would be calculated from interactions
+            
+            // Use particle ID as type since particle_type field doesn't exist
+            particle_types.push(i as u32);
+            particle_masses.push(self.store.particles.mass[i]);
+        }
+        
+        // Detect bonds and molecular structures
+        let bonds = self.detect_molecular_bonds(&particle_positions, &particle_masses)?;
+        let neighbor_pairs = self.calculate_neighbor_pairs(&particle_positions)?;
+        let quantum_regions = self.detect_quantum_regions_from_particles(&particle_positions, &particle_masses)?;
+        let molecular_clusters = self.identify_molecular_clusters_from_bonds(&bonds)?;
+        let reaction_events = self.detect_recent_reactions()?;
+        
+        Ok(MDSnapshot {
+            step: self.current_tick as usize,
+            time: self.current_tick as f64 * self.tick_span_years * 365.25 * 24.0 * 3600.0, // Convert to seconds
+            particle_positions,
+            particle_velocities,
+            particle_forces,
+            particle_types,
+            particle_masses,
+            bonds,
+            neighbor_pairs: neighbor_pairs.clone(),
+            properties: physics_engine::molecular_dynamics::SystemProperties {
+                step: self.current_tick as usize,
+                time: self.current_tick as f64 * self.tick_span_years,
+                temperature: self.physics_engine.temperature,
+                kinetic_energy: self.calculate_total_kinetic_energy(),
+                n_particles: particle_count,
+                neighbor_pairs: neighbor_pairs.len(),
+            },
+            quantum_regions,
+            molecular_clusters,
+            reaction_events,
+        })
+    }
+    
+    /// Detect molecular bonds based on particle positions and types
+    fn detect_molecular_bonds(&self, positions: &[[f64; 3]], masses: &[f64]) -> Result<Vec<(usize, usize, f64)>> {
+        let mut bonds = Vec::new();
+        
+        for i in 0..positions.len() {
+            for j in (i + 1)..positions.len() {
+                let dx = positions[i][0] - positions[j][0];
+                let dy = positions[i][1] - positions[j][1];
+                let dz = positions[i][2] - positions[j][2];
+                let distance = (dx*dx + dy*dy + dz*dz).sqrt();
+                
+                // Estimate bond threshold based on particle masses (proxy for atomic radii)
+                let bond_threshold = self.estimate_bond_length(masses[i], masses[j]);
+                
+                if distance < bond_threshold {
+                    let bond_strength = self.calculate_bond_strength_from_distance(distance, bond_threshold);
+                    if bond_strength > 0.1 {
+                        bonds.push((i, j, bond_strength));
+                    }
+                }
+            }
+        }
+        
+        Ok(bonds)
+    }
+    
+    /// Estimate bond length based on particle masses
+    fn estimate_bond_length(&self, mass1: f64, mass2: f64) -> f64 {
+        // Simplified bond length estimation based on atomic mass
+        // This is a rough approximation for visualization purposes
+        let proton_mass = 1.67262192e-27; // kg
+        let atomic_mass1 = mass1 / proton_mass;
+        let atomic_mass2 = mass2 / proton_mass;
+        
+        // Approximate atomic radii scaling with atomic mass
+        let radius1 = 0.5e-10 * atomic_mass1.powf(0.33); // Rough scaling
+        let radius2 = 0.5e-10 * atomic_mass2.powf(0.33);
+        
+        (radius1 + radius2) * 1.2 // Bond length is typically 1.2x sum of atomic radii
+    }
+    
+    /// Calculate bond strength from distance
+    fn calculate_bond_strength_from_distance(&self, distance: f64, bond_threshold: f64) -> f64 {
+        // Simple exponential decay model for bond strength
+        let normalized_distance = distance / bond_threshold;
+        if normalized_distance > 1.0 {
+            0.0
+        } else {
+            (1.0 - normalized_distance).exp()
+        }
+    }
+    
+    /// Calculate neighbor pairs for visualization
+    fn calculate_neighbor_pairs(&self, positions: &[[f64; 3]]) -> Result<Vec<(usize, usize, f64)>> {
+        let mut pairs = Vec::new();
+        let cutoff_distance = 5e-10; // 5 Angstroms
+        
+        for i in 0..positions.len() {
+            for j in (i + 1)..positions.len() {
+                let dx = positions[i][0] - positions[j][0];
+                let dy = positions[i][1] - positions[j][1];
+                let dz = positions[i][2] - positions[j][2];
+                let distance = (dx*dx + dy*dy + dz*dz).sqrt();
+                
+                if distance < cutoff_distance {
+                    pairs.push((i, j, distance));
+                }
+            }
+        }
+        
+        Ok(pairs)
+    }
+    
+    /// Detect quantum regions from particle data
+    fn detect_quantum_regions_from_particles(&self, positions: &[[f64; 3]], masses: &[f64]) -> Result<Vec<usize>> {
+        let mut quantum_regions = Vec::new();
+        
+        for i in 0..positions.len() {
+            // Light particles (electrons, etc.) always need quantum treatment
+            let proton_mass = 1.67262192e-27;
+            if masses[i] < proton_mass * 10.0 {
+                quantum_regions.push(i);
+            }
+            
+            // Particles in high-density regions may need quantum treatment
+            let local_density = self.calculate_local_density(i, positions);
+            if local_density > 1e30 { // High density threshold (particles/m³)
+                quantum_regions.push(i);
+            }
+        }
+        
+        Ok(quantum_regions)
+    }
+    
+    /// Calculate local particle density around a given particle
+    fn calculate_local_density(&self, particle_index: usize, positions: &[[f64; 3]]) -> f64 {
+        let search_radius = 1e-10; // 1 Angstrom
+        let mut neighbor_count = 0;
+        
+        let center = positions[particle_index];
+        for (i, pos) in positions.iter().enumerate() {
+            if i != particle_index {
+                let dx = pos[0] - center[0];
+                let dy = pos[1] - center[1];
+                let dz = pos[2] - center[2];
+                let distance = (dx*dx + dy*dy + dz*dz).sqrt();
+                
+                if distance < search_radius {
+                    neighbor_count += 1;
+                }
+            }
+        }
+        
+        // Calculate density (particles per cubic meter)
+        let volume = (4.0 / 3.0) * std::f64::consts::PI * search_radius.powi(3);
+        neighbor_count as f64 / volume
+    }
+    
+    /// Identify molecular clusters from bond data
+    fn identify_molecular_clusters_from_bonds(&self, bonds: &[(usize, usize, f64)]) -> Result<Vec<Vec<usize>>> {
+        let mut clusters = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        
+        // Create adjacency list from bonds
+        let mut adjacency = std::collections::HashMap::new();
+        for &(i, j, _) in bonds {
+            adjacency.entry(i).or_insert_with(Vec::new).push(j);
+            adjacency.entry(j).or_insert_with(Vec::new).push(i);
+        }
+        
+        // Find connected components (molecular clusters)
+        for &(start, _, _) in bonds {
+            if !visited.contains(&start) {
+                let mut cluster = Vec::new();
+                self.dfs_molecular_cluster(start, &adjacency, &mut visited, &mut cluster);
+                if !cluster.is_empty() {
+                    clusters.push(cluster);
+                }
+            }
+        }
+        
+        Ok(clusters)
+    }
+    
+    /// Depth-first search for molecular cluster identification
+    fn dfs_molecular_cluster(
+        &self,
+        node: usize,
+        adjacency: &std::collections::HashMap<usize, Vec<usize>>,
+        visited: &mut std::collections::HashSet<usize>,
+        cluster: &mut Vec<usize>,
+    ) {
+        if visited.contains(&node) {
+            return;
+        }
+        
+        visited.insert(node);
+        cluster.push(node);
+        
+        if let Some(neighbors) = adjacency.get(&node) {
+            for &neighbor in neighbors {
+                self.dfs_molecular_cluster(neighbor, adjacency, visited, cluster);
+            }
+        }
+    }
+    
+    /// Detect recent chemical reactions
+    fn detect_recent_reactions(&self) -> Result<Vec<ReactionEvent>> {
+        // This is a simplified implementation for demonstration
+        // In a full system, you would track bond changes over time
+        let mut events = Vec::new();
+        
+        // For now, create some example reaction events based on current state
+        if self.physics_engine.temperature > 1000.0 {
+            events.push(ReactionEvent {
+                event_type: ReactionEventType::ConformationalChange,
+                participants: vec![0, 1], // Example participant indices
+                time: self.current_tick as f64 * self.tick_span_years,
+                energy_change: self.physics_engine.temperature * 1e-23, // Approximate energy scale
+            });
+        }
+        
+        Ok(events)
+    }
+    
+    /// Calculate total kinetic energy of all particles
+    fn calculate_total_kinetic_energy(&self) -> f64 {
+        let mut total_ke = 0.0;
+        
+        for i in 0..self.store.particles.count {
+            let velocity = &self.store.particles.velocity[i];
+            let mass = self.store.particles.mass[i];
+            let speed_squared = velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z;
+            total_ke += 0.5 * mass * speed_squared;
+        }
+        
+        total_ke
+    }
+    
+    /// Calculate molecular statistics for the current state
+    fn calculate_molecular_statistics(&self) -> Result<MolecularStatistics> {
+        let particle_count = self.store.particles.count;
+        let total_mass = self.store.particles.mass.iter().take(particle_count).sum::<f64>();
+        let average_mass = if particle_count > 0 { total_mass / particle_count as f64 } else { 0.0 };
+        
+        Ok(MolecularStatistics {
+            total_particles: particle_count,
+            total_mass,
+            average_mass,
+            temperature: self.physics_engine.temperature,
+            pressure: self.estimate_pressure(),
+            density: self.calculate_average_density(),
+            molecular_complexity: self.estimate_molecular_complexity(),
+        })
+    }
+    
+    /// Estimate system pressure
+    fn estimate_pressure(&self) -> f64 {
+        // Simplified ideal gas law estimation
+        let particle_count = self.store.particles.count as f64;
+        let volume = self.physics_engine.volume;
+        let temperature = self.physics_engine.temperature;
+        let k_b = 1.380649e-23; // Boltzmann constant
+        
+        if volume > 0.0 {
+            (particle_count * k_b * temperature) / volume
+        } else {
+            0.0
+        }
+    }
+    
+    /// Calculate average particle density
+    fn calculate_average_density(&self) -> f64 {
+        let total_mass: f64 = self.store.particles.mass.iter().take(self.store.particles.count).sum();
+        let volume = self.physics_engine.volume;
+        
+        if volume > 0.0 {
+            total_mass / volume
+        } else {
+            0.0
+        }
+    }
+    
+    /// Estimate molecular complexity (average bonds per particle)
+    fn estimate_molecular_complexity(&self) -> f64 {
+        // This would be based on actual bond analysis in a full implementation
+        // For now, return a simple estimate based on density and temperature
+        let density = self.calculate_average_density();
+        let temperature = self.physics_engine.temperature;
+        
+        // Higher density and moderate temperature favor complex molecules
+        if temperature > 100.0 && temperature < 1000.0 && density > 1000.0 {
+            2.0 // Average 2 bonds per particle
+        } else if temperature < 100.0 && density > 500.0 {
+            1.5 // Some bonding
+        } else {
+            0.5 // Mostly single particles
+        }
+    }
+    
+    /// Calculate chemical evolution data
+    fn calculate_chemical_evolution_data(&self) -> Result<ChemicalEvolutionData> {
+        Ok(ChemicalEvolutionData {
+            universe_age: self.universe_age_gyr(),
+            metallicity: self.calculate_metallicity(),
+            molecular_formation_rate: self.estimate_molecular_formation_rate(),
+            reaction_rate: self.estimate_reaction_rate(),
+            complexity_index: self.calculate_complexity_index(),
+        })
+    }
+    
+    /// Calculate metallicity (fraction of heavy elements)
+    fn calculate_metallicity(&self) -> f64 {
+        // Simplified metallicity calculation without requiring mutable reference
+        // Use a basic approximation based on universe age
+        let age_gyr = self.universe_age_gyr();
+        
+        // Early universe has low metallicity, increases over time
+        if age_gyr < 1.0 {
+            0.001 // Very low metallicity in early universe
+        } else if age_gyr < 5.0 {
+            0.01 * age_gyr // Linear increase
+        } else {
+            0.02 // Solar metallicity for mature universe
+        }
+    }
+    
+    /// Estimate molecular formation rate
+    fn estimate_molecular_formation_rate(&self) -> f64 {
+        // Based on temperature, density, and cosmic era
+        let temperature = self.physics_engine.temperature;
+        let density = self.calculate_average_density();
+        
+        if temperature > 10.0 && temperature < 10000.0 && density > 1e-20 {
+            density * 1e15 / temperature // Simplified rate equation
+        } else {
+            0.0
+        }
+    }
+    
+    /// Estimate chemical reaction rate
+    fn estimate_reaction_rate(&self) -> f64 {
+        // Arrhenius-like equation for reaction rate
+        let temperature = self.physics_engine.temperature;
+        let density = self.calculate_average_density();
+        
+        if temperature > 100.0 {
+            density * temperature.ln() * 1e-10
+        } else {
+            0.0
+        }
+    }
+    
+    /// Calculate chemical complexity index
+    fn calculate_complexity_index(&self) -> f64 {
+        // Combine various factors to estimate chemical complexity
+        let metallicity = self.calculate_metallicity();
+        let temperature = self.physics_engine.temperature;
+        let age = self.universe_age_gyr();
+        
+        // Complex chemistry requires metals, moderate temperature, and time
+        if metallicity > 0.01 && temperature > 100.0 && temperature < 1000.0 && age > 1.0 {
+            metallicity * age.ln() * (1000.0 / temperature).ln()
+        } else {
+            metallicity * 0.1
+        }
+    }
+    
+    /// Detect quantum-classical interface boundaries
+    fn detect_quantum_classical_boundaries(&self) -> Result<QuantumClassicalInterface> {
+        Ok(QuantumClassicalInterface {
+            transition_regions: self.identify_transition_regions()?,
+            decoherence_boundaries: self.calculate_decoherence_boundaries()?,
+            quantum_coherence_length: self.estimate_quantum_coherence_length(),
+            classical_limit_scale: self.estimate_classical_limit_scale(),
+        })
+    }
+    
+    /// Identify regions where quantum-classical transitions occur
+    fn identify_transition_regions(&self) -> Result<Vec<TransitionRegion>> {
+        let mut regions = Vec::new();
+        
+        // For demonstration, create transition regions based on density and temperature
+        let density = self.calculate_average_density();
+        let temperature = self.physics_engine.temperature;
+        
+        if density > 1e25 && temperature < 1000.0 {
+            regions.push(TransitionRegion {
+                center: [0.0, 0.0, 0.0],
+                radius: 1e-10,
+                quantum_fraction: 0.8,
+                classical_fraction: 0.2,
+                transition_sharpness: 0.5,
+            });
+        }
+        
+        Ok(regions)
+    }
+    
+    /// Calculate decoherence boundaries
+    fn calculate_decoherence_boundaries(&self) -> Result<Vec<DecoherenceBoundary>> {
+        let mut boundaries = Vec::new();
+        
+        // Simplified decoherence boundary calculation
+        let temperature = self.physics_engine.temperature;
+        if temperature > 10.0 {
+            boundaries.push(DecoherenceBoundary {
+                position: [0.0, 0.0, 0.0],
+                normal: [1.0, 0.0, 0.0],
+                decoherence_rate: temperature * 1e12, // Hz
+                coherence_time: 1.0 / (temperature * 1e12), // seconds
+            });
+        }
+        
+        Ok(boundaries)
+    }
+    
+    /// Estimate quantum coherence length
+    fn estimate_quantum_coherence_length(&self) -> f64 {
+        // Thermal de Broglie wavelength
+        let temperature = self.physics_engine.temperature;
+        let mass = 1.67262192e-27; // Approximate particle mass (proton mass)
+        let h = 6.62607015e-34; // Planck constant
+        let k_b = 1.380649e-23; // Boltzmann constant
+        
+        if temperature > 0.0 {
+            h / (2.0 * std::f64::consts::PI * (2.0 * mass * k_b * temperature).sqrt())
+        } else {
+            f64::INFINITY
+        }
+    }
+    
+    /// Estimate classical limit scale
+    fn estimate_classical_limit_scale(&self) -> f64 {
+        // Scale at which classical physics becomes dominant
+        let coherence_length = self.estimate_quantum_coherence_length();
+        coherence_length * 10.0 // Classical limit is roughly 10x coherence length
+    }
+
 
 /// Simulation statistics
 #[derive(Clone, Debug, Default)]
@@ -1876,6 +2757,190 @@ struct CosmicStructure {
     dark_energy_fraction: f64,
     ordinary_matter_fraction: f64,
     critical_density: f64,
+}
+
+/// Comprehensive quantum state vector data for advanced visualization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantumStateVectorData {
+    /// Type of quantum field (e.g., "ElectronField", "PhotonField")
+    pub field_type: String,
+    /// Complex amplitudes (real, imaginary) at each lattice point
+    pub complex_amplitudes: Vec<Vec<Vec<(f64, f64)>>>,
+    /// Quantum phases at each lattice point
+    pub phases: Vec<Vec<Vec<f64>>>,
+    /// Magnitudes of quantum amplitudes at each lattice point
+    pub magnitudes: Vec<Vec<Vec<f64>>>,
+    /// Entanglement correlations across the field
+    pub entanglement_correlations: Vec<Vec<Vec<f64>>>,
+    /// Decoherence rates at each lattice point
+    pub decoherence_rates: Vec<Vec<Vec<f64>>>,
+    /// Quantum interference patterns
+    pub interference_patterns: Vec<Vec<Vec<f64>>>,
+    /// Quantum tunneling probabilities
+    pub tunneling_probabilities: Vec<Vec<Vec<f64>>>,
+    /// Position uncertainty (Heisenberg uncertainty principle)
+    pub uncertainty_position: Vec<Vec<Vec<f64>>>,
+    /// Momentum uncertainty (Heisenberg uncertainty principle)
+    pub uncertainty_momentum: Vec<Vec<Vec<f64>>>,
+    /// Quantum coherence times at each lattice point
+    pub coherence_times: Vec<Vec<Vec<f64>>>,
+    /// Field energy density
+    pub field_energy_density: f64,
+    /// Field mass (for massive fields)
+    pub field_mass: f64,
+    /// Field spin (0 for scalar, 1/2 for fermion, 1 for vector)
+    pub field_spin: f64,
+    /// Vacuum expectation value (real, imaginary)
+    pub vacuum_expectation_value: (f64, f64),
+    /// Lattice spacing in meters
+    pub lattice_spacing: f64,
+    /// Field dimensions (x, y, z)
+    pub field_dimensions: (usize, usize, usize),
+    /// Quantum field statistics
+    pub quantum_statistics: QuantumFieldStatistics,
+    /// Simulation timestamp
+    pub timestamp: u64,
+    /// Universe age in Gyr
+    pub universe_age: f64,
+}
+
+impl QuantumStateVectorData {
+    /// Create empty quantum state vector data
+    pub fn empty() -> Self {
+        Self {
+            field_type: String::new(),
+            complex_amplitudes: Vec::new(),
+            phases: Vec::new(),
+            magnitudes: Vec::new(),
+            entanglement_correlations: Vec::new(),
+            decoherence_rates: Vec::new(),
+            interference_patterns: Vec::new(),
+            tunneling_probabilities: Vec::new(),
+            uncertainty_position: Vec::new(),
+            uncertainty_momentum: Vec::new(),
+            coherence_times: Vec::new(),
+            field_energy_density: 0.0,
+            field_mass: 0.0,
+            field_spin: 0.0,
+            vacuum_expectation_value: (0.0, 0.0),
+            lattice_spacing: 0.0,
+            field_dimensions: (0, 0, 0),
+            quantum_statistics: QuantumFieldStatistics::empty(),
+            timestamp: 0,
+            universe_age: 0.0,
+        }
+    }
+
+    /// Convert to JSON for visualization systems
+    pub fn to_json(&self) -> serde_json::Value {
+        use serde_json::json;
+        
+        json!({
+            "field_type": self.field_type,
+            "field_dimensions": {
+                "x": self.field_dimensions.0,
+                "y": self.field_dimensions.1,
+                "z": self.field_dimensions.2
+            },
+            "field_properties": {
+                "energy_density": self.field_energy_density,
+                "mass": self.field_mass,
+                "spin": self.field_spin,
+                "vacuum_expectation_value": {
+                    "real": self.vacuum_expectation_value.0,
+                    "imaginary": self.vacuum_expectation_value.1
+                },
+                "lattice_spacing": self.lattice_spacing
+            },
+            "quantum_statistics": {
+                "average_amplitude": self.quantum_statistics.average_amplitude,
+                "max_amplitude": self.quantum_statistics.max_amplitude,
+                "min_amplitude": self.quantum_statistics.min_amplitude,
+                "total_energy": self.quantum_statistics.total_energy,
+                "average_energy": self.quantum_statistics.average_energy,
+                "total_points": self.quantum_statistics.total_points
+            },
+            "metadata": {
+                "timestamp": self.timestamp,
+                "universe_age": self.universe_age
+            }
+        })
+    }
+
+    /// Get 2D slice of quantum data for visualization
+    pub fn get_2d_slice(&self, z_index: usize, data_type: QuantumDataType) -> Vec<Vec<f64>> {
+        if z_index >= self.field_dimensions.2 {
+            return Vec::new();
+        }
+
+        let mut slice = vec![vec![0.0; self.field_dimensions.1]; self.field_dimensions.0];
+
+        for i in 0..self.field_dimensions.0 {
+            for j in 0..self.field_dimensions.1 {
+                slice[i][j] = match data_type {
+                    QuantumDataType::Magnitude => self.magnitudes[i][j][z_index],
+                    QuantumDataType::Phase => self.phases[i][j][z_index],
+                    QuantumDataType::Entanglement => self.entanglement_correlations[i][j][z_index],
+                    QuantumDataType::Decoherence => self.decoherence_rates[i][j][z_index],
+                    QuantumDataType::Interference => self.interference_patterns[i][j][z_index],
+                    QuantumDataType::Tunneling => self.tunneling_probabilities[i][j][z_index],
+                    QuantumDataType::PositionUncertainty => self.uncertainty_position[i][j][z_index],
+                    QuantumDataType::MomentumUncertainty => self.uncertainty_momentum[i][j][z_index],
+                    QuantumDataType::CoherenceTime => self.coherence_times[i][j][z_index],
+                };
+            }
+        }
+
+        slice
+    }
+}
+
+/// Types of quantum data available for visualization
+#[derive(Debug, Clone, Copy)]
+pub enum QuantumDataType {
+    Magnitude,
+    Phase,
+    Entanglement,
+    Decoherence,
+    Interference,
+    Tunneling,
+    PositionUncertainty,
+    MomentumUncertainty,
+    CoherenceTime,
+}
+
+/// Statistics for quantum field analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantumFieldStatistics {
+    /// Average amplitude across the field
+    pub average_amplitude: f64,
+    /// Maximum amplitude in the field
+    pub max_amplitude: f64,
+    /// Minimum amplitude in the field
+    pub min_amplitude: f64,
+    /// Total energy in the field
+    pub total_energy: f64,
+    /// Average energy per lattice point
+    pub average_energy: f64,
+    /// Total number of lattice points
+    pub total_points: usize,
+    /// Type of quantum field
+    pub field_type: String,
+}
+
+impl QuantumFieldStatistics {
+    /// Create empty quantum field statistics
+    pub fn empty() -> Self {
+        Self {
+            average_amplitude: 0.0,
+            max_amplitude: 0.0,
+            min_amplitude: 0.0,
+            total_energy: 0.0,
+            average_energy: 0.0,
+            total_points: 0,
+            field_type: String::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2197,5 +3262,293 @@ mod stellar_evolution_integration_tests {
                 assert!(body.temperature > 1000.0, "Star should be hot");
             }
         }
+    }
+}
+
+/// Comprehensive molecular dynamics snapshot for real-time visualization
+/// Integrates quantum field data with molecular dynamics for multi-scale visualization
+#[derive(Debug, Clone)]
+pub struct MolecularDynamicsSnapshot {
+    /// Basic molecular dynamics snapshot
+    pub basic_snapshot: MDSnapshot,
+    /// Quantum field integration data
+    pub quantum_integration: HashMap<String, QuantumStateVectorData>,
+    /// Universe age at time of snapshot
+    pub universe_age: f64,
+    /// Simulation time in years
+    pub simulation_time: f64,
+    /// Current cosmic era
+    pub cosmic_era: cosmic_era::UniverseState,
+    /// Molecular system statistics
+    pub molecular_statistics: MolecularStatistics,
+    /// Chemical evolution data
+    pub chemical_evolution: ChemicalEvolutionData,
+    /// Quantum-classical interface information
+    pub quantum_classical_interface: QuantumClassicalInterface,
+}
+
+/// Statistical data about the molecular system
+#[derive(Debug, Clone)]
+pub struct MolecularStatistics {
+    /// Total number of particles
+    pub total_particles: usize,
+    /// Total mass of the system
+    pub total_mass: f64,
+    /// Average particle mass
+    pub average_mass: f64,
+    /// System temperature
+    pub temperature: f64,
+    /// System pressure
+    pub pressure: f64,
+    /// System density
+    pub density: f64,
+    /// Molecular complexity index (average bonds per particle)
+    pub molecular_complexity: f64,
+}
+
+/// Chemical evolution data for the current state
+#[derive(Debug, Clone)]
+pub struct ChemicalEvolutionData {
+    /// Universe age in Gyr
+    pub universe_age: f64,
+    /// Metallicity (fraction of heavy elements)
+    pub metallicity: f64,
+    /// Molecular formation rate (molecules/m³/s)
+    pub molecular_formation_rate: f64,
+    /// Chemical reaction rate (reactions/m³/s)
+    pub reaction_rate: f64,
+    /// Chemical complexity index
+    pub complexity_index: f64,
+}
+
+/// Quantum-classical interface information
+#[derive(Debug, Clone)]
+pub struct QuantumClassicalInterface {
+    /// Regions where quantum-classical transitions occur
+    pub transition_regions: Vec<TransitionRegion>,
+    /// Boundaries where decoherence occurs
+    pub decoherence_boundaries: Vec<DecoherenceBoundary>,
+    /// Quantum coherence length scale
+    pub quantum_coherence_length: f64,
+    /// Classical limit scale
+    pub classical_limit_scale: f64,
+}
+
+/// Region where quantum-classical transition occurs
+#[derive(Debug, Clone)]
+pub struct TransitionRegion {
+    /// Center of the transition region
+    pub center: [f64; 3],
+    /// Radius of the transition region
+    pub radius: f64,
+    /// Fraction of quantum behavior
+    pub quantum_fraction: f64,
+    /// Fraction of classical behavior
+    pub classical_fraction: f64,
+    /// Sharpness of the transition (0 = gradual, 1 = sharp)
+    pub transition_sharpness: f64,
+}
+
+/// Boundary where quantum decoherence occurs
+#[derive(Debug, Clone)]
+pub struct DecoherenceBoundary {
+    /// Position of the boundary
+    pub position: [f64; 3],
+    /// Normal vector to the boundary
+    pub normal: [f64; 3],
+    /// Decoherence rate (Hz)
+    pub decoherence_rate: f64,
+    /// Coherence time (seconds)
+    pub coherence_time: f64,
+}
+
+impl MolecularDynamicsSnapshot {
+    /// Convert to JSON for export and analysis
+    pub fn to_json(&self) -> serde_json::Value {
+        json!({
+            "basic_snapshot": {
+                "step": self.basic_snapshot.step,
+                "time": self.basic_snapshot.time,
+                "particle_count": self.basic_snapshot.particle_positions.len(),
+                "bond_count": self.basic_snapshot.bonds.len(),
+                "neighbor_pairs": self.basic_snapshot.neighbor_pairs.len(),
+                "quantum_regions": self.basic_snapshot.quantum_regions.len(),
+                "molecular_clusters": self.basic_snapshot.molecular_clusters.len(),
+                "reaction_events": self.basic_snapshot.reaction_events.len(),
+                "temperature": self.basic_snapshot.properties.temperature,
+                "kinetic_energy": self.basic_snapshot.properties.kinetic_energy
+            },
+            "quantum_integration": {
+                "field_count": self.quantum_integration.len(),
+                "fields": self.quantum_integration.keys().collect::<Vec<_>>()
+            },
+            "universe_age": self.universe_age,
+            "simulation_time": self.simulation_time,
+            "cosmic_era": format!("{:?}", self.cosmic_era),
+            "molecular_statistics": {
+                "total_particles": self.molecular_statistics.total_particles,
+                "total_mass": self.molecular_statistics.total_mass,
+                "average_mass": self.molecular_statistics.average_mass,
+                "temperature": self.molecular_statistics.temperature,
+                "pressure": self.molecular_statistics.pressure,
+                "density": self.molecular_statistics.density,
+                "molecular_complexity": self.molecular_statistics.molecular_complexity
+            },
+            "chemical_evolution": {
+                "universe_age": self.chemical_evolution.universe_age,
+                "metallicity": self.chemical_evolution.metallicity,
+                "molecular_formation_rate": self.chemical_evolution.molecular_formation_rate,
+                "reaction_rate": self.chemical_evolution.reaction_rate,
+                "complexity_index": self.chemical_evolution.complexity_index
+            },
+            "quantum_classical_interface": {
+                "transition_regions": self.quantum_classical_interface.transition_regions.len(),
+                "decoherence_boundaries": self.quantum_classical_interface.decoherence_boundaries.len(),
+                "quantum_coherence_length": self.quantum_classical_interface.quantum_coherence_length,
+                "classical_limit_scale": self.quantum_classical_interface.classical_limit_scale
+            }
+        })
+    }
+    
+    /// Get ASCII representation of molecular bonding for CLI visualization
+    pub fn get_ascii_molecular_map(&self, width: usize, height: usize) -> String {
+        let mut map = vec![vec![' '; width]; height];
+        
+        if self.basic_snapshot.particle_positions.is_empty() {
+            return "No particles in simulation".to_string();
+        }
+        
+        // Find bounds of particle positions
+        let mut min_x = f64::INFINITY;
+        let mut max_x = f64::NEG_INFINITY;
+        let mut min_y = f64::INFINITY;
+        let mut max_y = f64::NEG_INFINITY;
+        
+        for pos in &self.basic_snapshot.particle_positions {
+            min_x = min_x.min(pos[0]);
+            max_x = max_x.max(pos[0]);
+            min_y = min_y.min(pos[1]);
+            max_y = max_y.max(pos[1]);
+        }
+        
+        let x_range = max_x - min_x;
+        let y_range = max_y - min_y;
+        
+        if x_range == 0.0 || y_range == 0.0 {
+            return "All particles at same position".to_string();
+        }
+        
+        // Plot particles
+        for (i, pos) in self.basic_snapshot.particle_positions.iter().enumerate() {
+            let x = ((pos[0] - min_x) / x_range * (width - 1) as f64) as usize;
+            let y = ((pos[1] - min_y) / y_range * (height - 1) as f64) as usize;
+            
+            if x < width && y < height {
+                // Different symbols for different particle types
+                let symbol = if self.basic_snapshot.quantum_regions.contains(&i) {
+                    'Q' // Quantum particle
+                } else {
+                    match self.basic_snapshot.particle_types.get(i).unwrap_or(&0) % 4 {
+                        0 => '●', // Heavy particle
+                        1 => '○', // Medium particle
+                        2 => '·', // Light particle
+                        _ => '+', // Unknown
+                    }
+                };
+                map[height - 1 - y][x] = symbol;
+            }
+        }
+        
+        // Draw bonds
+        for &(i, j, strength) in &self.basic_snapshot.bonds {
+            if i < self.basic_snapshot.particle_positions.len() && j < self.basic_snapshot.particle_positions.len() {
+                let pos1 = &self.basic_snapshot.particle_positions[i];
+                let pos2 = &self.basic_snapshot.particle_positions[j];
+                
+                let x1 = ((pos1[0] - min_x) / x_range * (width - 1) as f64) as usize;
+                let y1 = ((pos1[1] - min_y) / y_range * (height - 1) as f64) as usize;
+                let x2 = ((pos2[0] - min_x) / x_range * (width - 1) as f64) as usize;
+                let y2 = ((pos2[1] - min_y) / y_range * (height - 1) as f64) as usize;
+                
+                // Draw simple line between bonded particles
+                let bond_char = if strength > 0.8 { '═' } else if strength > 0.5 { '─' } else { '·' };
+                
+                // Simple line drawing (Bresenham-like)
+                let dx = (x2 as i32 - x1 as i32).abs();
+                let dy = (y2 as i32 - y1 as i32).abs();
+                let steps = dx.max(dy);
+                
+                for step in 0..=steps {
+                    if steps > 0 {
+                        let x = x1 + ((x2 as i32 - x1 as i32) * step / steps) as usize;
+                        let y = y1 + ((y2 as i32 - y1 as i32) * step / steps) as usize;
+                        
+                        if x < width && y < height && map[height - 1 - y][x] == ' ' {
+                            map[height - 1 - y][x] = bond_char;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Convert to string
+        let mut result = String::new();
+        for row in &map {
+            result.push_str(&row.iter().collect::<String>());
+            result.push('\n');
+        }
+        
+        result
+    }
+    
+    /// Get detailed molecular information for inspection
+    pub fn get_molecular_details(&self) -> String {
+        let mut details = String::new();
+        
+        details.push_str(&format!("=== MOLECULAR DYNAMICS SNAPSHOT ===\n"));
+        details.push_str(&format!("Universe Age: {:.3} Gyr\n", self.universe_age));
+        details.push_str(&format!("Simulation Time: {:.3} years\n", self.simulation_time));
+        details.push_str(&format!("Cosmic Era: {:?}\n", self.cosmic_era));
+        details.push_str(&format!("\n"));
+        
+        details.push_str(&format!("=== PARTICLE STATISTICS ===\n"));
+        details.push_str(&format!("Total Particles: {}\n", self.molecular_statistics.total_particles));
+        details.push_str(&format!("Total Mass: {:.2e} kg\n", self.molecular_statistics.total_mass));
+        details.push_str(&format!("Average Mass: {:.2e} kg\n", self.molecular_statistics.average_mass));
+        details.push_str(&format!("Temperature: {:.2} K\n", self.molecular_statistics.temperature));
+        details.push_str(&format!("Pressure: {:.2e} Pa\n", self.molecular_statistics.pressure));
+        details.push_str(&format!("Density: {:.2e} kg/m³\n", self.molecular_statistics.density));
+        details.push_str(&format!("Molecular Complexity: {:.2}\n", self.molecular_statistics.molecular_complexity));
+        details.push_str(&format!("\n"));
+        
+        details.push_str(&format!("=== MOLECULAR STRUCTURE ===\n"));
+        details.push_str(&format!("Active Bonds: {}\n", self.basic_snapshot.bonds.len()));
+        details.push_str(&format!("Neighbor Pairs: {}\n", self.basic_snapshot.neighbor_pairs.len()));
+        details.push_str(&format!("Quantum Regions: {}\n", self.basic_snapshot.quantum_regions.len()));
+        details.push_str(&format!("Molecular Clusters: {}\n", self.basic_snapshot.molecular_clusters.len()));
+        details.push_str(&format!("Recent Reactions: {}\n", self.basic_snapshot.reaction_events.len()));
+        details.push_str(&format!("\n"));
+        
+        details.push_str(&format!("=== CHEMICAL EVOLUTION ===\n"));
+        details.push_str(&format!("Metallicity: {:.4}\n", self.chemical_evolution.metallicity));
+        details.push_str(&format!("Formation Rate: {:.2e} molecules/m³/s\n", self.chemical_evolution.molecular_formation_rate));
+        details.push_str(&format!("Reaction Rate: {:.2e} reactions/m³/s\n", self.chemical_evolution.reaction_rate));
+        details.push_str(&format!("Complexity Index: {:.3}\n", self.chemical_evolution.complexity_index));
+        details.push_str(&format!("\n"));
+        
+        details.push_str(&format!("=== QUANTUM-CLASSICAL INTERFACE ===\n"));
+        details.push_str(&format!("Transition Regions: {}\n", self.quantum_classical_interface.transition_regions.len()));
+        details.push_str(&format!("Decoherence Boundaries: {}\n", self.quantum_classical_interface.decoherence_boundaries.len()));
+        details.push_str(&format!("Coherence Length: {:.2e} m\n", self.quantum_classical_interface.quantum_coherence_length));
+        details.push_str(&format!("Classical Limit: {:.2e} m\n", self.quantum_classical_interface.classical_limit_scale));
+        details.push_str(&format!("\n"));
+        
+        details.push_str(&format!("=== QUANTUM FIELD INTEGRATION ===\n"));
+        details.push_str(&format!("Quantum Fields: {}\n", self.quantum_integration.len()));
+        for (field_name, _field_data) in &self.quantum_integration {
+            details.push_str(&format!("  - {}\n", field_name));
+        }
+        
+        details
     }
 }

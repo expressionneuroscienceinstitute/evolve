@@ -13,7 +13,20 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Get the default simulation checkpoint path
+pub fn get_simulation_path() -> Result<PathBuf> {
+    let mut path = std::env::current_dir()?;
+    path.push("checkpoints");
+    path.push("universe_simulation.bin");
+    Ok(path)
+}
+
+/// Load a simulation from the default checkpoint path
+pub fn load_simulation(path: &Path) -> Result<UniverseSimulation> {
+    load_checkpoint(path)
+}
 
 /// A serializable representation of the entire simulation state.
 #[derive(Serialize, Deserialize)]

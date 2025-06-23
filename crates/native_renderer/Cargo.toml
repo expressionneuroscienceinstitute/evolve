@@ -25,6 +25,7 @@ rayon = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 env_logger = { workspace = true }
+num-complex = "0.4"  # For quantum field complex number calculations
 
 # Serialization
 serde = { workspace = true }
@@ -51,7 +52,8 @@ heavy = [
     "physics_engine/heavy",
     "advanced-shaders",
     "multi-scale-rendering",
-    "scientific-visualization"
+    "scientific-visualization",
+    "quantum-visualization"
 ]
 # Experimental work-in-progress code; must be off in release CI
 unstable-renderer = []
@@ -59,4 +61,5 @@ unstable-renderer = []
 advanced-shaders = []
 multi-scale-rendering = []
 scientific-visualization = []
+quantum-visualization = []  # Quantum-accurate visualization features
 validation = [] 

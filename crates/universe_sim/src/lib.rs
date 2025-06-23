@@ -545,6 +545,7 @@ impl UniverseSimulation {
     }
 
     /// Find a suitable site for star formation
+    #[allow(dead_code)]
     fn find_star_formation_site<R: Rng>(&self, rng: &mut R) -> Result<Vector3<f64>> {
         // Uniform sampling within a sphere of radius equal to the current
         // universe radius (converted to metres). This is obviously not
@@ -1556,11 +1557,6 @@ impl UniverseSimulation {
     }
 
     /// Get comprehensive quantum state vector snapshot for advanced visualization
-    /// Returns full quantum state information including complex amplitudes, phases,
-        quantum_snapshot
-    }
-
-    /// Get comprehensive quantum state vector snapshot for advanced visualization (basic fallback)
     /// Returns full quantum state information including complex amplitudes, phases,
     /// entanglement, decoherence, and quantum field properties.
     ///
@@ -2623,6 +2619,7 @@ impl UniverseSimulation {
         let coherence_length = self.estimate_quantum_coherence_length();
         coherence_length * 10.0 // Classical limit is roughly 10x coherence length
     }
+}
 
 
 /// Simulation statistics

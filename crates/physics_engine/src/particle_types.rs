@@ -111,6 +111,70 @@ pub struct QuantumField {
     pub boundary_conditions: BoundaryConditions,
 }
 
+impl QuantumField {
+    /// Create a new quantum field with vacuum fluctuations
+    pub fn new(field_type: FieldType, size: (usize, usize, usize), lattice_spacing: f64) -> Self {
+        let mut field = Self {
+            field_type,
+            field_values: vec![vec![vec![Complex::new(0.0, 0.0); size.2]; size.1]; size.0],
+            field_derivatives: vec![vec![vec![Vector3::zeros(); size.2]; size.1]; size.0],
+            vacuum_expectation_value: Complex::new(0.0, 0.0),
+            coupling_constants: HashMap::new(),
+            lattice_spacing,
+            boundary_conditions: BoundaryConditions::Periodic,
+        };
+        
+        // Initialize with quantum vacuum fluctuations
+        field.initialize_vacuum_fluctuations();
+        
+        field
+    }
+    
+    /// Initialize quantum field with vacuum fluctuations
+    pub fn initialize_vacuum_fluctuations(&mut self) {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        
+        // Calculate quantum fluctuation amplitude based on field properties
+        let fluctuation_amplitude = self.calculate_quantum_fluctuation_amplitude();
+        
+        // Initialize field values with quantum fluctuations
+        for i in 0..self.field_values.len() {
+            for j in 0..self.field_values[i].len() {
+                for k in 0..self.field_values[i][j].len() {
+                    let real_part = rng.gen_range(-fluctuation_amplitude..fluctuation_amplitude);
+                    let imag_part = rng.gen_range(-fluctuation_amplitude..fluctuation_amplitude);
+                    self.field_values[i][j][k] = Complex::new(real_part, imag_part) + self.vacuum_expectation_value;
+                }
+            }
+        }
+    }
+    
+    /// Calculate quantum fluctuation amplitude based on field properties
+    fn calculate_quantum_fluctuation_amplitude(&self) -> f64 {
+        // Heisenberg uncertainty principle: ΔEΔt ≥ ℏ/2
+        // For quantum fields: Δφ ≈ ℏ/(m*c*Δx)
+        let planck_constant = 1.054571817e-34; // Reduced Planck constant
+        let speed_of_light = 299792458.0;
+        
+        // Get field mass based on type (simplified)
+        let field_mass = match self.field_type {
+            FieldType::ElectronField => 9.1093837015e-31,
+            FieldType::PhotonField => 0.0, // Massless
+            FieldType::HiggsField => 2.246e-25,
+            _ => 1.0e-30, // Default mass
+        };
+        
+        if field_mass > 0.0 {
+            // Massive field fluctuations
+            planck_constant / (field_mass * speed_of_light * self.lattice_spacing)
+        } else {
+            // Massless field fluctuations (like photons)
+            planck_constant / (speed_of_light * self.lattice_spacing)
+        }
+    }
+}
+
 // Aliases that the engine expects ------------------------------------------------
 
 pub type GluonField = Vec<Vector3<Complex<f64>>>;

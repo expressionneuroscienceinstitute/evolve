@@ -355,3 +355,294 @@ fn particles_to_physics_states(particles: &[Particle]) -> Vec<PhysicsState> {
         entropy: 1e-20, // Default entropy
     }).collect()
 }
+
+/// Represents a snapshot of the molecular dynamics system for visualization
+/// Contains all necessary data for real-time molecular visualization
+#[derive(Debug, Clone)]
+pub struct MDSnapshot {
+    /// Current simulation step
+    pub step: usize,
+    /// Current simulation time (seconds)
+    pub time: f64,
+    /// Particle positions for visualization
+    pub particle_positions: Vec<[f64; 3]>,
+    /// Particle velocities for trajectory visualization
+    pub particle_velocities: Vec<[f64; 3]>,
+    /// Particle forces for force field visualization
+    pub particle_forces: Vec<[f64; 3]>,
+    /// Particle types for color coding
+    pub particle_types: Vec<u32>,
+    /// Particle masses for physics accuracy
+    pub particle_masses: Vec<f64>,
+    /// Active bonds between particles (particle indices)
+    pub bonds: Vec<(usize, usize, f64)>, // (particle1, particle2, bond_strength)
+    /// Neighbor pairs for interaction visualization
+    pub neighbor_pairs: Vec<(usize, usize, f64)>, // (particle1, particle2, distance)
+    /// System properties for monitoring
+    pub properties: SystemProperties,
+    /// Quantum-classical regions (particle indices requiring quantum treatment)
+    pub quantum_regions: Vec<usize>,
+    /// Molecular clusters (groups of bonded atoms)
+    pub molecular_clusters: Vec<Vec<usize>>,
+    /// Chemical reaction events (bond breaking/forming)
+    pub reaction_events: Vec<ReactionEvent>,
+}
+
+/// Represents a chemical reaction event for visualization
+#[derive(Debug, Clone)]
+pub struct ReactionEvent {
+    /// Type of reaction (bond formation or breaking)
+    pub event_type: ReactionEventType,
+    /// Particles involved in the reaction
+    pub participants: Vec<usize>,
+    /// Time when the reaction occurred
+    pub time: f64,
+    /// Energy change associated with the reaction
+    pub energy_change: f64,
+}
+
+/// Types of chemical reaction events
+#[derive(Debug, Clone)]
+pub enum ReactionEventType {
+    BondFormation,
+    BondBreaking,
+    ElectronTransfer,
+    ConformationalChange,
+}
+
+impl MolecularDynamicsEngine {
+    /// Get a comprehensive snapshot of the current molecular dynamics state
+    /// This method provides all data needed for real-time visualization
+    pub fn get_snapshot(&self) -> MDSnapshot {
+        let particle_positions: Vec<[f64; 3]> = self.system.particles.iter()
+            .map(|p| p.position)
+            .collect();
+            
+        let particle_velocities: Vec<[f64; 3]> = self.system.particles.iter()
+            .map(|p| p.velocity)
+            .collect();
+            
+        let particle_forces: Vec<[f64; 3]> = self.system.particles.iter()
+            .map(|p| p.force)
+            .collect();
+            
+        let particle_types: Vec<u32> = self.system.particles.iter()
+            .map(|p| p.type_id)
+            .collect();
+            
+        let particle_masses: Vec<f64> = self.system.particles.iter()
+            .map(|p| p.mass)
+            .collect();
+
+        // Detect active bonds based on distance and force thresholds
+        let bonds = self.detect_bonds();
+        
+        // Get neighbor pairs from the neighbor list
+        let neighbor_pairs = self.get_neighbor_pairs();
+        
+        // Detect quantum regions (atoms with strong quantum effects)
+        let quantum_regions = self.detect_quantum_regions();
+        
+        // Identify molecular clusters
+        let molecular_clusters = self.identify_molecular_clusters(&bonds);
+        
+        // Detect recent reaction events
+        let reaction_events = self.detect_reaction_events();
+
+        MDSnapshot {
+            step: self.step,
+            time: self.system.time,
+            particle_positions,
+            particle_velocities,
+            particle_forces,
+            particle_types,
+            particle_masses,
+            bonds,
+            neighbor_pairs,
+            properties: self.get_properties(),
+            quantum_regions,
+            molecular_clusters,
+            reaction_events,
+        }
+    }
+    
+    /// Detect active chemical bonds based on distance and interaction strength
+    fn detect_bonds(&self) -> Vec<(usize, usize, f64)> {
+        let mut bonds = Vec::new();
+        
+        for i in 0..self.system.particles.len() {
+            for j in (i + 1)..self.system.particles.len() {
+                let pos_i = self.system.particles[i].position;
+                let pos_j = self.system.particles[j].position;
+                
+                let dx = pos_i[0] - pos_j[0];
+                let dy = pos_i[1] - pos_j[1];
+                let dz = pos_i[2] - pos_j[2];
+                let distance = (dx*dx + dy*dy + dz*dz).sqrt();
+                
+                // Bond detection based on Lennard-Jones parameters and distance
+                let bond_threshold = self.lj_params.sigma * 1.2; // Typical bond length
+                
+                if distance < bond_threshold {
+                    // Calculate bond strength based on Lennard-Jones potential
+                    let bond_strength = self.calculate_bond_strength(distance);
+                    if bond_strength > 0.1 { // Minimum bond strength threshold
+                        bonds.push((i, j, bond_strength));
+                    }
+                }
+            }
+        }
+        
+        bonds
+    }
+    
+    /// Calculate bond strength based on interatomic potential
+    fn calculate_bond_strength(&self, distance: f64) -> f64 {
+        // Use Lennard-Jones potential derivative to estimate bond strength
+        let sigma = self.lj_params.sigma;
+        let epsilon = self.lj_params.epsilon;
+        
+        if distance < sigma * 0.5 || distance > sigma * 2.0 {
+            return 0.0; // No bond outside reasonable range
+        }
+        
+        let sr6 = (sigma / distance).powi(6);
+        let potential = 4.0 * epsilon * (sr6.powi(2) - sr6);
+        
+        // Bond strength is related to the depth of the potential well
+        (-potential / epsilon).max(0.0).min(1.0)
+    }
+    
+    /// Get neighbor pairs from the neighbor list for visualization
+    fn get_neighbor_pairs(&self) -> Vec<(usize, usize, f64)> {
+        let mut pairs = Vec::new();
+        
+        for i in 0..self.system.particles.len() {
+            let neighbors = self.neighbor_list.get_neighbors(i);
+            for &j in neighbors {
+                if i < j { // Avoid duplicate pairs
+                    let pos_i = self.system.particles[i].position;
+                    let pos_j = self.system.particles[j].position;
+                    
+                    let dx = pos_i[0] - pos_j[0];
+                    let dy = pos_i[1] - pos_j[1];
+                    let dz = pos_i[2] - pos_j[2];
+                    let distance = (dx*dx + dy*dy + dz*dz).sqrt();
+                    
+                    pairs.push((i, j, distance));
+                }
+            }
+        }
+        
+        pairs
+    }
+    
+    /// Detect regions requiring quantum treatment based on electronic structure
+    fn detect_quantum_regions(&self) -> Vec<usize> {
+        let mut quantum_regions = Vec::new();
+        
+        for (i, particle) in self.system.particles.iter().enumerate() {
+            // Heuristic: atoms with high kinetic energy or in reactive environments
+            let kinetic_energy = 0.5 * particle.mass * 
+                (particle.velocity[0].powi(2) + particle.velocity[1].powi(2) + particle.velocity[2].powi(2));
+            
+            // Atoms with high kinetic energy may need quantum treatment
+            let thermal_energy = 1.380649e-23 * 300.0; // kT at room temperature
+            if kinetic_energy > 10.0 * thermal_energy {
+                quantum_regions.push(i);
+            }
+            
+            // Atoms involved in multiple bonds may need quantum treatment
+            let bond_count = self.count_bonds_for_particle(i);
+            if bond_count >= 3 {
+                quantum_regions.push(i);
+            }
+        }
+        
+        quantum_regions
+    }
+    
+    /// Count the number of bonds for a specific particle
+    fn count_bonds_for_particle(&self, particle_index: usize) -> usize {
+        let bonds = self.detect_bonds();
+        bonds.iter()
+            .filter(|(i, j, _)| *i == particle_index || *j == particle_index)
+            .count()
+    }
+    
+    /// Identify molecular clusters (groups of bonded atoms)
+    fn identify_molecular_clusters(&self, bonds: &[(usize, usize, f64)]) -> Vec<Vec<usize>> {
+        let mut clusters = Vec::new();
+        let mut visited = vec![false; self.system.particles.len()];
+        
+        for i in 0..self.system.particles.len() {
+            if !visited[i] {
+                let mut cluster = Vec::new();
+                self.dfs_cluster(i, bonds, &mut visited, &mut cluster);
+                if !cluster.is_empty() {
+                    clusters.push(cluster);
+                }
+            }
+        }
+        
+        clusters
+    }
+    
+    /// Depth-first search to identify connected atoms in a molecular cluster
+    fn dfs_cluster(&self, node: usize, bonds: &[(usize, usize, f64)], visited: &mut [bool], cluster: &mut Vec<usize>) {
+        visited[node] = true;
+        cluster.push(node);
+        
+        for &(i, j, _) in bonds {
+            if i == node && !visited[j] {
+                self.dfs_cluster(j, bonds, visited, cluster);
+            } else if j == node && !visited[i] {
+                self.dfs_cluster(i, bonds, visited, cluster);
+            }
+        }
+    }
+    
+    /// Detect recent chemical reaction events
+    fn detect_reaction_events(&self) -> Vec<ReactionEvent> {
+        // This is a simplified implementation
+        // In a full system, you would track bond changes over time
+        let mut events = Vec::new();
+        
+        // For demonstration, detect high-energy configurations that might indicate reactions
+        for (i, particle) in self.system.particles.iter().enumerate() {
+            let force_magnitude = (particle.force[0].powi(2) + 
+                                 particle.force[1].powi(2) + 
+                                 particle.force[2].powi(2)).sqrt();
+            
+            // High forces might indicate bond breaking or formation
+            if force_magnitude > 1e-10 { // Threshold for reaction detection
+                events.push(ReactionEvent {
+                    event_type: ReactionEventType::ConformationalChange,
+                    participants: vec![i],
+                    time: self.system.time,
+                    energy_change: force_magnitude * 1e-12, // Approximate energy scale
+                });
+            }
+        }
+        
+        events
+    }
+    
+    /// Get quantum-enhanced molecular dynamics snapshot with quantum field integration
+    pub fn get_quantum_enhanced_snapshot(&self) -> MDSnapshot {
+        let mut snapshot = self.get_snapshot();
+        
+        // Enhanced quantum region detection using quantum field data
+        // This would integrate with the quantum field system for more accurate detection
+        snapshot.quantum_regions = self.detect_enhanced_quantum_regions();
+        
+        snapshot
+    }
+    
+    /// Enhanced quantum region detection using quantum field information
+    fn detect_enhanced_quantum_regions(&self) -> Vec<usize> {
+        // This method would integrate with the quantum field system
+        // For now, use the basic heuristic approach
+        self.detect_quantum_regions()
+    }
+}

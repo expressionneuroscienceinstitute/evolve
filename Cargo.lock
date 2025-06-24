@@ -1059,7 +1059,11 @@ dependencies = [
  "anyhow",
  "nalgebra",
  "physics_engine",
+ "physics_types",
  "rand",
+ "tracing",
+ "tracing-subscriber",
+ "universe_sim",
 ]
 
 [[package]]
@@ -4103,10 +4107,7 @@ dependencies = [
 name = "test_validation"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "nalgebra",
- "physics_engine",
- "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]

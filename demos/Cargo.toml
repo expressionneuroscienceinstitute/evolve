@@ -27,8 +27,16 @@ path = "05_tree_pm_gravity.rs"
 name = "statistical_analysis_demo"
 path = "06_statistical_analysis.rs"
 
+[[bin]]
+name = "stellar_nursery_demo"
+path = "07_stellar_nursery.rs"
+
 [dependencies]
 physics_engine = { path = "../crates/physics_engine" }
-anyhow = { workspace = true }
-nalgebra = { workspace = true }
-rand = { workspace = true }
+physics_types = { path = "../crates/physics_types" }
+universe_sim = { path = "../crates/universe_sim" }
+nalgebra = "0.32"
+rand = "0.8"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"

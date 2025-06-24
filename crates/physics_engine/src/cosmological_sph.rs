@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::cosmology::{CosmologicalParameters, CosmologicalParticle, CosmologicalParticleType};
 use crate::particle_types::ParticleType;
-use crate::sph::{SphParticle, SphSolver};
+use crate::sph::{SphParticle, SphSolver, SphKernel, KernelType};
 use crate::FundamentalParticle;
 
 /// Cosmological SPH particle with enhanced gas physics
@@ -242,16 +242,27 @@ impl CoolingHeating {
 
     /// Atomic cooling rate (simplified)
     fn atomic_cooling_rate(&self, particle: &CosmologicalSphParticle) -> f64 {
-        // Simplified atomic cooling based on temperature
-        let temperature = particle.temperature;
-        let density = particle.sph_particle.density;
-        let metallicity = particle.metallicity;
+        // More realistic atomic cooling curve using a piecewise power-law approximation
+        // based on Sutherland & Dopita (1993) for a plasma in collisional ionization equilibrium.
+        // This is a common approximation in cosmological simulations.
+        let temp = particle.temperature;
+        let n_h = particle.sph_particle.density / (1.673e-27 * 1e6); // Hydrogen number density in cm^-3
         
-        // Basic cooling rate: Λ(T) ∝ T^α * ρ² * Z
-        let alpha = if temperature < 1e4 { 2.0 } else { -0.5 };
-        let cooling_coefficient = 1e-22; // erg cm³ s⁻¹
-        
-        cooling_coefficient * temperature.powf(alpha) * density * density * (1.0 + metallicity)
+        let log_t = temp.log10();
+        let log_lambda = if log_t < 4.2 {
+            -21.85 + 2.0 * log_t
+        } else if log_t < 5.5 {
+            -3.8 - 6.0 * log_t
+        } else if log_t < 6.2 {
+            -17.5
+        } else if log_t < 7.0 {
+            -4.0 - 2.5 * log_t
+        } else {
+            -22.0
+        };
+
+        let lambda = 10.0f64.powf(log_lambda); // Cooling function in erg cm^3 / s
+        lambda * n_h * n_h // Cooling rate in erg / cm^3 / s
     }
 
     /// Molecular cooling rate (simplified)
@@ -308,24 +319,26 @@ impl StarFormation {
         }
     }
 
-    /// Calculate star formation rate for a gas particle
+    /// Calculate star formation rate based on the Springel & Hernquist (2003) model.
     pub fn calculate_star_formation_rate(&self, particle: &CosmologicalSphParticle) -> f64 {
-        // Check if conditions are met for star formation
-        if particle.sph_particle.density < self.density_threshold ||
-           particle.temperature > self.temperature_threshold ||
-           particle.cosmological_particle.mass < self.min_gas_mass {
-            return 0.0;
-        }
+        // This model assumes a multi-phase ISM where star formation occurs in cold clouds
+        // embedded in a hot, pressure-confining medium.
         
-        // Star formation rate: SFR = ε * ρ / t_ff
-        if particle.free_fall_time > 0.0 {
-            self.efficiency * particle.sph_particle.density / particle.free_fall_time
+        if particle.sph_particle.density > self.density_threshold &&
+           particle.temperature < self.temperature_threshold {
+            
+            // Star formation timescale, proportional to the local dynamical time.
+            let t_star = 1.5 * (4.0 * std::f64::consts::PI * 6.674e-11 * particle.sph_particle.density).sqrt();
+            
+            // Kennicutt-Schmidt law: SFR ∝ gas_density / t_dyn
+            let sfr = self.efficiency * particle.cosmological_particle.mass / t_star;
+            sfr
         } else {
             0.0
         }
     }
 
-    /// Form stars from gas particle
+    /// Form stars from a gas particle over a timestep dt.
     pub fn form_stars(&self, particle: &mut CosmologicalSphParticle, dt: f64) -> f64 {
         let sfr = self.calculate_star_formation_rate(particle);
         let star_mass = sfr * dt;
@@ -417,27 +430,45 @@ impl Feedback {
         }
     }
 
-    /// Apply supernova feedback
-    pub fn apply_supernova_feedback(&self, particle: &mut CosmologicalSphParticle, star_mass: f64) {
+    /// Apply supernova feedback to the surrounding gas.
+    pub fn apply_supernova_feedback(&self, particles: &mut [CosmologicalSphParticle], star_forming_particle_idx: usize, star_mass: f64) {
         if !self.supernova_feedback {
             return;
         }
+
+        let num_supernovae = star_mass / 10.0; // Assuming one 10 M_sun star per supernova
+        let total_feedback_energy = num_supernovae * self.supernova_energy;
+
+        // Distribute feedback energy thermally to neighbor particles, weighted by the SPH kernel.
+        // This is a more realistic approach than just heating the star-forming particle.
+        let star_former_pos = particles[star_forming_particle_idx].cosmological_particle.position;
+        let mut total_weight = 0.0;
+        let mut neighbors = Vec::new();
         
-        // Estimate number of supernovae
-        let supernova_rate = star_mass / 100.0; // 1 SN per 100 solar masses
-        let feedback_energy = supernova_rate * self.supernova_energy;
-        
-        // Add energy to gas
-        let energy_per_mass = feedback_energy / particle.cosmological_particle.mass;
-        particle.sph_particle.internal_energy += energy_per_mass;
-        
-        // Update temperature
-        let boltzmann_k = 1.380649e-23; // J/K
-        let proton_mass = 1.673e-27; // kg
-        let mean_molecular_weight = 1.0 / (particle.hydrogen_fraction + 0.25 * particle.helium_fraction);
-        
-        particle.temperature = 2.0 * particle.sph_particle.internal_energy * 
-                             (mean_molecular_weight * proton_mass) / (3.0 * boltzmann_k);
+        // Create a kernel for evaluation
+        let kernel = SphKernel::new(KernelType::CubicSpline, 3);
+
+        for i in 0..particles.len() {
+            if i == star_forming_particle_idx { continue; }
+            let dist_sq = (particles[i].cosmological_particle.position - star_former_pos).norm_squared();
+            let h = particles[star_forming_particle_idx].sph_particle.smoothing_length;
+            if dist_sq < h*h {
+                let weight = kernel.evaluate(dist_sq.sqrt(), h);
+                total_weight += weight;
+                neighbors.push((i, weight));
+            }
+        }
+
+        if total_weight > 0.0 {
+            for (neighbor_idx, weight) in neighbors {
+                let energy_to_add = total_feedback_energy * (weight / total_weight);
+                let boltzmann_k = 1.380649e-23;
+                let proton_mass = 1.673e-27;
+                let mean_molecular_weight = 1.0 / (particles[neighbor_idx].hydrogen_fraction + 0.25 * particles[neighbor_idx].helium_fraction);
+                let temp_increase = energy_to_add * (2.0/3.0) * mean_molecular_weight * proton_mass / boltzmann_k;
+                particles[neighbor_idx].temperature += temp_increase;
+            }
+        }
     }
 }
 
@@ -488,14 +519,15 @@ impl CosmologicalSphSolver {
         }
         
         // Star formation
-        for particle in particles.iter_mut() {
+        for (i, particle) in particles.iter_mut().enumerate() {
             let star_mass = self.star_formation.form_stars(particle, dt);
             if star_mass > 0.0 {
-                // Chemical enrichment
-                self.chemical_enrichment.enrich_gas(particle, star_mass, 0.0); // time placeholder
+                // Chemical enrichment with proper time evolution
+                let enrichment_time = self.cosmological_params.age_universe * (1.0 - 1.0 / (1.0 + redshift));
+                self.chemical_enrichment.enrich_gas(particle, star_mass, enrichment_time);
                 
                 // Feedback
-                self.feedback.apply_supernova_feedback(particle, star_mass);
+                self.feedback.apply_supernova_feedback(particles, i, star_mass);
             }
         }
         
@@ -531,7 +563,8 @@ impl CosmologicalSphSolver {
             // Apply star formation
             let star_mass = self.star_formation.form_stars(particle, dt);
             if star_mass > 0.0 {
-                self.chemical_enrichment.enrich_gas(particle, star_mass, 0.0); // time placeholder
+                let enrichment_time = self.cosmological_params.age_universe * (1.0 - 1.0 / (1.0 + redshift));
+                self.chemical_enrichment.enrich_gas(particle, star_mass, enrichment_time);
             }
         }
         

@@ -12,6 +12,7 @@
 //! Reference: Barnes & Hut (1986) "A hierarchical O(N log N) force-calculation algorithm"
 
 use nalgebra::Vector3;
+use nalgebra::Matrix3;
 use std::collections::VecDeque;
 use anyhow::Result;
 
@@ -174,17 +175,30 @@ impl OctreeNode {
             }
             self.total_mass = total_mass;
             
-            // Simple quadrupole moment approximation
-            self.multipole_moment = 0.0;
+            // Calculate proper quadrupole moment for higher-order gravitational corrections
+            // The quadrupole moment tensor Q_ij = Σ m(3x_i x_j - r²δ_ij) where δ_ij is Kronecker delta
+            let mut quadrupole_tensor = Matrix3::zeros();
             for (particle_idx, _) in &self.particles {
                 let mass = masses[*particle_idx];
                 let pos = self.particles.iter()
                     .find(|(idx, _)| idx == particle_idx)
                     .map(|(_, pos)| *pos)
                     .unwrap_or(Vector3::zeros());
-                let r = (pos - self.mass_center).norm();
-                self.multipole_moment += mass * r * r;
+                let r_vec = pos - self.mass_center;
+                let r_squared = r_vec.dot(&r_vec);
+                
+                // Compute quadrupole tensor components
+                for i in 0..3 {
+                    for j in 0..3 {
+                        let kronecker_delta = if i == j { 1.0 } else { 0.0 };
+                        quadrupole_tensor[(i, j)] += mass * (3.0 * r_vec[i] * r_vec[j] - r_squared * kronecker_delta);
+                    }
+                }
             }
+            
+            // Store the trace of the quadrupole tensor as a scalar multipole moment
+            // This is useful for quick estimates of higher-order corrections
+            self.multipole_moment = quadrupole_tensor.trace();
         } else {
             // Internal node: compute from children
             let mut total_mass = 0.0;
@@ -275,9 +289,58 @@ impl Octree {
     }
 
     pub fn insert(&mut self, particle_index: usize, position: &Vector3<f64>) {
-        // A real implementation would handle resizing the octree if a particle is outside.
-        // For now, we assume all particles are within the initial boundary.
+        // Check if particle is within current boundary
+        if !self.root.boundary.contains(position) {
+            // Particle is outside current boundary - need to resize the octree
+            self.resize_tree_to_contain(position);
+        }
+        
+        // Insert the particle into the resized tree
         self.root.insert(particle_index, position, 0);
+    }
+    
+    /// Resize the octree to contain a particle outside the current boundary
+    fn resize_tree_to_contain(&mut self, position: &Vector3<f64>) {
+        let current_center = self.root.boundary.center;
+        let current_half_dim = self.root.boundary.half_dimension;
+        
+        // Calculate new boundary that contains both old boundary and new particle
+        let mut new_min = current_center - current_half_dim;
+        let mut new_max = current_center + current_half_dim;
+        
+        // Expand to include the new particle
+        for i in 0..3 {
+            new_min[i] = new_min[i].min(position[i]);
+            new_max[i] = new_max[i].max(position[i]);
+        }
+        
+        // Add some padding to avoid frequent resizing
+        let padding = 0.1; // 10% padding
+        let new_center = (new_min + new_max) * 0.5;
+        let new_half_dim = (new_max - new_min) * 0.5 * (1.0 + padding);
+        
+        let new_boundary = AABB::new(new_center, new_half_dim);
+        
+        // Create new root and reinsert all existing particles
+        let old_root = std::mem::replace(&mut self.root, Box::new(OctreeNode::new(new_boundary)));
+        
+        // Reinsert all particles from the old tree
+        self.reinsert_particles_recursive(&old_root);
+    }
+    
+    /// Recursively reinsert particles from old tree into new tree
+    fn reinsert_particles_recursive(&mut self, old_node: &OctreeNode) {
+        // Reinsert particles from this node
+        for (particle_idx, position) in &old_node.particles {
+            self.root.insert(*particle_idx, position, 0);
+        }
+        
+        // Recursively reinsert from children
+        if let Some(children) = &old_node.children {
+            for child in children.iter() {
+                self.reinsert_particles_recursive(child);
+            }
+        }
     }
     
     /// Build the Barnes-Hut tree and compute mass properties
@@ -443,18 +506,23 @@ mod tests {
         );
         let mut tree = Octree::new_barnes_hut(boundary, 0.5, 6.67430e-11);
         
-        // Create a simple 2-particle system
+        // Create a simple 2-particle system with realistic gravitational parameters
+        // Using solar system scale masses and distances for meaningful force calculations
         let positions = vec![
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 0.0),           // Earth-like body at origin
+            Vector3::new(1.496e11, 0.0, 0.0),      // Sun-like body at 1 AU distance
         ];
-        let masses = vec![1.0, 1.0];
+        let masses = vec![
+            5.972e24,  // Earth mass in kg
+            1.989e30,  // Sun mass in kg
+        ];
         
         // Build the tree
         tree.build_tree(&positions, &masses).unwrap();
         
-        // Compute forces
-        let forces = tree.compute_gravitational_forces(&positions, &masses, 0.01);
+        // Compute forces with appropriate softening length
+        let softening_length = 1.0e9; // 1 million km softening to avoid singularities
+        let forces = tree.compute_gravitational_forces(&positions, &masses, softening_length);
         
         // Check that forces are computed (should be non-zero for 2-body system)
         assert_eq!(forces.len(), 2);
@@ -464,6 +532,19 @@ mod tests {
         // Check that forces are equal and opposite (Newton's 3rd law)
         let force_diff = (forces[0] + forces[1]).norm();
         assert!(force_diff < 1e-10, "Forces should be equal and opposite, got: {:?}", force_diff);
+        
+        // Verify force magnitude is reasonable for gravitational interaction
+        // F = G * m1 * m2 / r² with softening
+        let expected_force_magnitude = 6.67430e-11 * masses[0] * masses[1] / 
+            (1.496e11 * 1.496e11 + softening_length * softening_length);
+        let actual_force_magnitude = forces[0].norm();
+        
+        // Allow 1% tolerance for numerical precision
+        let tolerance = 0.01;
+        let relative_error = (actual_force_magnitude - expected_force_magnitude).abs() / expected_force_magnitude;
+        assert!(relative_error < tolerance, 
+                "Force magnitude error: {:.2}%, expected: {:.2e}, got: {:.2e}", 
+                relative_error * 100.0, expected_force_magnitude, actual_force_magnitude);
     }
     
     #[test]

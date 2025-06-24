@@ -35,6 +35,8 @@ pub struct PhysicsState {
     pub velocity: Vector3<f64>,
     /// Acceleration vector (m/s²)
     pub acceleration: Vector3<f64>,
+    /// Net force acting on the state (N)
+    pub force: Vector3<f64>,
     /// Rest mass (kg)
     pub mass: f64,
     /// Electric charge (Coulombs)
@@ -43,6 +45,8 @@ pub struct PhysicsState {
     pub temperature: f64,
     /// Entropy (J/K)
     pub entropy: f64,
+    /// Auxiliary identifier for particle/atom type (for MD cell lists, etc.)
+    pub type_id: u32,
 }
 
 /// Interaction event recording for analysis

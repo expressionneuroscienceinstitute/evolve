@@ -358,7 +358,7 @@ impl EndfParser {
         Ok(())
     }
 
-    /// Process File 2 (Resonance Parameters) data
+    /// Process resonance data (File 2)
     fn process_resonance_data(&mut self, records: Vec<EndfRecord>) -> Result<()> {
         if records.is_empty() {
             return Ok(());
@@ -367,15 +367,71 @@ impl EndfParser {
         let first_record = &records[0];
         let mat = first_record.mat;
         
+        // Parse detailed resonance parameters from ENDF format
+        let mut resonance_parameters = Vec::new();
+        
+        // Process each record to extract resonance parameters
+        for record in &records {
+            // Parse resonance parameters based on ENDF format
+            // Each record contains multiple resonance parameters
+            // Format: energy, neutron_width, gamma_width, fission_width, j_value
+            
+            let energy = record.c1;
+            let neutron_width = record.c2;
+            let gamma_width = record.l1 as f64;
+            let fission_width = record.l2 as f64;
+            let j_value = record.n1 as f64;
+            
+            // Validate parameters
+            if energy >= 0.0 && neutron_width >= 0.0 && gamma_width >= 0.0 {
+                let parameter = ResonanceParameter {
+                    energy,
+                    neutron_width,
+                    gamma_width,
+                    fission_width,
+                    j: j_value,
+                };
+                resonance_parameters.push(parameter);
+            }
+        }
+        
+        // Calculate energy range from parameters
+        let energy_min = resonance_parameters.iter()
+            .map(|p| p.energy)
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+        let energy_max = resonance_parameters.iter()
+            .map(|p| p.energy)
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+        
+        // Estimate scattering radius from resonance parameters
+        let scattering_radius = if !resonance_parameters.is_empty() {
+            // Use average neutron width to estimate scattering radius
+            let avg_neutron_width = resonance_parameters.iter()
+                .map(|p| p.neutron_width)
+                .sum::<f64>() / resonance_parameters.len() as f64;
+            
+            // Rough estimate: R = sqrt(Γn / (2π * E)) where Γn is neutron width
+            let avg_energy = (energy_min + energy_max) / 2.0;
+            if avg_energy > 0.0 {
+                (avg_neutron_width / (2.0 * std::f64::consts::PI * avg_energy)).sqrt()
+            } else {
+                first_record.l1 as f64 // Fallback to original value
+            }
+        } else {
+            first_record.l1 as f64
+        };
+        
         let resonance_data = ResonanceData {
-            energy_min: first_record.c1,
-            energy_max: first_record.c2,
-            scattering_radius: first_record.l1 as f64,
-            parameters: Vec::new(), // TODO: Parse detailed resonance parameters
+            energy_min,
+            energy_max,
+            scattering_radius,
+            parameters: resonance_parameters,
         };
         
         self.resonance_data.insert(mat, resonance_data);
-        debug!("Added resonance data for MAT={}", mat);
+        debug!("Added resonance data for MAT={} with {} parameters", mat, resonance_parameters.len());
         
         Ok(())
     }

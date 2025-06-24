@@ -765,10 +765,12 @@ impl ConservationMonitor {
                 position: p.position,
                 velocity: p.velocity,
                 acceleration: p.acceleration,
+                force: Vector3::zeros(),
                 mass: p.mass,
                 charge: p.charge,
                 temperature: 300.0, // Default temperature
                 entropy: 1e-20, // Default entropy
+                type_id: 0, // Default type ID
             })
             .collect();
 
@@ -838,19 +840,23 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::new(1000.0, 0.0, 0.0),
                 acceleration: Vector3::zeros(),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: 1.0,
                 temperature: 300.0,
                 entropy: 1e-20,
+                type_id: 0,
             },
             PhysicsState {
                 position: Vector3::new(1.0, 0.0, 0.0),
                 velocity: Vector3::new(-1000.0, 0.0, 0.0),
                 acceleration: Vector3::zeros(),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: -1.0,
                 temperature: 300.0,
                 entropy: 1e-20,
+                type_id: 1,
             },
         ]
     }

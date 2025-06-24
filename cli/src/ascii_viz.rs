@@ -108,36 +108,66 @@ impl AsciiRenderer {
         let mut map = vec![vec![' '; self.width - 2]; self.height - 8];
         
         // Use different characters for different density levels to show cosmic web
-        let density_chars = [' ', '·', '∙', '•', '○', '◉', '◎', '◈', '■', '█'];
+        // Improved character set for better visual distinction
+        let density_chars = [' ', '·', '∙', ':', '•', '○', '◉', '◎', '◈', '■', '█'];
         
-        // Sample the density field at each point
+        // First pass: Calculate min/max density for normalization
+        let mut min_density = f64::MAX;
+        let mut max_density = f64::MIN;
+        let mut density_samples = vec![vec![0.0; map[0].len()]; map.len()];
+        
         for y in 0..map.len() {
             for x in 0..map[0].len() {
                 let world_x = min_x + (x as f64 / map[0].len() as f64) * (max_x - min_x);
                 let world_y = min_y + (y as f64 / map.len() as f64) * (max_y - min_y);
                 let world_z = 0.0; // 2D slice at z=0
                 
-                // Get density from the field
-                let mut density = state.density_field.sample_at(world_x, world_y, world_z);
+                // Get density from the field - this already has cosmic web structure
+                let density = state.density_field.sample_at(world_x, world_y, world_z);
+                density_samples[y][x] = density;
                 
-                // Add contribution from galaxies
-                for galaxy in &state.galaxies {
-                    let dx = galaxy.position.x - world_x;
-                    let dy = galaxy.position.y - world_y;
-                    let dist_sq = dx * dx + dy * dy;
-                    if dist_sq < 25.0 { // Within 5 Mpc
-                        density += 10.0 * (-dist_sq / 10.0).exp();
-                    }
+                if density > 0.0 {
+                    min_density = min_density.min(density);
+                    max_density = max_density.max(density);
+                }
+            }
+        }
+        
+        // Use logarithmic scaling for better visualization of density contrasts
+        let log_min = if min_density > 0.0 { min_density.ln() } else { 0.0 };
+        let log_max = max_density.ln();
+        let log_range = log_max - log_min;
+        
+        // Second pass: Render the density field
+        for y in 0..map.len() {
+            for x in 0..map[0].len() {
+                let density = density_samples[y][x];
+                
+                if density > 0.0 {
+                    // Logarithmic scaling to better show density contrasts
+                    let log_density = density.ln();
+                    let normalized = ((log_density - log_min) / log_range).clamp(0.0, 1.0);
+                    
+                    // Use power scaling to enhance contrast
+                    let enhanced = normalized.powf(0.5); // Square root to spread out the range
+                    let char_idx = (enhanced * (density_chars.len() - 1) as f64) as usize;
+                    map[y][x] = density_chars[char_idx.min(density_chars.len() - 1)];
                 }
                 
-                // Map density to character
-                let char_idx = ((density.ln() + 1.0) * 2.0).clamp(0.0, 9.0) as usize;
-                map[y][x] = density_chars[char_idx.min(9)];
+                let world_x = min_x + (x as f64 / map[0].len() as f64) * (max_x - min_x);
+                let world_y = min_y + (y as f64 / map.len() as f64) * (max_y - min_y);
                 
-                // Special markers for galaxy clusters
+                // Overlay galaxy markers on top of density field
                 for galaxy in &state.galaxies {
-                    if (galaxy.position.x - world_x).abs() < 0.5 && 
-                       (galaxy.position.y - world_y).abs() < 0.5 {
+                    let dx = (galaxy.position.x - world_x).abs();
+                    let dy = (galaxy.position.y - world_y).abs();
+                    
+                    // Check if galaxy is within this character cell
+                    let cell_width = (max_x - min_x) / map[0].len() as f64;
+                    let cell_height = (max_y - min_y) / map.len() as f64;
+                    
+                    if dx < cell_width / 2.0 && dy < cell_height / 2.0 {
+                        // Use different markers for different galaxy types
                         map[y][x] = match galaxy.galaxy_type {
                             crate::data_models::GalaxyType::Spiral => '@',
                             crate::data_models::GalaxyType::Elliptical => 'O',
@@ -149,10 +179,50 @@ impl AsciiRenderer {
             }
         }
         
-        // Add cosmic web filaments
-        self.add_filaments(&mut map, min_x, max_x, min_y, max_y);
+        // Apply smoothing filter to reduce noise
+        self.smooth_map(&mut map);
         
         map
+    }
+    
+    fn smooth_map(&self, map: &mut Vec<Vec<char>>) {
+        // Simple smoothing to make cosmic structures more visible
+        let density_order = [' ', '·', '∙', ':', '•', '○', '◉', '◎', '◈', '■', '█'];
+        let special_chars = ['@', 'O', '*', 'o']; // Galaxy markers
+        
+        let mut smoothed = map.clone();
+        
+        for y in 1..map.len()-1 {
+            for x in 1..map[0].len()-1 {
+                // Skip galaxy markers
+                if special_chars.contains(&map[y][x]) {
+                    continue;
+                }
+                
+                // Count neighboring density levels
+                let mut density_sum = 0;
+                let mut count = 0;
+                
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let ny = (y as i32 + dy) as usize;
+                        let nx = (x as i32 + dx) as usize;
+                        
+                        if let Some(pos) = density_order.iter().position(|&c| c == map[ny][nx]) {
+                            density_sum += pos;
+                            count += 1;
+                        }
+                    }
+                }
+                
+                if count > 0 {
+                    let avg_density = density_sum / count;
+                    smoothed[y][x] = density_order[avg_density.min(density_order.len() - 1)];
+                }
+            }
+        }
+        
+        *map = smoothed;
     }
     
     fn render_entropy_map(
@@ -254,34 +324,7 @@ impl AsciiRenderer {
         
         map
     }
-    
-    fn add_filaments(&self, map: &mut Vec<Vec<char>>, min_x: f64, max_x: f64, min_y: f64, max_y: f64) {
-        // Add cosmic web filaments connecting galaxy clusters
-        let filament_chars = ['─', '│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼'];
-        
-        // Simple filament pattern - in real simulation this would come from density field
-        for y in 0..map.len() {
-            for x in 0..map[0].len() {
-                let world_x = min_x + (x as f64 / map[0].len() as f64) * (max_x - min_x);
-                let world_y = min_y + (y as f64 / map.len() as f64) * (max_y - min_y);
-                
-                // Create web-like structure
-                let web1 = ((world_x * 0.1).sin() * (world_y * 0.1).cos()).abs();
-                let web2 = ((world_x * 0.05).cos() * (world_y * 0.15).sin()).abs();
-                
-                if web1 < 0.1 || web2 < 0.1 {
-                    if map[y][x] == ' ' || map[y][x] == '·' {
-                        // Determine filament direction
-                        if web1 < web2 {
-                            map[y][x] = '─';
-                        } else {
-                            map[y][x] = '│';
-                        }
-                    }
-                }
-            }
-        }
-    }
+
     
     fn render_legend(&self, map_type: MapType) -> String {
         match map_type {

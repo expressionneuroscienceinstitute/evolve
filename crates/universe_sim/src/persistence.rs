@@ -44,8 +44,10 @@ struct SerializableUniverse {
 
 /// Saves the complete state of the simulation to a checkpoint file.
 pub fn save_checkpoint(sim: &mut UniverseSimulation, path: &Path) -> Result<()> {
-    // TODO: Re-implement serialization for the new SoA-based Store.
-    // This will likely involve serializing each Vec in the Store.
+    // Create directory structure if it doesn't exist
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     
     let serializable_universe = SerializableUniverse {
         current_tick: sim.current_tick,
@@ -59,22 +61,39 @@ pub fn save_checkpoint(sim: &mut UniverseSimulation, path: &Path) -> Result<()> 
 
     let file = File::create(path)?;
     let writer = BufWriter::new(file);
-    bincode::serialize_into(writer, &serializable_universe)?;
+    
+    // Use bincode for efficient binary serialization of the entire simulation state
+    // The Store's SoA layout serializes efficiently due to Vec<T> being contiguous
+    bincode::serialize_into(writer, &serializable_universe)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize simulation state: {}", e))?;
+
+    // Log successful checkpoint creation
+    log::info!("Simulation checkpoint saved to: {}", path.display());
 
     Ok(())
 }
 
 /// Loads a simulation state from a checkpoint file.
 pub fn load_checkpoint(path: &Path) -> Result<UniverseSimulation> {
-    // TODO: Re-implement deserialization for the new SoA-based Store.
+    // Verify checkpoint file exists and is readable
+    if !path.exists() {
+        return Err(anyhow::anyhow!("Checkpoint file does not exist: {}", path.display()));
+    }
     
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let serializable_universe: SerializableUniverse = bincode::deserialize_from(reader)?;
+    
+    // Deserialize the entire simulation state from binary format
+    // The SoA Store structure deserializes efficiently back to contiguous memory
+    let serializable_universe: SerializableUniverse = bincode::deserialize_from(reader)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize checkpoint: {} - This may indicate a corrupted file or version mismatch", e))?;
 
-    let sim = UniverseSimulation {
+    // Reconstruct the simulation with deserialized state
+    // Note: PhysicsEngine is recreated from scratch as it's not serialized due to complexity
+    let mut sim = UniverseSimulation {
         store: serializable_universe.store,
-        physics_engine: PhysicsEngine::new()?, // Recreate physics engine
+        physics_engine: PhysicsEngine::new()
+            .map_err(|e| anyhow::anyhow!("Failed to recreate physics engine during load: {}", e))?,
         current_tick: serializable_universe.current_tick,
         tick_span_years: serializable_universe.tick_span_years,
         target_ups: serializable_universe.target_ups,
@@ -86,5 +105,60 @@ pub fn load_checkpoint(path: &Path) -> Result<UniverseSimulation> {
         performance_stats: crate::PerformanceStats::default(),
     };
 
+    // Validate loaded state for basic consistency
+    validate_loaded_simulation(&mut sim)?;
+    
+    // Log successful checkpoint loading
+    log::info!("Simulation checkpoint loaded from: {} (tick: {}, particles: {})", 
+        path.display(), sim.current_tick, sim.store.particles.len());
+
     Ok(sim)
+}
+
+/// Validates the consistency of a loaded simulation state
+fn validate_loaded_simulation(sim: &mut UniverseSimulation) -> Result<()> {
+    // Validate particle store consistency
+    let particles = &sim.store.particles;
+    if particles.position.len() != particles.velocity.len() 
+        || particles.position.len() != particles.mass.len()
+        || particles.position.len() != particles.charge.len() {
+        return Err(anyhow::anyhow!(
+            "Particle store arrays have inconsistent lengths: pos={}, vel={}, mass={}, charge={}",
+            particles.position.len(), particles.velocity.len(), 
+            particles.mass.len(), particles.charge.len()
+        ));
+    }
+
+    // Check for reasonable physics values
+    for (i, &mass) in particles.mass.iter().enumerate() {
+        if mass <= 0.0 || mass.is_infinite() || mass.is_nan() {
+            return Err(anyhow::anyhow!("Invalid particle mass at index {}: {}", i, mass));
+        }
+    }
+
+    for (i, &temp) in particles.temperature.iter().enumerate() {
+        if temp < 0.0 || temp.is_infinite() || temp.is_nan() {
+            return Err(anyhow::anyhow!("Invalid particle temperature at index {}: {}", i, temp));
+        }
+    }
+
+    // Validate celestial bodies
+    for (i, body) in sim.store.celestials.iter().enumerate() {
+        if body.mass <= 0.0 || body.radius <= 0.0 {
+            return Err(anyhow::anyhow!(
+                "Invalid celestial body {} at index {}: mass={}, radius={}", 
+                body.id, i, body.mass, body.radius
+            ));
+        }
+    }
+
+    // Validate simulation time parameters
+    if sim.tick_span_years <= 0.0 || sim.target_ups <= 0.0 {
+        return Err(anyhow::anyhow!(
+            "Invalid simulation time parameters: tick_span_years={}, target_ups={}", 
+            sim.tick_span_years, sim.target_ups
+        ));
+    }
+
+    Ok(())
 }

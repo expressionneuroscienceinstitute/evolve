@@ -30,14 +30,17 @@ impl Store {
     }
 
     /// Creates a new celestial body and returns its stable ID.
-    pub fn spawn_celestial(&mut self, body: CelestialBody) -> usize {
+    pub fn spawn_celestial(&mut self, body: CelestialBody) -> anyhow::Result<usize> {
         let id = self.next_entity_id;
-        self.next_entity_id += 1;
+        self.next_entity_id = self
+            .next_entity_id
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("Entity ID counter overflowed!"))?;
 
         let mut body_with_id = body;
         body_with_id.entity_id = id;
         self.celestials.push(body_with_id);
-        id
+        Ok(id)
     }
 }
 
@@ -46,9 +49,9 @@ impl Store {
 //------------------------------------------------------------------------------
 
 /// SoA storage for all fundamental particles.
-#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ParticleStore {
-    pub count: usize,
+    capacity: usize,
     pub position: Vec<Vector3<f64>>,
     pub velocity: Vec<Vector3<f64>>,
     pub acceleration: Vec<Vector3<f64>>,
@@ -59,19 +62,25 @@ pub struct ParticleStore {
 }
 
 impl ParticleStore {
-    pub fn new() -> Self {
-        // Pre-allocate for performance, assuming a reasonably large number of particles.
-        const INITIAL_CAPACITY: usize = 10_000;
+    pub fn new(capacity: usize) -> Self {
         Self {
-            count: 0,
-            position: Vec::with_capacity(INITIAL_CAPACITY),
-            velocity: Vec::with_capacity(INITIAL_CAPACITY),
-            acceleration: Vec::with_capacity(INITIAL_CAPACITY),
-            mass: Vec::with_capacity(INITIAL_CAPACITY),
-            charge: Vec::with_capacity(INITIAL_CAPACITY),
-            temperature: Vec::with_capacity(INITIAL_CAPACITY),
-            entropy: Vec::with_capacity(INITIAL_CAPACITY),
+            capacity,
+            position: Vec::with_capacity(capacity),
+            velocity: Vec::with_capacity(capacity),
+            acceleration: Vec::with_capacity(capacity),
+            mass: Vec::with_capacity(capacity),
+            charge: Vec::with_capacity(capacity),
+            temperature: Vec::with_capacity(capacity),
+            entropy: Vec::with_capacity(capacity),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.position.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.position.is_empty()
     }
 
     pub fn add(
@@ -82,7 +91,10 @@ impl ParticleStore {
         charge: f64,
         temperature: f64,
         entropy: f64,
-    ) {
+    ) -> anyhow::Result<()> {
+        if self.len() >= self.capacity {
+            return Err(anyhow::anyhow!("ParticleStore has reached its capacity of {}", self.capacity));
+        }
         self.position.push(position);
         self.velocity.push(velocity);
         self.acceleration.push(Vector3::zeros());
@@ -90,7 +102,14 @@ impl ParticleStore {
         self.charge.push(charge);
         self.temperature.push(temperature);
         self.entropy.push(entropy);
-        self.count += 1;
+        Ok(())
+    }
+}
+
+impl Default for ParticleStore {
+    fn default() -> Self {
+        const INITIAL_CAPACITY: usize = 10_000;
+        Self::new(INITIAL_CAPACITY)
     }
 }
 
@@ -112,6 +131,7 @@ pub struct CelestialBody {
     pub composition: ElementTable,
     pub has_planets: bool,
     pub has_life: bool,
+    pub position: Vector3<f64>, // Position in 3D space (m) for cosmological expansion
 }
 
 /// Tracks the nuclear burning stages of a star.
@@ -130,7 +150,10 @@ pub struct StellarEvolution {
 
 impl StellarEvolution {
     /// Create a new StellarEvolution record with reasonable defaults for a given stellar mass.
-    pub fn new(star_mass_kg: f64) -> Self {
+    pub fn new(star_mass_kg: f64) -> anyhow::Result<Self> {
+        if star_mass_kg <= 0.0 {
+            return Err(anyhow::anyhow!("Star mass must be positive, but was {}", star_mass_kg));
+        }
         let nucleosynthesis = StellarNucleosynthesis::new();
         // Initialize primordial composition: 75% H-1, 25% He-4 (by mass fraction)
         let core_composition = vec![
@@ -146,7 +169,7 @@ impl StellarEvolution {
         // Rough core density constant for now
         let core_density = 1.5e5; // kg/m³, rough solar core density
 
-        Self {
+        Ok(Self {
             entity_id: 0,
             nucleosynthesis,
             core_temperature,
@@ -156,7 +179,7 @@ impl StellarEvolution {
             main_sequence_lifetime: lifetime_years,
             evolutionary_phase: StellarPhase::MainSequence,
             nuclear_energy_generation: 0.0,
-        }
+        })
     }
 
     /// Evolve the stellar core for a time step `dt_years`.
@@ -227,9 +250,32 @@ impl StellarEvolution {
 
         match self.evolutionary_phase {
             StellarPhase::SubgiantBranch => {
-                // Massive stars (>8 Msun) explode as supernova once fuel is sufficiently depleted
-                if mass_msun > 8.0 && fuel_fraction < 0.1 {
-                    self.evolutionary_phase = StellarPhase::Supernova;
+                // Implement proper stellar evolution phase transitions based on stellar physics
+                // Use detailed criteria for each evolutionary phase with proper thresholds
+                
+                // Calculate core hydrogen depletion and helium core mass
+                let hydrogen_depletion = 1.0 - fuel_fraction;
+                let helium_core_mass = star_mass_kg * hydrogen_depletion * 0.25; // ~25% of H converts to He
+                
+                // Determine next phase based on stellar mass and core conditions
+                if mass_msun > 8.0 {
+                    // High-mass stars: Subgiant → Red Giant → Supernova
+                    if hydrogen_depletion > 0.95 && helium_core_mass > 0.5 * M_SUN {
+                        self.evolutionary_phase = StellarPhase::RedGiantBranch;
+                    } else if self.core_temperature > 1e8 && helium_core_mass > 1.4 * M_SUN {
+                        // Core temperature high enough for helium burning, but core too massive
+                        self.evolutionary_phase = StellarPhase::Supernova;
+                    }
+                } else if mass_msun > 0.8 {
+                    // Intermediate-mass stars: Subgiant → Red Giant → Horizontal Branch → AGB
+                    if hydrogen_depletion > 0.98 {
+                        self.evolutionary_phase = StellarPhase::RedGiantBranch;
+                    }
+                } else {
+                    // Low-mass stars: Subgiant → Red Giant → White Dwarf
+                    if hydrogen_depletion > 0.99 {
+                        self.evolutionary_phase = StellarPhase::RedGiantBranch;
+                    }
                 }
             }
             StellarPhase::PlanetaryNebula => {
@@ -289,6 +335,7 @@ pub struct AgentLineage {
     pub tech_level: f64,
     pub immortality_achieved: bool,
     pub last_mutation_tick: u64,
+    pub is_extinct: bool, // Track if this lineage has gone extinct
 }
 
 //------------------------------------------------------------------------------

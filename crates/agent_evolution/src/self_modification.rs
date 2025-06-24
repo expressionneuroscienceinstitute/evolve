@@ -29,7 +29,7 @@ use uuid::Uuid;
 pub struct AdvancedIntrospection {
     pub id: Uuid,
     pub analysis_capabilities: AnalysisCapabilities,
-    pub performance_metrics: PerformanceMetrics,
+    pub performance_metrics: SelfModificationPerformanceMetrics,
     pub modification_history: Vec<ModificationEvent>,
     pub self_awareness_level: f64,
     pub adaptation_strategy: AdaptationStrategy,
@@ -48,7 +48,7 @@ pub struct AnalysisCapabilities {
 
 /// Performance metrics for self-evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerformanceMetrics {
+pub struct SelfModificationPerformanceMetrics {
     pub learning_efficiency: f64,
     pub decision_accuracy: f64,
     pub adaptation_speed: f64,
@@ -251,15 +251,7 @@ impl AdvancedIntrospection {
                 meta_learning_analysis: true,
                 curiosity_analysis: true,
             },
-            performance_metrics: PerformanceMetrics {
-                learning_efficiency: 0.0,
-                decision_accuracy: 0.0,
-                adaptation_speed: 0.0,
-                exploration_effectiveness: 0.0,
-                innovation_rate: 0.0,
-                overall_performance: 0.0,
-                performance_trend: 0.0,
-            },
+            performance_metrics: SelfModificationPerformanceMetrics::default(),
             modification_history: Vec::new(),
             self_awareness_level: 0.5,
             adaptation_strategy: AdaptationStrategy::Balanced,
@@ -365,7 +357,7 @@ impl AdvancedIntrospection {
     }
 
     /// Update performance metrics
-    pub fn update_performance_metrics(&mut self, new_metrics: PerformanceMetrics) {
+    pub fn update_performance_metrics(&mut self, new_metrics: SelfModificationPerformanceMetrics) {
         self.performance_metrics = new_metrics;
         self.self_awareness_level = (self.self_awareness_level + 0.01).min(1.0);
     }
@@ -759,6 +751,26 @@ pub struct SelfModificationStatistics {
     pub average_impact: f64,
     pub self_awareness_level: f64,
     pub last_modification_time: f64,
+}
+
+impl Default for AdvancedIntrospection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for SelfModificationPerformanceMetrics {
+    fn default() -> Self {
+        Self {
+            learning_efficiency: 0.0,
+            decision_accuracy: 0.0,
+            adaptation_speed: 0.0,
+            exploration_effectiveness: 0.0,
+            innovation_rate: 0.0,
+            overall_performance: 0.0,
+            performance_trend: 0.0,
+        }
+    }
 }
 
 #[cfg(test)]

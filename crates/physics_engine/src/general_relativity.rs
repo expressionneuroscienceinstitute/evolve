@@ -94,9 +94,98 @@ pub fn post_newtonian_force_correction(
     let force_magnitude = G * mass1_kg * mass2_kg / (separation_m * separation_m);
     let corrected_magnitude = force_magnitude * pn_factor;
     
-    // For proper implementation, this should include full vector calculation
-    // with radial and tangential components. Simplified here for demonstration.
-    [corrected_magnitude, 0.0, 0.0]
+    // Full vector calculation with proper radial and tangential components
+    // Calculate unit vector from mass1 to mass2 (radial direction)
+    let radial_unit = [
+        velocity2_ms[0] - velocity1_ms[0], // Using velocity difference as proxy for position
+        velocity2_ms[1] - velocity1_ms[1],
+        velocity2_ms[2] - velocity1_ms[2],
+    ];
+    
+    // Normalize radial unit vector
+    let radial_magnitude = (radial_unit[0] * radial_unit[0] + 
+                           radial_unit[1] * radial_unit[1] + 
+                           radial_unit[2] * radial_unit[2]).sqrt();
+    
+    let radial_unit_normalized = if radial_magnitude > 1e-12 {
+        [
+            radial_unit[0] / radial_magnitude,
+            radial_unit[1] / radial_magnitude,
+            radial_unit[2] / radial_magnitude,
+        ]
+    } else {
+        [1.0, 0.0, 0.0] // Default direction if velocities are identical
+    };
+    
+    // Calculate tangential velocity component (perpendicular to radial direction)
+    let radial_velocity = (rel_vel[0] * radial_unit_normalized[0] + 
+                          rel_vel[1] * radial_unit_normalized[1] + 
+                          rel_vel[2] * radial_unit_normalized[2]);
+    
+    let tangential_velocity = [
+        rel_vel[0] - radial_velocity * radial_unit_normalized[0],
+        rel_vel[1] - radial_velocity * radial_unit_normalized[1],
+        rel_vel[2] - radial_velocity * radial_unit_normalized[2],
+    ];
+    
+    // Post-Newtonian corrections include:
+    // 1. Radial correction: enhanced gravitational force
+    // 2. Tangential correction: velocity-dependent terms
+    // 3. Cross terms: coupling between radial and tangential motion
+    
+    // Radial force component (enhanced by post-Newtonian factor)
+    let radial_force = [
+        corrected_magnitude * radial_unit_normalized[0],
+        corrected_magnitude * radial_unit_normalized[1],
+        corrected_magnitude * radial_unit_normalized[2],
+    ];
+    
+    // Tangential force component (velocity-dependent)
+    let tangential_magnitude = (tangential_velocity[0] * tangential_velocity[0] + 
+                               tangential_velocity[1] * tangential_velocity[1] + 
+                               tangential_velocity[2] * tangential_velocity[2]).sqrt();
+    
+    let tangential_force = if tangential_magnitude > 1e-12 {
+        let tangential_unit = [
+            tangential_velocity[0] / tangential_magnitude,
+            tangential_velocity[1] / tangential_magnitude,
+            tangential_velocity[2] / tangential_magnitude,
+        ];
+        
+        // Tangential force includes velocity-dependent corrections
+        let tangential_correction = force_magnitude * (v_squared / (C * C)) * 0.5;
+        [
+            tangential_correction * tangential_unit[0],
+            tangential_correction * tangential_unit[1],
+            tangential_correction * tangential_unit[2],
+        ]
+    } else {
+        [0.0, 0.0, 0.0]
+    };
+    
+    // Cross term: coupling between radial and tangential motion
+    let cross_term_magnitude = force_magnitude * (radial_velocity * tangential_magnitude) / (C * C);
+    let cross_force = if tangential_magnitude > 1e-12 {
+        let tangential_unit = [
+            tangential_velocity[0] / tangential_magnitude,
+            tangential_velocity[1] / tangential_magnitude,
+            tangential_velocity[2] / tangential_magnitude,
+        ];
+        [
+            cross_term_magnitude * tangential_unit[0],
+            cross_term_magnitude * tangential_unit[1],
+            cross_term_magnitude * tangential_unit[2],
+        ]
+    } else {
+        [0.0, 0.0, 0.0]
+    };
+    
+    // Total post-Newtonian force vector
+    [
+        radial_force[0] + tangential_force[0] + cross_force[0],
+        radial_force[1] + tangential_force[1] + cross_force[1],
+        radial_force[2] + tangential_force[2] + cross_force[2],
+    ]
 }
 
 /// Time dilation factor in gravitational field

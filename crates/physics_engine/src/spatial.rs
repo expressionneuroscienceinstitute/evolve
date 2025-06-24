@@ -387,13 +387,21 @@ fn subdivide_node(node: &mut OctreeNode, particles: &[FundamentalParticle]) {
 }
 
 // -----------------------------------------------------------------------------
-// Simple spacetime grid placeholder (3D lattice + uniform time step)
+// Relativistic spacetime grid implementation
+// Implements a proper spacetime grid with relativistic considerations including:
+// - Lorentz transformations for moving reference frames
+// - Proper time dilation effects
+// - Relativistic spatial contraction
+// - Light cone structure for causality
 // -----------------------------------------------------------------------------
 #[derive(Debug, Clone)]
 pub struct SpacetimeGrid {
     pub spatial_dimensions: (usize, usize, usize),
     pub spacing: f64,     // Lattice spacing (m)
     pub time_step: f64,   // Temporal resolution (s)
+    pub reference_frame_velocity: Vector3<f64>, // Velocity of reference frame (m/s)
+    pub gravitational_potential: f64, // Gravitational potential at grid center (m²/s²)
+    pub speed_of_light: f64, // Speed of light (m/s)
 }
 
 impl Default for SpacetimeGrid {
@@ -402,7 +410,170 @@ impl Default for SpacetimeGrid {
             spatial_dimensions: (16, 16, 16),
             spacing: 1e-15,  // 1 femtometer spacing
             time_step: 1e-23, // Attosecond-scale time step
+            reference_frame_velocity: Vector3::zeros(),
+            gravitational_potential: 0.0,
+            speed_of_light: 299_792_458.0,
         }
+    }
+}
+
+impl SpacetimeGrid {
+    /// Create a spacetime grid with relativistic considerations
+    pub fn new_relativistic(
+        spatial_dimensions: (usize, usize, usize),
+        spacing: f64,
+        time_step: f64,
+        reference_velocity: Vector3<f64>,
+        gravitational_potential: f64,
+    ) -> Self {
+        Self {
+            spatial_dimensions,
+            spacing,
+            time_step,
+            reference_frame_velocity: reference_velocity,
+            gravitational_potential,
+            speed_of_light: 299_792_458.0,
+        }
+    }
+    
+    /// Calculate proper time interval between two spacetime events
+    /// Proper time is the time measured by a clock at rest in the reference frame
+    pub fn proper_time_interval(
+        &self,
+        event1: (Vector3<f64>, f64), // (position, time)
+        event2: (Vector3<f64>, f64),
+    ) -> f64 {
+        let (pos1, t1) = event1;
+        let (pos2, t2) = event2;
+        
+        let spatial_separation = (pos2 - pos1).norm();
+        let time_separation = t2 - t1;
+        
+        // Proper time interval: Δτ = √(Δt² - Δx²/c²)
+        let time_term = time_separation * time_separation;
+        let space_term = (spatial_separation * spatial_separation) / (self.speed_of_light * self.speed_of_light);
+        
+        (time_term - space_term).sqrt().max(0.0)
+    }
+    
+    /// Calculate coordinate time dilation factor
+    /// Accounts for both special and general relativistic effects
+    pub fn time_dilation_factor(&self, position: &Vector3<f64>, velocity: &Vector3<f64>) -> f64 {
+        let v_squared = velocity.dot(velocity);
+        let beta_squared = v_squared / (self.speed_of_light * self.speed_of_light);
+        
+        // Special relativistic time dilation: γ = 1/√(1 - v²/c²)
+        let lorentz_factor = if beta_squared < 1.0 {
+            1.0 / (1.0 - beta_squared).sqrt()
+        } else {
+            f64::INFINITY // Velocity exceeds speed of light
+        };
+        
+        // General relativistic time dilation: gravitational redshift
+        let gravitational_factor = if self.gravitational_potential != 0.0 {
+            let local_potential = self.gravitational_potential_at_position(position);
+            (1.0 + 2.0 * local_potential / (self.speed_of_light * self.speed_of_light)).sqrt()
+        } else {
+            1.0
+        };
+        
+        lorentz_factor * gravitational_factor
+    }
+    
+    /// Calculate spatial contraction factor (Lorentz contraction)
+    pub fn spatial_contraction_factor(&self, velocity: &Vector3<f64>) -> f64 {
+        let v_squared = velocity.dot(velocity);
+        let beta_squared = v_squared / (self.speed_of_light * self.speed_of_light);
+        
+        if beta_squared < 1.0 {
+            (1.0 - beta_squared).sqrt() // Length contraction: L = L₀/γ
+        } else {
+            0.0 // Complete contraction at light speed
+        }
+    }
+    
+    /// Transform coordinates between inertial reference frames
+    /// Implements Lorentz transformation for moving reference frames
+    pub fn lorentz_transform(
+        &self,
+        position: &Vector3<f64>,
+        time: f64,
+        relative_velocity: &Vector3<f64>,
+    ) -> (Vector3<f64>, f64) {
+        let v_squared = relative_velocity.dot(relative_velocity);
+        let beta_squared = v_squared / (self.speed_of_light * self.speed_of_light);
+        
+        if beta_squared >= 1.0 {
+            return (*position, time); // Invalid transformation
+        }
+        
+        let gamma = 1.0 / (1.0 - beta_squared).sqrt();
+        let v_dot_r = relative_velocity.dot(position);
+        
+        // Lorentz transformation equations
+        let transformed_time = gamma * (time - v_dot_r / (self.speed_of_light * self.speed_of_light));
+        let transformed_position = position + relative_velocity * (
+            (gamma - 1.0) * v_dot_r / v_squared - gamma * time
+        );
+        
+        (transformed_position, transformed_time)
+    }
+    
+    /// Calculate gravitational potential at a given position
+    /// Simplified model assuming central gravitational field
+    pub fn gravitational_potential_at_position(&self, position: &Vector3<f64>) -> f64 {
+        let distance_from_center = position.norm();
+        if distance_from_center > 1e-12 {
+            self.gravitational_potential / distance_from_center
+        } else {
+            self.gravitational_potential
+        }
+    }
+    
+    /// Check if two events are causally connected (within light cone)
+    pub fn are_causally_connected(
+        &self,
+        event1: (Vector3<f64>, f64),
+        event2: (Vector3<f64>, f64),
+    ) -> bool {
+        let (pos1, t1) = event1;
+        let (pos2, t2) = event2;
+        
+        let spatial_separation = (pos2 - pos1).norm();
+        let time_separation = (t2 - t1).abs();
+        
+        // Events are causally connected if |Δt| ≥ |Δx|/c
+        time_separation >= spatial_separation / self.speed_of_light
+    }
+    
+    /// Calculate spacetime interval between two events
+    /// Spacetime interval is invariant under Lorentz transformations
+    pub fn spacetime_interval(
+        &self,
+        event1: (Vector3<f64>, f64),
+        event2: (Vector3<f64>, f64),
+    ) -> f64 {
+        let (pos1, t1) = event1;
+        let (pos2, t2) = event2;
+        
+        let spatial_separation = (pos2 - pos1).norm();
+        let time_separation = t2 - t1;
+        
+        // Spacetime interval: s² = (cΔt)² - |Δx|²
+        let time_term = (self.speed_of_light * time_separation).powi(2);
+        let space_term = spatial_separation.powi(2);
+        
+        time_term - space_term
+    }
+    
+    /// Get effective grid spacing accounting for relativistic effects
+    pub fn effective_spacing(&self, velocity: &Vector3<f64>) -> f64 {
+        self.spacing / self.spatial_contraction_factor(velocity)
+    }
+    
+    /// Get effective time step accounting for time dilation
+    pub fn effective_time_step(&self, position: &Vector3<f64>, velocity: &Vector3<f64>) -> f64 {
+        self.time_step * self.time_dilation_factor(position, velocity)
     }
 }
 

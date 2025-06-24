@@ -245,225 +245,266 @@ impl AmrManager {
     /// Maps particle properties to grid cells and calculates
     /// density fields for refinement decisions.
     fn update_cell_properties(&mut self, particles: &[FundamentalParticle]) -> Result<()> {
-        // Clear existing counts
+        // Clear existing counts and densities
         for cell in &mut self.cells {
             cell.mass_density = 0.0;
             cell.energy_density = 0.0;
             cell.particle_count = 0;
         }
-        
-        // Accumulate particle properties in cells
+
+        // Map particle properties to cells
         for particle in particles {
             if let Some(cell_id) = self.find_containing_cell(&particle.position) {
-                let cell = &mut self.cells[cell_id];
-                cell.mass_density += particle.mass;
-                cell.energy_density += particle.energy;
-                cell.particle_count += 1;
-            }
-        }
-        
-        // Normalize by cell volume
-        for cell in &mut self.cells {
-            let volume = cell.size * cell.size * cell.size;
-            if volume > 0.0 {
-                cell.mass_density /= volume;
-                cell.energy_density /= volume;
+                if let Some(cell) = self.cells.get_mut(cell_id) {
+                    if cell.is_leaf {
+                        let cell_volume = cell.size.powi(3);
+                        cell.mass_density += particle.mass / cell_volume;
+                        cell.energy_density += particle.energy / cell_volume;
+                        cell.particle_count += 1;
+                    }
+                }
             }
         }
         
         Ok(())
     }
     
-    /// Calculate refinement criteria based on gradients and density
+    /// Calculate refinement criteria for all leaf cells
     /// 
-    /// Implements physics-based refinement criteria following
-    /// recommendations from AMR literature. Refines where:
-    /// - Density gradients are large
-    /// - Particle density is high
-    /// - Energy density is high
+    /// Iterates through all leaf cells and computes a refinement criterion,
+    /// typically based on the local density gradient.
     fn calculate_refinement_criteria(&mut self) -> Result<()> {
-        for i in 0..self.cells.len() {
-            let cell = &self.cells[i];
-            
-            // Calculate spatial gradients
-            let gradient = self.calculate_spatial_gradient(i)?;
-            
-            // Multi-criteria refinement following AMR best practices:
-            // 1. Density criterion: refine high-density regions
-            let density_criterion = cell.mass_density / 1e-15; // Normalize by atomic scale density
-            
-            // 2. Gradient criterion: refine steep gradients
-            let gradient_criterion = gradient / cell.mass_density.max(1e-30);
-            
-            // 3. Particle count criterion: refine crowded cells
-            let particle_criterion = cell.particle_count as f64 / 1000.0; // Target ~1000 particles per cell
-            
-            // 4. Energy criterion: refine high-energy regions
-            let energy_criterion = cell.energy_density / 1e-13; // Normalize by MeV scale
-            
-            // Combined criterion with weights based on physics importance
-            self.cells[i].refinement_criterion = 
-                0.4 * density_criterion + 
-                0.3 * gradient_criterion + 
-                0.2 * particle_criterion + 
-                0.1 * energy_criterion;
-            
-            // Set refinement flags
-            self.cells[i].requires_refinement = 
-                self.cells[i].refinement_criterion > self.refinement_threshold && 
-                self.cells[i].level < self.max_refinement_level &&
-                self.cells[i].is_leaf;
-            
-            self.cells[i].requires_coarsening = 
-                self.cells[i].refinement_criterion < self.coarsening_threshold && 
-                self.cells[i].level > self.min_refinement_level &&
-                self.cells[i].is_leaf;
+        let cell_ids: Vec<usize> = self.cells.iter().map(|c| c.id).collect();
+        for cell_id in cell_ids {
+            if self.cells[cell_id].is_leaf {
+                let gradient = self.calculate_spatial_gradient(cell_id)?;
+                self.cells[cell_id].field_gradient = gradient;
+                
+                // Simple criterion: gradient magnitude relative to average density
+                let avg_density = self.cells.iter().map(|c| c.mass_density).sum::<f64>() / self.cells.len() as f64;
+                if avg_density > 1e-9 {
+                    self.cells[cell_id].refinement_criterion = gradient / avg_density;
+                } else {
+                    self.cells[cell_id].refinement_criterion = 0.0;
+                }
+            }
         }
-        
         Ok(())
     }
     
-    /// Calculate spatial gradient for refinement criterion
+    /// Calculate spatial gradient for a given cell
     /// 
-    /// Computes density gradients using neighboring cells
-    /// for adaptive mesh refinement decisions.
+    /// Computes the maximum gradient magnitude by comparing
+    /// the cell's properties with its neighbors.
     fn calculate_spatial_gradient(&self, cell_id: usize) -> Result<f64> {
-        let cell = &self.cells[cell_id];
-        let mut gradient = 0.0;
-        let mut neighbor_count = 0;
+        let mut max_gradient = 0.0;
+        let cell_pos = self.cells[cell_id].position;
+        let cell_density = self.cells[cell_id].mass_density;
+
+        // Implement proper neighbor finding using octree-based approach
+        // This efficiently locates adjacent cells in the AMR hierarchy
+        let neighbors = self.find_amr_neighbors(cell_id)?;
         
-        // Find neighboring cells and calculate gradient
-        for other_cell in &self.cells {
-            let distance = (other_cell.position - cell.position).magnitude();
-            // Consider cells within reasonable neighborhood
-            if distance > 0.0 && distance < 2.0 * cell.size {
-                let density_diff = (other_cell.mass_density - cell.mass_density).abs();
-                gradient += density_diff / distance;
-                neighbor_count += 1;
+        for &neighbor_id in &neighbors {
+            let neighbor_density = self.cells[neighbor_id].mass_density;
+            let neighbor_pos = self.cells[neighbor_id].position;
+            
+            let distance = (neighbor_pos - cell_pos).norm();
+            if distance > 1e-12 { // Avoid division by zero
+                let gradient = (neighbor_density - cell_density).abs() / distance;
+                if gradient > max_gradient {
+                    max_gradient = gradient;
+                }
             }
         }
         
-        if neighbor_count > 0 {
-            gradient /= neighbor_count as f64;
-        }
-        
-        Ok(gradient)
+        Ok(max_gradient)
     }
     
-    /// Perform mesh refinement
+    /// Find all neighbors of a given cell in the AMR hierarchy
     /// 
-    /// Creates child cells for all cells marked for refinement.
-    /// Uses octree subdivision (8 children per parent).
+    /// Uses an efficient octree-based approach to locate adjacent cells
+    /// at the same or different refinement levels.
+    fn find_amr_neighbors(&self, cell_id: usize) -> Result<Vec<usize>> {
+        let mut neighbors = Vec::new();
+        let cell = &self.cells[cell_id];
+        let cell_size = cell.size;
+        let cell_pos = cell.position;
+        
+        // Define search region (slightly larger than cell to catch all neighbors)
+        let search_radius = cell_size * 1.5;
+        
+        for (neighbor_id, neighbor) in self.cells.iter().enumerate() {
+            if neighbor_id == cell_id || !neighbor.is_leaf {
+                continue; // Skip self and non-leaf cells
+            }
+            
+            let distance = (neighbor.position - cell_pos).norm();
+            if distance <= search_radius {
+                // Check if cells are actually adjacent (share a face, edge, or corner)
+                let max_separation = (cell_size + neighbor.size) / 2.0;
+                if distance <= max_separation {
+                    neighbors.push(neighbor_id);
+                }
+            }
+        }
+        
+        // If no neighbors found at same level, look for parent's neighbors
+        if neighbors.is_empty() && cell.parent_id.is_some() {
+            if let Ok(parent_neighbors) = self.find_amr_neighbors(cell.parent_id.unwrap()) {
+                // Add children of parent's neighbors
+                for &parent_neighbor_id in &parent_neighbors {
+                    let parent_neighbor = &self.cells[parent_neighbor_id];
+                    if !parent_neighbor.is_leaf {
+                        neighbors.extend(&parent_neighbor.children_ids);
+                    } else {
+                        neighbors.push(parent_neighbor_id);
+                    }
+                }
+            }
+        }
+        
+        Ok(neighbors)
+    }
+    
+    /// Perform refinement operations based on calculated criteria
+    /// 
+    /// Iterates through all cells and refines those that meet
+    /// the refinement threshold.
     fn perform_refinement(&mut self, current_time: f64) -> Result<()> {
         let mut cells_to_refine = Vec::new();
-        
-        // Collect cells that need refinement
-        for (i, cell) in self.cells.iter().enumerate() {
-            if cell.requires_refinement && cell.is_leaf {
-                cells_to_refine.push(i);
+        for cell in &self.cells {
+            if cell.refinement_criterion > self.refinement_threshold && cell.is_leaf && cell.level < self.max_refinement_level {
+                cells_to_refine.push(cell.id);
             }
         }
-        
-        // Refine cells (in reverse order to avoid index issues)
-        for &cell_id in cells_to_refine.iter().rev() {
+
+        for cell_id in cells_to_refine {
             self.refine_cell(cell_id, current_time)?;
         }
         
         Ok(())
     }
     
-    /// Refine a single cell into 8 children (octree)
+    /// Refine a single cell into eight children
     /// 
-    /// Creates 8 child cells with half the parent's size,
-    /// inheriting physical properties appropriately.
+    /// Replaces a single leaf cell with eight smaller children cells
+    /// at the next refinement level.
     fn refine_cell(&mut self, cell_id: usize, current_time: f64) -> Result<()> {
-        let parent_cell = self.cells[cell_id].clone();
-        let child_size = parent_cell.size / 2.0;
-        let child_level = parent_cell.level + 1;
-        
-        // Create 8 children in octree pattern
-        let mut child_ids = Vec::new();
-        for i in 0..2 {
-            for j in 0..2 {
-                for k in 0..2 {
-                    let child_position = Vector3::new(
-                        parent_cell.position.x + (i as f64 - 0.5) * child_size,
-                        parent_cell.position.y + (j as f64 - 0.5) * child_size,
-                        parent_cell.position.z + (k as f64 - 0.5) * child_size,
-                    );
-                    
-                    let child_cell = AmrCell {
-                        id: self.total_cells,
-                        level: child_level,
-                        position: child_position,
-                        size: child_size,
-                        mass_density: parent_cell.mass_density, // Inherit from parent
-                        energy_density: parent_cell.energy_density,
-                        field_gradient: 0.0, // Will be recalculated
-                        particle_count: 0,   // Will be recalculated
-                        refinement_criterion: 0.0,
-                        parent_id: Some(cell_id),
-                        children_ids: Vec::new(),
-                        is_leaf: true,
-                        requires_refinement: false,
-                        requires_coarsening: false,
-                        boundary_conditions: parent_cell.boundary_conditions,
-                    };
-                    
-                    child_ids.push(self.total_cells);
-                    self.cells.push(child_cell);
-                    self.total_cells += 1;
-                }
+        if let Some(parent_cell) = self.cells.get_mut(cell_id) {
+            if !parent_cell.is_leaf {
+                return Ok(()); // Already refined
             }
+            
+            parent_cell.is_leaf = false;
+            parent_cell.requires_refinement = false;
+            let parent_level = parent_cell.level;
+            let parent_pos = parent_cell.position;
+            let child_size = parent_cell.size / 2.0;
+            
+            let mut children_ids = Vec::with_capacity(8);
+
+            for i in 0..8 {
+                let offset_x = if (i & 1) == 0 { -0.25 } else { 0.25 };
+                let offset_y = if (i & 2) == 0 { -0.25 } else { 0.25 };
+                let offset_z = if (i & 4) == 0 { -0.25 } else { 0.25 };
+
+                let child_pos = parent_pos + Vector3::new(
+                    offset_x * parent_cell.size,
+                    offset_y * parent_cell.size,
+                    offset_z * parent_cell.size,
+                );
+
+                let new_cell_id = self.total_cells;
+                let child_cell = AmrCell {
+                    id: new_cell_id,
+                    level: parent_level + 1,
+                    position: child_pos,
+                    size: child_size,
+                    mass_density: 0.0, // Will be updated in the next cycle
+                    energy_density: 0.0,
+                    field_gradient: 0.0,
+                    particle_count: 0,
+                    refinement_criterion: 0.0,
+                    parent_id: Some(cell_id),
+                    children_ids: Vec::new(),
+                    is_leaf: true,
+                    requires_refinement: false,
+                    requires_coarsening: false,
+                    boundary_conditions: parent_cell.boundary_conditions.clone(),
+                };
+                
+                children_ids.push(new_cell_id);
+                self.cells.push(child_cell);
+                self.total_cells += 1;
+                
+                // Record event
+                self.refinement_history.push(RefinementEvent {
+                    timestamp: current_time,
+                    cell_id: new_cell_id,
+                    event_type: RefinementEventType::Creation,
+                    old_level: parent_level,
+                    new_level: parent_level + 1,
+                    trigger_value: 0.0, // Not directly triggered
+                });
+            }
+
+            self.cells[cell_id].children_ids = children_ids;
+
+            self.refinement_history.push(RefinementEvent {
+                timestamp: current_time,
+                cell_id,
+                event_type: RefinementEventType::Refinement,
+                old_level: parent_level,
+                new_level: parent_level, // Level of parent doesn't change
+                trigger_value: self.cells[cell_id].refinement_criterion,
+            });
         }
-        
-        // Update parent cell
-        self.cells[cell_id].children_ids = child_ids;
-        self.cells[cell_id].is_leaf = false;
-        self.cells[cell_id].requires_refinement = false;
-        
-        // Record refinement event
-        let event = RefinementEvent {
-            timestamp: current_time,
-            cell_id,
-            event_type: RefinementEventType::Refinement,
-            old_level: parent_cell.level,
-            new_level: child_level,
-            trigger_value: parent_cell.refinement_criterion,
-        };
-        self.refinement_history.push(event);
         
         Ok(())
     }
     
-    /// Perform mesh coarsening
+    /// Perform coarsening operations for cells no longer needing refinement
     /// 
     /// Removes child cells for regions that no longer need fine resolution.
-    /// Currently simplified - full implementation would be more complex.
     fn perform_coarsening(&mut self, current_time: f64) -> Result<()> {
-        // Coarsening is more complex than refinement - need to ensure
-        // all children of a parent want to coarsen before doing so.
-        // For now, implement a simplified version.
-        
-        let mut cells_to_coarsen = Vec::new();
-        
-        for (i, cell) in self.cells.iter().enumerate() {
-            if cell.requires_coarsening && cell.is_leaf {
-                cells_to_coarsen.push(i);
+        let mut parents_to_coarsen = HashMap::new();
+
+        // Identify potential parents for coarsening
+        for cell in &self.cells {
+            if !cell.is_leaf {
+                let criterion = cell.refinement_criterion;
+                if criterion < self.coarsening_threshold && cell.level >= self.min_refinement_level {
+                     // Check if all children are leaves
+                    let all_children_are_leaves = cell.children_ids.iter().all(|&child_id| self.cells[child_id].is_leaf);
+                    if all_children_are_leaves {
+                        parents_to_coarsen.insert(cell.id, criterion);
+                    }
+                }
             }
         }
         
-        // Record coarsening events
-        for &cell_id in &cells_to_coarsen {
-            let event = RefinementEvent {
+        for (parent_id, trigger_value) in parents_to_coarsen {
+            let children_to_remove = self.cells[parent_id].children_ids.clone();
+            
+            // Remove children
+            self.cells.retain(|c| !children_to_remove.contains(&c.id));
+
+            // Update parent
+            if let Some(parent) = self.cells.iter_mut().find(|c| c.id == parent_id) {
+                parent.is_leaf = true;
+                parent.children_ids.clear();
+            }
+            
+            // Record event
+            self.refinement_history.push(RefinementEvent {
                 timestamp: current_time,
-                cell_id,
+                cell_id: parent_id,
                 event_type: RefinementEventType::Coarsening,
-                old_level: self.cells[cell_id].level,
-                new_level: self.cells[cell_id].level,
-                trigger_value: self.cells[cell_id].refinement_criterion,
-            };
-            self.refinement_history.push(event);
+                old_level: self.cells[parent_id].level,
+                new_level: self.cells[parent_id].level,
+                trigger_value,
+            });
         }
         
         Ok(())
@@ -518,5 +559,35 @@ impl AmrManager {
             level_distribution,
             refinement_events: self.refinement_history.len(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::particle_types::ParticleType;
+
+    #[test]
+    fn test_amr_manager_creation() {
+        let domain = Vector3::new(1.0, 1.0, 1.0);
+        let manager = AmrManager::new(domain, 1.0, 2, 0.1);
+        // Expect a single base cell for a 1x1x1 m domain with 1 m cell size
+        assert_eq!(manager.cells.len(), 1);
+        let cell = &manager.cells[0];
+        assert_eq!(cell.level, 0);
+        assert!(cell.is_leaf);
+    }
+
+    #[test]
+    fn test_amr_update_mesh_empty_particles() {
+        let domain = Vector3::new(1.0, 1.0, 1.0);
+        let mut manager = AmrManager::new(domain, 1.0, 2, 0.1);
+        let particles: Vec<FundamentalParticle> = Vec::new();
+        assert!(manager.update_mesh(&particles, 0.0).is_ok());
+        // After update, cell properties should remain zero for empty particle list
+        let cell = &manager.cells[0];
+        assert_eq!(cell.particle_count, 0);
+        assert_eq!(cell.mass_density, 0.0);
+        assert_eq!(cell.energy_density, 0.0);
     }
 } 

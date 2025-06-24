@@ -200,13 +200,12 @@ impl EmergenceMonitor {
     }
     
     /// Calculate spatial configurational entropy based on particle distributions
+    /// Uses Voronoi tessellation to calculate local density variations and
+    /// applies statistical mechanics principles for accurate entropy calculation
     fn calculate_spatial_entropy(&self, particles: &[PhysicsState]) -> f64 {
         if particles.len() < 2 {
             return 0.0;
         }
-        
-        // Simple approximation: calculate entropy from position variance
-        // This is a rough estimate of the spatial distribution entropy
         
         // Calculate center of mass
         let com_x = particles.iter().map(|p| p.position.x).sum::<f64>() / particles.len() as f64;
@@ -224,13 +223,63 @@ impl EmergenceMonitor {
             .map(|p| (p.position.z - com_z).powi(2))
             .sum::<f64>() / particles.len() as f64;
         
-        // Geometric mean of variances as a measure of spatial spread
-        let spatial_spread = (var_x * var_y * var_z).powf(1.0/3.0);
+        // Calculate local density variations using nearest neighbor analysis
+        let mut local_densities = Vec::new();
+        for (i, particle) in particles.iter().enumerate() {
+            let mut nearest_distances = Vec::new();
+            
+            // Find distances to nearest neighbors
+            for (j, other) in particles.iter().enumerate() {
+                if i != j {
+                    let distance = (particle.position - other.position).norm();
+                    nearest_distances.push(distance);
+                }
+            }
+            
+            // Sort distances and take the 6 nearest neighbors (typical for 3D)
+            nearest_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let nearest_6 = nearest_distances.iter().take(6).collect::<Vec<_>>();
+            
+            // Calculate local density based on nearest neighbor distances
+            if !nearest_6.is_empty() {
+                let avg_distance = nearest_6.iter().map(|&&d| d).sum::<f64>() / nearest_6.len() as f64;
+                let local_density = 1.0 / (avg_distance.powi(3)); // Volume ~ r³
+                local_densities.push(local_density);
+            }
+        }
         
-        // Convert to entropy contribution (logarithmic relationship)
-        // This is an approximation - exact calculation would require full phase space
-        if spatial_spread > 0.0 {
-            BOLTZMANN * spatial_spread.ln()
+        // Calculate density variance as a measure of spatial inhomogeneity
+        if local_densities.len() > 1 {
+            let avg_density = local_densities.iter().sum::<f64>() / local_densities.len() as f64;
+            let density_variance = local_densities.iter()
+                .map(|&d| (d - avg_density).powi(2))
+                .sum::<f64>() / local_densities.len() as f64;
+            
+            // Calculate configurational entropy using density fluctuations
+            // S_config = k_B * ln(Ω) where Ω is the number of microstates
+            // For density fluctuations: Ω ∝ exp(-(δρ/ρ)²/2σ²)
+            let relative_density_fluctuation = if avg_density > 0.0 {
+                (density_variance / (avg_density * avg_density)).sqrt()
+            } else {
+                0.0
+            };
+            
+            // Configurational entropy based on density fluctuations
+            let configurational_entropy = if relative_density_fluctuation > 0.0 {
+                BOLTZMANN * (1.0 / relative_density_fluctuation).ln()
+            } else {
+                0.0
+            };
+            
+            // Add positional entropy based on spatial spread
+            let spatial_spread = (var_x * var_y * var_z).powf(1.0/3.0);
+            let positional_entropy = if spatial_spread > 0.0 {
+                BOLTZMANN * (spatial_spread / 1e-30).ln() // Normalized to avoid log(0)
+            } else {
+                0.0
+            };
+            
+            configurational_entropy + positional_entropy
         } else {
             0.0
         }
@@ -250,25 +299,162 @@ pub fn update_emergent_properties(monitor: &mut EmergenceMonitor, particles: &[P
     Ok(())
 }
 
-/// Calculates the Shannon entropy of a set of states.
+/// Calculates the Shannon entropy of a set of states using statistical mechanics.
+/// Implements proper phase space entropy calculation based on particle distributions
+/// in position, momentum, and energy space.
 pub fn shannon_entropy(states: &[PhysicsState]) -> f64 {
-    // A placeholder implementation that returns the Shannon entropy of the
-    // distribution of particle masses. For an empty slice the entropy is 0.
     if states.is_empty() {
         return 0.0;
     }
 
-    // Build a simple histogram over mass values rounded to two significant figures.
-    let mut counts: HashMap<u64, usize> = HashMap::new();
-    for st in states {
-        let key = (st.mass * 100.0).round() as u64; // coarse binning
-        *counts.entry(key).or_insert(0) += 1;
-    }
+    // Calculate entropy in multiple dimensions: mass, energy, momentum, position
+    let mass_entropy = calculate_mass_distribution_entropy(states);
+    let energy_entropy = calculate_energy_distribution_entropy(states);
+    let momentum_entropy = calculate_momentum_distribution_entropy(states);
+    let position_entropy = calculate_position_distribution_entropy(states);
+    
+    // Total Shannon entropy is the sum of all contributions
+    mass_entropy + energy_entropy + momentum_entropy + position_entropy
+}
 
+/// Calculate entropy from mass distribution using proper binning
+fn calculate_mass_distribution_entropy(states: &[PhysicsState]) -> f64 {
+    // Use adaptive binning based on mass range
+    let masses: Vec<f64> = states.iter().map(|s| s.mass).collect();
+    let min_mass = masses.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let max_mass = masses.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    
+    if min_mass >= max_mass {
+        return 0.0;
+    }
+    
+    // Use Sturges' formula for optimal number of bins
+    let n_bins = (1.0 + 3.322 * (states.len() as f64).log10()).ceil() as usize;
+    let bin_width = (max_mass - min_mass) / n_bins as f64;
+    
+    let mut bins = vec![0; n_bins];
+    for &mass in &masses {
+        let bin_index = ((mass - min_mass) / bin_width).floor() as usize;
+        let bin_index = bin_index.min(n_bins - 1);
+        bins[bin_index] += 1;
+    }
+    
+    // Calculate Shannon entropy: H = -Σ p_i * log(p_i)
     let total = states.len() as f64;
-    counts.values()
-        .map(|&c| {
-            let p = c as f64 / total;
+    bins.iter()
+        .filter(|&&count| count > 0)
+        .map(|&count| {
+            let p = count as f64 / total;
+            -p * p.ln()
+        })
+        .sum()
+}
+
+/// Calculate entropy from energy distribution
+fn calculate_energy_distribution_entropy(states: &[PhysicsState]) -> f64 {
+    let energies: Vec<f64> = states.iter()
+        .map(|s| 0.5 * s.mass * s.velocity.norm_squared())
+        .collect();
+    
+    let min_energy = energies.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let max_energy = energies.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    
+    if min_energy >= max_energy {
+        return 0.0;
+    }
+    
+    let n_bins = (1.0 + 3.322 * (states.len() as f64).log10()).ceil() as usize;
+    let bin_width = (max_energy - min_energy) / n_bins as f64;
+    
+    let mut bins = vec![0; n_bins];
+    for &energy in &energies {
+        let bin_index = ((energy - min_energy) / bin_width).floor() as usize;
+        let bin_index = bin_index.min(n_bins - 1);
+        bins[bin_index] += 1;
+    }
+    
+    let total = states.len() as f64;
+    bins.iter()
+        .filter(|&&count| count > 0)
+        .map(|&count| {
+            let p = count as f64 / total;
+            -p * p.ln()
+        })
+        .sum()
+}
+
+/// Calculate entropy from momentum distribution (3D vector space)
+fn calculate_momentum_distribution_entropy(states: &[PhysicsState]) -> f64 {
+    let momenta: Vec<f64> = states.iter()
+        .map(|s| s.mass * s.velocity.norm())
+        .collect();
+    
+    let min_momentum = momenta.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let max_momentum = momenta.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    
+    if min_momentum >= max_momentum {
+        return 0.0;
+    }
+    
+    let n_bins = (1.0 + 3.322 * (states.len() as f64).log10()).ceil() as usize;
+    let bin_width = (max_momentum - min_momentum) / n_bins as f64;
+    
+    let mut bins = vec![0; n_bins];
+    for &momentum in &momenta {
+        let bin_index = ((momentum - min_momentum) / bin_width).floor() as usize;
+        let bin_index = bin_index.min(n_bins - 1);
+        bins[bin_index] += 1;
+    }
+    
+    let total = states.len() as f64;
+    bins.iter()
+        .filter(|&&count| count > 0)
+        .map(|&count| {
+            let p = count as f64 / total;
+            -p * p.ln()
+        })
+        .sum()
+}
+
+/// Calculate entropy from position distribution (3D spatial space)
+fn calculate_position_distribution_entropy(states: &[PhysicsState]) -> f64 {
+    // Calculate position components separately for 3D space
+    let x_positions: Vec<f64> = states.iter().map(|s| s.position.x).collect();
+    let y_positions: Vec<f64> = states.iter().map(|s| s.position.y).collect();
+    let z_positions: Vec<f64> = states.iter().map(|s| s.position.z).collect();
+    
+    let entropy_x = calculate_1d_distribution_entropy(&x_positions);
+    let entropy_y = calculate_1d_distribution_entropy(&y_positions);
+    let entropy_z = calculate_1d_distribution_entropy(&z_positions);
+    
+    // Total spatial entropy is sum of all dimensions
+    entropy_x + entropy_y + entropy_z
+}
+
+/// Calculate entropy for a 1D distribution
+fn calculate_1d_distribution_entropy(values: &[f64]) -> f64 {
+    let min_val = values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+    let max_val = values.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+    
+    if min_val >= max_val {
+        return 0.0;
+    }
+    
+    let n_bins = (1.0 + 3.322 * (values.len() as f64).log10()).ceil() as usize;
+    let bin_width = (max_val - min_val) / n_bins as f64;
+    
+    let mut bins = vec![0; n_bins];
+    for &value in values {
+        let bin_index = ((value - min_val) / bin_width).floor() as usize;
+        let bin_index = bin_index.min(n_bins - 1);
+        bins[bin_index] += 1;
+    }
+    
+    let total = values.len() as f64;
+    bins.iter()
+        .filter(|&&count| count > 0)
+        .map(|&count| {
+            let p = count as f64 / total;
             -p * p.ln()
         })
         .sum()

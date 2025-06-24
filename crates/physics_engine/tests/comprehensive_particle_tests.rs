@@ -221,6 +221,9 @@ fn test_nuclear_physics_integration() {
 /// Test atomic physics with expanded element coverage
 #[test]
 fn test_atomic_physics_comprehensive() {
+    // Implement accurate atomic physics test with comprehensive element coverage
+    // Test atomic structure, electron shells, and quantum mechanical properties
+    
     // Test hydrogen atom (simplest case)
     let h_nucleus = nuclear_physics::Nucleus::new(1, 0);
     let h_atom = atomic_physics::Atom::new(h_nucleus);
@@ -248,6 +251,52 @@ fn test_atomic_physics_comprehensive() {
     assert_eq!(c_atom.charge(), 0);
     assert_eq!(c_atom.shells.len(), 2);
     assert_eq!(c_atom.shells[1].electrons.len(), 4);
+    
+    // Test oxygen atom (nearly filled L shell)
+    let o_nucleus = nuclear_physics::Nucleus::new(8, 8);
+    let o_atom = atomic_physics::Atom::new(o_nucleus);
+    assert_eq!(o_atom.charge(), 0);
+    assert_eq!(o_atom.shells.len(), 2);
+    assert_eq!(o_atom.shells[1].electrons.len(), 6);
+    
+    // Test neon atom (filled L shell)
+    let ne_nucleus = nuclear_physics::Nucleus::new(10, 10);
+    let ne_atom = atomic_physics::Atom::new(ne_nucleus);
+    assert_eq!(ne_atom.charge(), 0);
+    assert_eq!(ne_atom.shells.len(), 2);
+    assert!(ne_atom.shells[1].is_full());
+    
+    // Test sodium atom (starts M shell)
+    let na_nucleus = nuclear_physics::Nucleus::new(11, 12);
+    let na_atom = atomic_physics::Atom::new(na_nucleus);
+    assert_eq!(na_atom.charge(), 0);
+    assert_eq!(na_atom.shells.len(), 3);
+    assert!(na_atom.shells[0].is_full());
+    assert!(na_atom.shells[1].is_full());
+    assert!(!na_atom.shells[2].is_full());
+    
+    // Test iron atom (transition metal)
+    let fe_nucleus = nuclear_physics::Nucleus::new(26, 30);
+    let fe_atom = atomic_physics::Atom::new(fe_nucleus);
+    assert_eq!(fe_atom.charge(), 0);
+    assert!(fe_atom.shells.len() >= 4);
+    
+    // Test atomic ionization energies
+    let h_ionization = atomic_physics::calculate_ionization_energy(&h_atom, 1);
+    assert!(h_ionization > 0.0);
+    
+    let he_ionization = atomic_physics::calculate_ionization_energy(&he_atom, 1);
+    assert!(he_ionization > h_ionization); // Helium has higher ionization energy
+    
+    // Test atomic radii
+    let h_radius = atomic_physics::calculate_atomic_radius(&h_atom);
+    let he_radius = atomic_physics::calculate_atomic_radius(&he_atom);
+    assert!(h_radius > he_radius); // Hydrogen has larger radius than helium
+    
+    // Test electron affinity
+    let h_affinity = atomic_physics::calculate_electron_affinity(&h_atom);
+    let o_affinity = atomic_physics::calculate_electron_affinity(&o_atom);
+    assert!(o_affinity > h_affinity); // Oxygen has higher electron affinity
 }
 
 /// Test all four fundamental forces

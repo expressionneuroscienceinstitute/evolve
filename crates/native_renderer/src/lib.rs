@@ -332,6 +332,7 @@ impl BufferPool {
 // Include buffer pool tests
 #[cfg(test)]
 mod buffer_pool_test;
+mod cosmological_renderer;
 
 #[cfg(test)]
 mod inline_tests {

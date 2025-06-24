@@ -4,7 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-physics_engine = { path = "../crates/physics_engine" }
-nalgebra = "0.32"
-anyhow = "1.0"
-thiserror = "1.0" 
+tokio = { version = "1.0", features = ["full"] } 

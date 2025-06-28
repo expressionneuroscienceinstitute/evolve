@@ -518,7 +518,8 @@ impl CosmologicalSphSolver {
                                  (mean_molecular_weight * proton_mass) / (3.0 * boltzmann_k);
         }
         
-        // Star formation
+        // Star formation - collect star formation events first
+        let mut star_formation_events = Vec::new();
         for (i, particle) in particles.iter_mut().enumerate() {
             let star_mass = self.star_formation.form_stars(particle, dt);
             if star_mass > 0.0 {
@@ -526,9 +527,13 @@ impl CosmologicalSphSolver {
                 let enrichment_time = self.cosmological_params.age_universe * (1.0 - 1.0 / (1.0 + redshift));
                 self.chemical_enrichment.enrich_gas(particle, star_mass, enrichment_time);
                 
-                // Feedback
-                self.feedback.apply_supernova_feedback(particles, i, star_mass);
+                star_formation_events.push((i, star_mass));
             }
+        }
+        
+        // Apply feedback after star formation
+        for (particle_idx, star_mass) in star_formation_events {
+            self.feedback.apply_supernova_feedback(particles, particle_idx, star_mass);
         }
         
         // Filter gas particles for hydrodynamic evolution

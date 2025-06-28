@@ -1072,11 +1072,16 @@ impl PhysicsEngine {
         
         // Phase 2: Apply mutations using collected data
         for (mol_idx, physics_states, forces_result) in molecular_data {
-            if let (Some(molecule), Ok(forces)) = (self.molecules.get_mut(mol_idx), forces_result) {
-                // Pre-calculate atomic energies to avoid borrow conflicts
-                let atomic_energies: Vec<f64> = molecule.atoms.iter()
+            // Pre-calculate atomic energies before mutable borrow
+            let atomic_energies: Vec<f64> = if let Some(molecule) = self.molecules.get(mol_idx) {
+                molecule.atoms.iter()
                     .map(|atom| self.get_atomic_energy(&atom.nucleus.atomic_number))
-                    .collect();
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            
+            if let (Some(molecule), Ok(forces)) = (self.molecules.get_mut(mol_idx), forces_result) {
                 
                 // Apply velocity Verlet integration
                 for (i, atom) in molecule.atoms.iter_mut().enumerate() {

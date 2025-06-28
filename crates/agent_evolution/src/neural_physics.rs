@@ -16,6 +16,7 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 use crate::{PlasticityInput, PlasticityOutput};
+use crate::neural_plasticity::{LearningPhase, PlasticityEvent, PlasticityEventType};
 use nalgebra::Complex;
 use physics_engine::{QuantumField, particle_types::FieldType};
 
@@ -271,7 +272,7 @@ impl PhysicsInformedNeuralNetwork {
             // Simple linear transformation (weights would be stored in the network)
             // For now, use identity mapping scaled by layer size
             let mut layer_output = DVector::zeros(*layer_size);
-            for i in 0..layer_size.min(current_input.len()) {
+            for i in 0..(*layer_size).min(current_input.len()) {
                 layer_output[i] = current_input[i];
             }
             
@@ -981,7 +982,6 @@ impl PhysicsInformedNeuralNetwork {
     
     /// Create plasticity event based on current state
     fn create_plasticity_event(&self, input: &PlasticityInput) -> anyhow::Result<PlasticityEvent> {
-        use crate::PlasticityEvent;
         let global_activity = self.calculate_global_activity(input)?;
         
         let event = PlasticityEvent {

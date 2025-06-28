@@ -118,7 +118,7 @@ impl PhysicsEngine {
         };
         
         // Lorentz-Berthelot mixing rules
-        let epsilon_mixed: f64 = (epsilon1 * epsilon2).sqrt() as f64;
+        let epsilon_mixed: f64 = (epsilon1 as f64 * epsilon2 as f64).sqrt();
         let sigma_mixed = (sigma1 + sigma2) / 2.0;
         
         (epsilon_mixed, sigma_mixed)
@@ -230,9 +230,21 @@ impl PhysicsEngine {
         let force_direction = (pos2 - pos1).normalize();
         let force = weak_force_magnitude * force_direction;
 
+        // Extract atomic number first to avoid borrowing conflicts
+        let atomic_number = if let Some(molecule1) = self.molecules.get(mol1_idx) {
+            if let Some(first_atom) = molecule1.atoms.first() {
+                first_atom.nucleus.atomic_number
+            } else {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        };
+        
+        let mass = self.get_atomic_mass(atomic_number);
+        
         if let Some(molecule1) = self.molecules.get_mut(mol1_idx) {
             if let Some(first_atom) = molecule1.atoms.first_mut() {
-                let mass = self.get_atomic_mass(first_atom.nucleus.atomic_number);
                 first_atom.velocity += (force / mass) * self.time_step;
             }
         }

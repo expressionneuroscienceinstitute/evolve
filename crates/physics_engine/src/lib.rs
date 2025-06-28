@@ -149,7 +149,7 @@ impl FundamentalParticle {
     }
 
     /// Identity helper mirroring `Result::unwrap_or_else`.
-    pub fn unwrap_or_else<F: FnOnce() -> Self>(self, _op: F) -> Self {
+    pub fn unwrap_or_else<F: FnOnce(anyhow::Error) -> Self>(self, _op: F) -> Self {
         self
     }
 }

@@ -87,7 +87,8 @@ pub use constants::*;
 use crate::types::{
     MeasurementBasis, DecayChannel, NuclearShellState,
     GluonField, ElectronicState, MolecularOrbital, VibrationalMode,
-    PotentialEnergySurface, ReactionCoordinate, InteractionEvent
+    PotentialEnergySurface, ReactionCoordinate, InteractionEvent,
+    RelativisticCorrection
 };
 use crate::general_relativity::schwarzschild_radius;
 
@@ -2626,7 +2627,7 @@ impl PhysicsEngine {
                             if separation > rs && separation < 100.0 * rs {
                                 let time_dilation_factor = gravitational_time_dilation(particle_i.mass, separation);
                                 
-                                relativistic_corrections.push((j, RelativistinCorrection::TimeDilation {
+                                relativistic_corrections.push((j, RelativisticCorrection::TimeDilation {
                                     factor: time_dilation_factor,
                                     massive_particle_idx: i,
                                 }));
@@ -2653,7 +2654,7 @@ impl PhysicsEngine {
                                 [particle_j.velocity.x, particle_j.velocity.y, particle_j.velocity.z]
                             );
                             
-                            relativistic_corrections.push((i, RelativistinCorrection::PostNewtonianForce {
+                            relativistic_corrections.push((i, RelativisticCorrection::PostNewtonianForce {
                                 force_correction: Vector3::new(pn_correction[0], pn_correction[1], pn_correction[2]),
                                 partner_idx: j,
                             }));
@@ -2667,7 +2668,7 @@ impl PhysicsEngine {
         for (particle_idx, correction) in relativistic_corrections {
             if particle_idx < self.particles.len() {
                 match correction {
-                    RelativistinCorrection::TimeDilation { factor, massive_particle_idx: _ } => {
+                    RelativisticCorrection::TimeDilation { factor, massive_particle_idx: _ } => {
                         // Time runs slower in strong gravitational fields
                         // This affects the particle's internal processes
                         let time_corrected_dt = self.time_step * factor;
@@ -2682,7 +2683,7 @@ impl PhysicsEngine {
                             }
                         }
                     },
-                    RelativistinCorrection::PostNewtonianForce { force_correction, partner_idx: _ } => {
+                    RelativisticCorrection::PostNewtonianForce { force_correction, partner_idx: _ } => {
                         // Apply post-Newtonian force correction
                         let acceleration_correction = force_correction / self.particles[particle_idx].mass;
                         self.particles[particle_idx].acceleration += acceleration_correction;

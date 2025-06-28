@@ -1,4 +1,4 @@
-//! Molecular-dynamics helper routines that used to live at the end of
+THIS SHOULD BE A LINTER ERROR//! Molecular-dynamics helper routines that used to live at the end of
 //! `physics_engine/src/lib.rs`.
 //!
 //! These are now implemented as inherent methods on `PhysicsEngine`, which
@@ -14,14 +14,14 @@ impl PhysicsEngine {
     /// The algorithm applies:
     /// 1. Harmonic bond forces for all bonded pairs.
     /// 2. Lennard-Jones + Coulomb terms for non-bonded intramolecular pairs.
-    pub fn calculate_molecular_forces(&self, states: &[PhysicsState], molecule: &Molecule) -> Result<Vec<Vector3<f64>>> {
+    pub fn calculate_molecular_forces_physics(&self, states: &[PhysicsState], molecule: &Molecule) -> Result<Vec<Vector3<f64>>> {
         let mut forces = vec![Vector3::zeros(); states.len()];
 
         // 1. Intramolecular forces (bonds, angles, dihedrals)
         for bond in &molecule.bonds {
             let (i, j) = bond.atom_indices;
             if i < states.len() && j < states.len() {
-                let bond_force = PhysicsEngine::calculate_bond_force(self, &states[i], &states[j], bond)?;
+                let bond_force = self.calculate_bond_force_physics(&states[i], &states[j], bond)?;
                 forces[i] += bond_force;
                 forces[j] -= bond_force; // Newton's third law
             }
@@ -45,7 +45,7 @@ impl PhysicsEngine {
     }
 
     /// Harmonic bond force: `F = -k (r - r0) r_hat`.
-    fn calculate_bond_force(&self, atom1: &PhysicsState, atom2: &PhysicsState, bond: &ChemicalBond) -> Result<Vector3<f64>> {
+    fn calculate_bond_force_physics(&self, atom1: &PhysicsState, atom2: &PhysicsState, bond: &ChemicalBond) -> Result<Vector3<f64>> {
         let displacement = atom2.position - atom1.position;
         let distance = displacement.magnitude();
 

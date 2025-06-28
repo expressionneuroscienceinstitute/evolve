@@ -332,6 +332,25 @@ pub struct DecayChannel {
     pub decay_constant: f64,
 }
 
+/// Relativistic correction to apply to particles
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RelativisticCorrection {
+    /// Time dilation effect
+    TimeDilation {
+        /// Time dilation factor (0 < factor <= 1)
+        factor: f64,
+        /// Index of the massive particle causing the effect
+        massive_particle_idx: usize,
+    },
+    /// Post-Newtonian force correction
+    PostNewtonianForce {
+        /// Force correction vector to apply (N)
+        force_correction: Vector3<f64>,
+        /// Index of the partner particle in the interaction
+        partner_idx: usize,
+    },
+}
+
 /// Nuclear fusion reaction data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FusionReaction {

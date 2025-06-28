@@ -255,8 +255,8 @@ impl InteractionMatrix {
     /// Get running couplings at a given energy scale (GeV)
     pub fn get_running_couplings(&mut self, scale_gev: f64) -> RunningCouplings {
         let scale_bits = scale_gev.to_bits();
-        if let Some(&couplings) = self.running_couplings.get(&scale_bits) {
-            return couplings;
+        if let Some(couplings) = self.running_couplings.get(&scale_bits) {
+            return couplings.clone();
         }
         let alpha_em = self.calculate_running_alpha_em(scale_gev);
         let alpha_s = self.calculate_running_alpha_s(scale_gev);
@@ -268,7 +268,7 @@ impl InteractionMatrix {
             alpha_s,
         };
         
-        self.running_couplings.insert(scale_bits, couplings);
+        self.running_couplings.insert(scale_bits, couplings.clone());
         couplings
     }
     
@@ -303,27 +303,45 @@ impl InteractionMatrix {
     }
     
     fn update_electromagnetic_matrix_elements(&mut self) {
+        // Collect electromagnetic pairs first to avoid borrow conflicts
+        let em_pairs: Vec<(ParticleType, ParticleType)> = self.matrix_elements.keys()
+            .filter(|(p1, p2)| self.is_electromagnetic_interaction(*p1, *p2))
+            .copied()
+            .collect();
+        
         // Update all electromagnetic interaction strengths
-        for ((p1, p2), strength) in self.matrix_elements.iter_mut() {
-            if self.is_electromagnetic_interaction(*p1, *p2) {
+        for (p1, p2) in em_pairs {
+            if let Some(strength) = self.matrix_elements.get_mut(&(p1, p2)) {
                 *strength = self.alpha_em;
             }
         }
     }
     
     fn update_weak_matrix_elements(&mut self) {
+        // Collect weak pairs first to avoid borrow conflicts
+        let weak_pairs: Vec<(ParticleType, ParticleType)> = self.matrix_elements.keys()
+            .filter(|(p1, p2)| self.is_weak_interaction(*p1, *p2))
+            .copied()
+            .collect();
+        
         // Update all weak interaction strengths
-        for ((p1, p2), strength) in self.matrix_elements.iter_mut() {
-            if self.is_weak_interaction(*p1, *p2) {
+        for (p1, p2) in weak_pairs {
+            if let Some(strength) = self.matrix_elements.get_mut(&(p1, p2)) {
                 *strength = self.g_weak;
             }
         }
     }
     
     fn update_strong_matrix_elements(&mut self) {
+        // Collect strong pairs first to avoid borrow conflicts
+        let strong_pairs: Vec<(ParticleType, ParticleType)> = self.matrix_elements.keys()
+            .filter(|(p1, p2)| self.is_strong_interaction(*p1, *p2))
+            .copied()
+            .collect();
+        
         // Update all strong interaction strengths
-        for ((p1, p2), strength) in self.matrix_elements.iter_mut() {
-            if self.is_strong_interaction(*p1, *p2) {
+        for (p1, p2) in strong_pairs {
+            if let Some(strength) = self.matrix_elements.get_mut(&(p1, p2)) {
                 *strength = self.alpha_s;
             }
         }

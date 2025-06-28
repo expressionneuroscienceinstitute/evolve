@@ -901,13 +901,14 @@ pub struct CosmologicalGravitySolver {
 
 impl CosmologicalGravitySolver {
     pub fn new(params: CosmologicalParameters) -> Self {
+        let box_size = params.box_size;
         Self {
             cosmological_params: params,
             softening_length: 1.0e-6,
             force_accuracy: 1.0e-4,
             tree_opening_angle: 0.5, // Standard Barnes-Hut opening angle
             pm_grid_size: 256,       // Standard PM grid size
-            box_size: params.box_size,
+            box_size,
             periodic_boundaries: true, // Cosmological simulations typically use periodic BCs
         }
     }

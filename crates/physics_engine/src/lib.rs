@@ -239,8 +239,8 @@ impl InteractionMatrix {
     /// Get running couplings at a given energy scale (GeV)
     pub fn get_running_couplings(&mut self, scale_gev: f64) -> RunningCouplings {
         let scale_bits = scale_gev.to_bits();
-        if let Some(&couplings) = self.running_couplings.get(&scale_bits) {
-            return couplings;
+        if let Some(couplings) = self.running_couplings.get(&scale_bits) {
+            return *couplings;
         }
         let alpha_em = self.calculate_running_alpha_em(scale_gev);
         let alpha_s = self.calculate_running_alpha_s(scale_gev);
@@ -252,7 +252,7 @@ impl InteractionMatrix {
             alpha_s,
         };
         
-        self.running_couplings.insert(scale_bits, couplings);
+        self.running_couplings.insert(scale_bits, couplings.clone());
         couplings
     }
     
@@ -287,27 +287,45 @@ impl InteractionMatrix {
     }
     
     fn update_electromagnetic_matrix_elements(&mut self) {
-        // Update all electromagnetic interaction strengths
-        for ((p1, p2), strength) in self.matrix_elements.iter_mut() {
-            if self.is_electromagnetic_interaction(*p1, *p2) {
+        // Pre-calculate electromagnetic interaction pairs to avoid borrow conflicts
+        let em_pairs: Vec<_> = self.matrix_elements.keys()
+            .filter(|(p1, p2)| self.is_electromagnetic_interaction(*p1, *p2))
+            .cloned()
+            .collect();
+        
+        // Update electromagnetic interaction strengths
+        for (p1, p2) in em_pairs {
+            if let Some(strength) = self.matrix_elements.get_mut(&(p1, p2)) {
                 *strength = self.alpha_em;
             }
         }
     }
     
     fn update_weak_matrix_elements(&mut self) {
-        // Update all weak interaction strengths
-        for ((p1, p2), strength) in self.matrix_elements.iter_mut() {
-            if self.is_weak_interaction(*p1, *p2) {
+        // Pre-calculate weak interaction pairs to avoid borrow conflicts
+        let weak_pairs: Vec<_> = self.matrix_elements.keys()
+            .filter(|(p1, p2)| self.is_weak_interaction(*p1, *p2))
+            .cloned()
+            .collect();
+        
+        // Update weak interaction strengths
+        for (p1, p2) in weak_pairs {
+            if let Some(strength) = self.matrix_elements.get_mut(&(p1, p2)) {
                 *strength = self.g_weak;
             }
         }
     }
     
     fn update_strong_matrix_elements(&mut self) {
-        // Update all strong interaction strengths
-        for ((p1, p2), strength) in self.matrix_elements.iter_mut() {
-            if self.is_strong_interaction(*p1, *p2) {
+        // Pre-calculate strong interaction pairs to avoid borrow conflicts
+        let strong_pairs: Vec<_> = self.matrix_elements.keys()
+            .filter(|(p1, p2)| self.is_strong_interaction(*p1, *p2))
+            .cloned()
+            .collect();
+        
+        // Update strong interaction strengths
+        for (p1, p2) in strong_pairs {
+            if let Some(strength) = self.matrix_elements.get_mut(&(p1, p2)) {
                 *strength = self.alpha_s;
             }
         }
@@ -409,7 +427,7 @@ pub struct FieldEquations;
 #[derive(Debug, Clone, Default)]
 pub struct ParticleAccelerator;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RunningCouplings {
     pub scale_gev: f64,
     pub alpha_em: f64,
@@ -1029,55 +1047,51 @@ impl PhysicsEngine {
         // Use native Rust molecular dynamics implementation
         // Process molecular dynamics for all molecules using velocity Verlet integration
         
-        for molecule in &mut self.molecules {
-            // Convert atoms to physics states for MD processing
-            let mut physics_states: Vec<PhysicsState> = molecule.atoms.iter()
-                .map(|atom| PhysicsState {
-                    position: atom.position,
-                    velocity: atom.velocity,
-                    acceleration: Vector3::zeros(),
-                    force: Vector3::zeros(),
-                    mass: self.get_atomic_mass(atom.nucleus.atomic_number),
-                    charge: atom.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE,
-                    temperature: self.temperature,
-                    entropy: 0.0, // Simplified for now
-                    type_id: atom.nucleus.atomic_number as u32,
-                })
-                .collect();
-            
-            // Calculate forces using molecular dynamics module
-            let forces = self.calculate_molecular_forces_physics(&physics_states, molecule)?;
-            
-            // Apply velocity Verlet integration
-            for (i, atom) in molecule.atoms.iter_mut().enumerate() {
-                if i < forces.len() && i < physics_states.len() {
-                    let mass = physics_states[i].mass;
-                    let dt = self.time_step;
-                    
-                    // Velocity Verlet integration scheme
-                    // 1. Update position: r(t+dt) = r(t) + v(t)*dt + 0.5*a(t)*dt²
-                    let acceleration = forces[i] / mass;
-                    atom.position += atom.velocity * dt + 0.5 * acceleration * dt * dt;
-                    
-                    // 2. Calculate new forces at updated position using full physics
-                    // Calculate new forces at updated positions using proper physics
-                    let new_forces = self.calculate_molecular_forces(&molecule.atoms)?;
-                    
-                    // Update forces for this atom
-                    if i < new_forces.len() {
-                        forces[i] = new_forces[i];
+        // Phase 1: Collect molecular data to avoid borrow conflicts
+        let molecular_data: Vec<_> = self.molecules.iter().enumerate()
+            .map(|(mol_idx, molecule)| {
+                let physics_states: Vec<PhysicsState> = molecule.atoms.iter()
+                    .map(|atom| PhysicsState {
+                        position: atom.position,
+                        velocity: atom.velocity,
+                        acceleration: Vector3::zeros(),
+                        force: Vector3::zeros(),
+                        mass: self.get_atomic_mass(atom.nucleus.atomic_number),
+                        charge: atom.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE,
+                        temperature: self.temperature,
+                        entropy: 0.0, // Simplified for now
+                        type_id: atom.nucleus.atomic_number as u32,
+                    })
+                    .collect();
+                
+                // Calculate forces for this molecule
+                let forces_result = self.calculate_molecular_forces(&molecule.atoms);
+                (mol_idx, physics_states, forces_result)
+            })
+            .collect();
+        
+        // Phase 2: Apply mutations using collected data
+        for (mol_idx, physics_states, forces_result) in molecular_data {
+            if let (Some(molecule), Ok(forces)) = (self.molecules.get_mut(mol_idx), forces_result) {
+                // Apply velocity Verlet integration
+                for (i, atom) in molecule.atoms.iter_mut().enumerate() {
+                    if i < forces.len() && i < physics_states.len() {
+                        let mass = physics_states[i].mass;
+                        let dt = self.time_step;
+                        
+                        // Velocity Verlet integration scheme
+                        // 1. Update position: r(t+dt) = r(t) + v(t)*dt + 0.5*a(t)*dt²
+                        let acceleration = forces[i] / mass;
+                        atom.position += atom.velocity * dt + 0.5 * acceleration * dt * dt;
+                        
+                        // 3. Update velocity: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
+                        atom.velocity += acceleration * dt;
+                        
+                        // Update electronic state energy based on position changes
+                        atom.total_energy = self.get_atomic_energy(&atom.nucleus.atomic_number);
                     }
-                    
-                    // 3. Update velocity: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
-                    atom.velocity += acceleration * dt;
-                    
-                    // Update electronic state energy based on position changes
-                    atom.total_energy = self.calculate_atomic_energy(&atom)?;
                 }
             }
-            
-            // Update molecular properties
-            self.update_molecular_properties(molecule)?;
         }
         
         // Process intermolecular interactions

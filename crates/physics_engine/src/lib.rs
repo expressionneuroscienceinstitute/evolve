@@ -1130,15 +1130,22 @@ impl PhysicsEngine {
             
             // Update electronic state energies separately to avoid borrow conflicts
             {
-                let molecule = &self.molecules[mol_idx];
-                for (i, atom) in molecule.atoms.iter().enumerate() {
-                    if i < new_forces.len() && i < physics_states.len() {
-                        let energy = self.calculate_atomic_energy(atom)?;
-                        // Update the energy through direct access to avoid borrow conflicts
-                        if let Some(molecule_mut) = self.molecules.get_mut(mol_idx) {
-                            if let Some(atom_mut) = molecule_mut.atoms.get_mut(i) {
-                                atom_mut.total_energy = energy;
-                            }
+                let mut energies = Vec::new();
+                {
+                    let molecule = &self.molecules[mol_idx];
+                    for (i, atom) in molecule.atoms.iter().enumerate() {
+                        if i < new_forces.len() && i < physics_states.len() {
+                            let energy = self.calculate_atomic_energy(atom)?;
+                            energies.push((i, energy));
+                        }
+                    }
+                }
+                
+                // Apply the calculated energies
+                if let Some(molecule_mut) = self.molecules.get_mut(mol_idx) {
+                    for (i, energy) in energies {
+                        if let Some(atom_mut) = molecule_mut.atoms.get_mut(i) {
+                            atom_mut.total_energy = energy;
                         }
                     }
                 }

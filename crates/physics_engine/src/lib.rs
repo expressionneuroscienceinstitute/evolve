@@ -2215,14 +2215,14 @@ impl PhysicsEngine {
 
     /// Update atomic physics states
     fn update_atomic_physics(&mut self) -> Result<()> {
-        use crate::atomic_physics::{compute_atomic_properties, photoionization_cross_section, radiative_recombination_rate};
+        use crate::atomic_physics::{photoionization_cross_section, radiative_recombination_rate};
         
         let mut updates_to_apply = Vec::new();
         
         // Process each atom for electronic transitions and ionization
         for (atom_idx, atom) in self.atoms.iter_mut().enumerate() {
             // Compute current atomic properties
-            if let Err(e) = compute_atomic_properties(atom) {
+            if let Err(e) = atom.compute_atomic_properties() {
                 log::warn!("Failed to compute atomic properties for atom {}: {}", atom_idx, e);
                 continue;
             }

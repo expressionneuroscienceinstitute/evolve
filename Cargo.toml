@@ -93,6 +93,9 @@ wgpu = "0.19"
 winit = "0.29"
 bytemuck = { version = "1.14", features = ["derive"] }
 
+# macOS-only CoreGraphics framework
+core-graphics-types = { version = "0.1.3", default-features = false }
+
 [profile.release]
 opt-level = 3
 lto = true

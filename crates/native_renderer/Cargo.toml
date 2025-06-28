@@ -40,10 +40,6 @@ cfg-if = "1.0"
 glyphon = "0.5"
 rand = "0.8.5"
 
-# Mac-specific dependencies
-core-graphics = "0.23"  # For Mac-specific graphics operations
-core-foundation = "0.9" # For Mac system integration
-
 [dev-dependencies]
 approx = "0.5"
 tokio = { version = "1.0", features = ["rt", "macros"] }
@@ -76,4 +72,8 @@ mac-metal-optimized = []     # Metal backend optimizations
 mac-performance-monitoring = [] # Mac performance monitoring
 mac-apple-silicon = []       # Apple Silicon specific optimizations
 mac-intel-gpu = []           # Intel GPU optimizations
-mac-discrete-gpu = []        # Discrete GPU optimizations 
+mac-discrete-gpu = []        # Discrete GPU optimizations
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.23"  # Mac-specific graphics operations
+core-foundation = "0.9" # Mac system integration

@@ -1084,7 +1084,7 @@ impl PhysicsEngine {
             };
             
             // Calculate initial forces
-            let mut forces = {
+            let forces = {
                 let molecule = &self.molecules[mol_idx];
                 self.calculate_molecular_forces_physics(&physics_states, molecule)?
             };
@@ -1126,16 +1126,15 @@ impl PhysicsEngine {
                         atom.velocity += 0.5 * (new_acceleration - old_acceleration) * dt;
                         
                         // Update electronic state energy based on position changes
-                        atom.total_energy = self.calculate_atomic_energy(&atom)?;
+                        // Extract atom data to avoid borrow conflicts
+                        let atom_copy = atom.clone();
+                        atom.total_energy = self.calculate_atomic_energy(&atom_copy)?;
                     }
                 }
             }
             
-            // Update molecular properties
-            {
-                let molecule = &mut self.molecules[mol_idx];
-                self.update_molecular_properties(molecule)?;
-            }
+            // Update molecular properties - use indexed access to avoid borrow conflicts
+            self.update_molecular_properties_by_index(mol_idx)?;
         }
         
         // Process intermolecular interactions
@@ -2277,6 +2276,11 @@ impl PhysicsEngine {
         
         let mut updates_to_apply = Vec::new();
         
+        // Pre-calculate ion density to avoid borrow conflicts
+        let ion_density = self.atoms.iter()
+            .filter(|a| a.charge() > 0)
+            .count() as f64 / self.volume;
+        
         // Process each atom for electronic transitions and ionization
         for (atom_idx, atom) in self.atoms.iter_mut().enumerate() {
             // Compute current atomic properties
@@ -2358,17 +2362,7 @@ impl PhysicsEngine {
             let electron_density = self.particles.iter()
                 .filter(|p| p.particle_type == ParticleType::Electron)
                 .count() as f64 / self.volume;
-            let ion_density = {
-                let mut ion_count = 0;
-                for other_atom_idx in 0..self.atoms.len() {
-                    if other_atom_idx != atom_idx { // Skip current atom to avoid double counting
-                        if self.atoms[other_atom_idx].charge() > 0 {
-                            ion_count += 1;
-                        }
-                    }
-                }
-                ion_count as f64 / self.volume
-            };
+            // Use pre-calculated ion density
                 
             if electron_density > 0.0 && ion_density > 0.0 {
                 let recomb_rate = radiative_recombination_rate(electron_density, ion_density, self.temperature);
@@ -2735,7 +2729,7 @@ impl PhysicsEngine {
                             if separation > rs && separation < 100.0 * rs {
                                 let time_dilation_factor = gravitational_time_dilation(particle_i.mass, separation);
                                 
-                                relativistic_corrections.push((j, RelativisticCorrection::TimeDilation {
+                                relativistic_corrections.push((j, LocalRelativisticCorrection::TimeDilation {
                                     factor: time_dilation_factor,
                                     massive_particle_idx: i,
                                 }));
@@ -2762,7 +2756,7 @@ impl PhysicsEngine {
                                 [particle_j.velocity.x, particle_j.velocity.y, particle_j.velocity.z]
                             );
                             
-                            relativistic_corrections.push((i, RelativisticCorrection::PostNewtonianForce {
+                            relativistic_corrections.push((i, LocalRelativisticCorrection::PostNewtonianForce {
                                 force_correction: Vector3::new(pn_correction[0], pn_correction[1], pn_correction[2]),
                                 partner_idx: j,
                             }));
@@ -2776,7 +2770,7 @@ impl PhysicsEngine {
         for (particle_idx, correction) in relativistic_corrections {
             if particle_idx < self.particles.len() {
                 match correction {
-                    RelativisticCorrection::TimeDilation { factor, massive_particle_idx: _ } => {
+                    LocalRelativisticCorrection::TimeDilation { factor, massive_particle_idx: _ } => {
                         // Time runs slower in strong gravitational fields
                         // This affects the particle's internal processes
                         let time_corrected_dt = self.time_step * factor;
@@ -2791,7 +2785,7 @@ impl PhysicsEngine {
                             }
                         }
                     },
-                    RelativisticCorrection::PostNewtonianForce { force_correction, partner_idx: _ } => {
+                    LocalRelativisticCorrection::PostNewtonianForce { force_correction, partner_idx: _ } => {
                         // Apply post-Newtonian force correction
                         let acceleration_correction = force_correction / self.particles[particle_idx].mass;
                         self.particles[particle_idx].acceleration += acceleration_correction;
@@ -3246,7 +3240,7 @@ pub const G: f64 = 6.67430e-11;
 
 /// Relativistic corrections for general relativity effects
 #[derive(Debug, Clone)]
-enum RelativisticCorrection {
+enum LocalRelativisticCorrection {
     TimeDilation {
         factor: f64,
         massive_particle_idx: usize,

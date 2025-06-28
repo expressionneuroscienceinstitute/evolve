@@ -203,6 +203,36 @@ impl PhysicsEngine {
         Ok(())
     }
 
+    /// Update molecular properties by index to avoid borrow conflicts
+    pub fn update_molecular_properties_by_index(&mut self, mol_idx: usize) -> Result<()> {
+        if mol_idx >= self.molecules.len() {
+            return Ok(());
+        }
+
+        let mut total_mass = 0.0;
+        let mut center_of_mass = Vector3::zeros();
+
+        // Calculate center of mass
+        for atom in &self.molecules[mol_idx].atoms {
+            let mass = self.get_atomic_mass(atom.nucleus.atomic_number);
+            total_mass += mass;
+            center_of_mass += mass * atom.position;
+        }
+        center_of_mass /= total_mass.max(1e-30);
+
+        // Calculate dipole (simplified)
+        let mut dipole = Vector3::zeros();
+        for atom in &self.molecules[mol_idx].atoms {
+            let charge = atom.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE;
+            dipole += charge * (atom.position - center_of_mass);
+        }
+
+        // Update the molecule properties
+        self.molecules[mol_idx].dipole_moment = dipole;
+
+        Ok(())
+    }
+
     /// Process intermolecular interactions with proper force calculations
     pub fn process_intermolecular_interactions(&mut self) -> Result<()> {
         for i in 0..self.molecules.len() {

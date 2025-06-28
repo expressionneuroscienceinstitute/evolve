@@ -1113,7 +1113,7 @@ impl PhysicsEngine {
                 self.calculate_molecular_forces(&molecule.atoms)?
             };
             
-            // Update velocities with new forces and calculate energies
+            // Update velocities with new forces
             {
                 let molecule = &mut self.molecules[mol_idx];
                 for (i, atom) in molecule.atoms.iter_mut().enumerate() {
@@ -1124,11 +1124,22 @@ impl PhysicsEngine {
                         
                         // Complete velocity Verlet: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
                         atom.velocity += 0.5 * (new_acceleration - old_acceleration) * dt;
-                        
-                        // Update electronic state energy based on position changes
-                        // Extract atom data to avoid borrow conflicts
-                        let atom_copy = atom.clone();
-                        atom.total_energy = self.calculate_atomic_energy(&atom_copy)?;
+                    }
+                }
+            }
+            
+            // Update electronic state energies separately to avoid borrow conflicts
+            {
+                let molecule = &self.molecules[mol_idx];
+                for (i, atom) in molecule.atoms.iter().enumerate() {
+                    if i < new_forces.len() && i < physics_states.len() {
+                        let energy = self.calculate_atomic_energy(atom)?;
+                        // Update the energy through direct access to avoid borrow conflicts
+                        if let Some(molecule_mut) = self.molecules.get_mut(mol_idx) {
+                            if let Some(atom_mut) = molecule_mut.atoms.get_mut(i) {
+                                atom_mut.total_energy = energy;
+                            }
+                        }
                     }
                 }
             }

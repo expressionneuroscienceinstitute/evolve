@@ -2797,7 +2797,7 @@ impl PhysicsEngine {
             // Calculate entropy for each particle using statistical mechanics
             let entropy = if p.mass > 0.0 && self.temperature > 0.0 {
                 // Sackur-Tetrode equation for ideal gas entropy per particle
-                let thermal_wavelength = (2.0 * std::f64::consts::PI * 6.62607015e-34.powi(2) / 
+                let thermal_wavelength = (2.0 * std::f64::consts::PI * (6.62607015e-34_f64).powi(2) / 
                     (p.mass * 1.380649e-23 * self.temperature)).sqrt();
                 let number_density = 1.0 / self.volume.powf(1.0/3.0); // Approximate number density
                 
@@ -2941,18 +2941,7 @@ impl PhysicsEngine {
         direction * force_magnitude
     }
     
-    /// Calculate bond force using harmonic oscillator model for PhysicsState
-    fn calculate_bond_force_physics(&self, atom1: &PhysicsState, atom2: &PhysicsState, distance: f64, direction: &Vector3<f64>) -> Vector3<f64> {
-        // Harmonic bond potential: V = 0.5 * k * (r - r₀)²
-        // Force: F = -k * (r - r₀)
-        let equilibrium_distance = 1.5e-10; // m (typical bond length)
-        let spring_constant = 500.0; // N/m (typical for covalent bonds)
-        
-        let displacement = distance - equilibrium_distance;
-        let force_magnitude = -spring_constant * displacement;
-        
-        direction * force_magnitude
-    }
+
     
     /// Calculate quantum mechanical forces (exchange and correlation) for PhysicsState
     fn calculate_quantum_force_physics(&self, atom1: &PhysicsState, atom2: &PhysicsState, distance: f64, direction: &Vector3<f64>) -> Vector3<f64> {

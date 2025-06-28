@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 use anyhow::Result;
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
-use crate::constants;
+use crate::constants::{self, EV_TO_J, MEV_TO_J};
 use std::f64::consts::PI;
 use rayon::prelude::*;
 use anyhow::{anyhow, ensure};
@@ -699,7 +699,6 @@ impl QuantumChemistryEngine {
     /// # Returns
     /// The estimated ground-state energy in Joules.
     pub fn get_atomic_energy(&self, atomic_number: &u32) -> f64 {
-        const EV_TO_J: f64 = 1.602_176_634e-19; // CODATA 2022
         let z = *atomic_number as f64;
         // Thomas-Fermi model approximation for total ionization energy of a neutral atom.
         // Source: "Introduction to Solid State Physics" by Charles Kittel.

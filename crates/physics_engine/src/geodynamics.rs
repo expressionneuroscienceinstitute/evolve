@@ -163,7 +163,7 @@ impl GeodynamicsSolver {
             // Calculate Rayleigh number for convection stability
             // Ra = (ρ₀αgΔTd³)/(κη) where d is characteristic length
             let thermal_diffusivity = 1e-6; // m²/s for mantle material
-            let characteristic_length = 2.9e6; // m (upper mantle thickness)
+            let characteristic_length: f64 = 2.9e6; // m (upper mantle thickness)
             let temperature_difference = 1000.0; // K (typical mantle temperature difference
             
             let rayleigh_number = (self.reference_density * self.thermal_expansion * 

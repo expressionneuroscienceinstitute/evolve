@@ -64,11 +64,11 @@ pub fn gradient_fft(phi_k: &[Complex<f64>], n_grid: usize) -> Result<Vec<Vector3
                 let k_vec = Vector3::new(kx as f64, ky as f64, kz as f64) * k_factor;
 
                 // Gradient in Fourier space is multiplication by i*k
-                let i_k = Complex::new(0.0, 1.0) * k_vec;
+                let i = Complex::new(0.0, 1.0);
 
-                grad_x_k[idx] *= i_k.x;
-                grad_y_k[idx] *= i_k.y;
-                grad_z_k[idx] *= i_k.z;
+                grad_x_k[idx] *= i * k_vec.x;
+                grad_y_k[idx] *= i * k_vec.y;
+                grad_z_k[idx] *= i * k_vec.z;
             }
         }
     }

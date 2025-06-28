@@ -197,6 +197,18 @@ pub const LIGHT_YEAR_TO_METERS: f64 = 9.461e15;     // meters
 // Legacy alias – some modules still reference `E_CHARGE`. Keep for compatibility.
 pub const E_CHARGE: f64 = ELEMENTARY_CHARGE;
 
+/// Coulomb's constant (k_e) in N⋅m²⋅C⁻²
+/// k_e = 1/(4πε₀) = 8.9875517923×10⁹ N⋅m²⋅C⁻²
+pub const COULOMB_CONSTANT: f64 = 1.0 / (4.0 * std::f64::consts::PI * VACUUM_PERMITTIVITY);
+
+/// Conversion factor from electron volts to joules
+/// 1 eV = 1.602176634×10⁻¹⁹ J (exact, by definition since 2019)
+pub const EV_TO_J: f64 = ELEMENTARY_CHARGE;
+
+/// Conversion factor from mega electron volts to joules
+/// 1 MeV = 1.602176634×10⁻¹³ J (exact, by definition since 2019)
+pub const MEV_TO_J: f64 = EV_TO_J * 1e6;
+
 #[cfg(test)]
 mod tests {
     use super::*;

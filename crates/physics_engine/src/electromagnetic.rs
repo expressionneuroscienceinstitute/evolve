@@ -197,8 +197,8 @@ impl EMSolver {
         // ∇ × E = -∂B/∂t (Faraday's law)
         // ∇ × B = μ₀J + μ₀ε₀∂E/∂t (Ampère's law)
         
-        let dt = 1e-12; // Time step (1 ps)
-        let c = constants.speed_of_light;
+        let dt: f64 = 1e-12; // Time step (1 ps)
+        let c = constants.c;
         let epsilon_0 = constants.epsilon_0;
         let mu_0 = constants.mu_0;
         

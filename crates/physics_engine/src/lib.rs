@@ -75,6 +75,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use rand::{Rng, thread_rng};
 use log;
+use itertools::Itertools;
 
 use self::nuclear_physics::{StellarNucleosynthesis, DecayMode};
 use self::spatial::SpatialHashGrid;

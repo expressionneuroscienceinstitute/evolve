@@ -391,75 +391,85 @@ impl AmrManager {
     /// Replaces a single leaf cell with eight smaller children cells
     /// at the next refinement level.
     fn refine_cell(&mut self, cell_id: usize, current_time: f64) -> Result<()> {
-        if let Some(parent_cell) = self.cells.get_mut(cell_id) {
-            if !parent_cell.is_leaf {
-                return Ok(()); // Already refined
+        // Check if cell exists and is a leaf
+        let (parent_level, parent_pos, parent_size, boundary_conditions) = {
+            if let Some(parent_cell) = self.cells.get(cell_id) {
+                if !parent_cell.is_leaf {
+                    return Ok(()); // Already refined
+                }
+                (parent_cell.level, parent_cell.position, parent_cell.size, parent_cell.boundary_conditions.clone())
+            } else {
+                return Ok(()); // Cell doesn't exist
             }
-            
+        };
+        
+        // Update parent cell properties
+        if let Some(parent_cell) = self.cells.get_mut(cell_id) {
             parent_cell.is_leaf = false;
             parent_cell.requires_refinement = false;
-            let parent_level = parent_cell.level;
-            let parent_pos = parent_cell.position;
-            let child_size = parent_cell.size / 2.0;
+        }
+        
+        let child_size = parent_size / 2.0;
+        let mut children_ids = Vec::with_capacity(8);
+
+        for i in 0..8 {
+            let offset_x = if (i & 1) == 0 { -0.25 } else { 0.25 };
+            let offset_y = if (i & 2) == 0 { -0.25 } else { 0.25 };
+            let offset_z = if (i & 4) == 0 { -0.25 } else { 0.25 };
+
+            let child_pos = parent_pos + Vector3::new(
+                offset_x * parent_size,
+                offset_y * parent_size,
+                offset_z * parent_size,
+            );
+
+            let new_cell_id = self.total_cells;
+            let child_cell = AmrCell {
+                id: new_cell_id,
+                level: parent_level + 1,
+                position: child_pos,
+                size: child_size,
+                mass_density: 0.0, // Will be updated in the next cycle
+                energy_density: 0.0,
+                field_gradient: 0.0,
+                particle_count: 0,
+                refinement_criterion: 0.0,
+                parent_id: Some(cell_id),
+                children_ids: Vec::new(),
+                is_leaf: true,
+                requires_refinement: false,
+                requires_coarsening: false,
+                boundary_conditions: boundary_conditions.clone(),
+            };
             
-            let mut children_ids = Vec::with_capacity(8);
-
-            for i in 0..8 {
-                let offset_x = if (i & 1) == 0 { -0.25 } else { 0.25 };
-                let offset_y = if (i & 2) == 0 { -0.25 } else { 0.25 };
-                let offset_z = if (i & 4) == 0 { -0.25 } else { 0.25 };
-
-                let child_pos = parent_pos + Vector3::new(
-                    offset_x * parent_cell.size,
-                    offset_y * parent_cell.size,
-                    offset_z * parent_cell.size,
-                );
-
-                let new_cell_id = self.total_cells;
-                let child_cell = AmrCell {
-                    id: new_cell_id,
-                    level: parent_level + 1,
-                    position: child_pos,
-                    size: child_size,
-                    mass_density: 0.0, // Will be updated in the next cycle
-                    energy_density: 0.0,
-                    field_gradient: 0.0,
-                    particle_count: 0,
-                    refinement_criterion: 0.0,
-                    parent_id: Some(cell_id),
-                    children_ids: Vec::new(),
-                    is_leaf: true,
-                    requires_refinement: false,
-                    requires_coarsening: false,
-                    boundary_conditions: parent_cell.boundary_conditions.clone(),
-                };
-                
-                children_ids.push(new_cell_id);
-                self.cells.push(child_cell);
-                self.total_cells += 1;
-                
-                // Record event
-                self.refinement_history.push(RefinementEvent {
-                    timestamp: current_time,
-                    cell_id: new_cell_id,
-                    event_type: RefinementEventType::Creation,
-                    old_level: parent_level,
-                    new_level: parent_level + 1,
-                    trigger_value: 0.0, // Not directly triggered
-                });
-            }
-
-            self.cells[cell_id].children_ids = children_ids;
-
+            children_ids.push(new_cell_id);
+            self.cells.push(child_cell);
+            self.total_cells += 1;
+            
+            // Record event
             self.refinement_history.push(RefinementEvent {
                 timestamp: current_time,
-                cell_id,
-                event_type: RefinementEventType::Refinement,
+                cell_id: new_cell_id,
+                event_type: RefinementEventType::Creation,
                 old_level: parent_level,
-                new_level: parent_level, // Level of parent doesn't change
-                trigger_value: self.cells[cell_id].refinement_criterion,
+                new_level: parent_level + 1,
+                trigger_value: 0.0, // Not directly triggered
             });
         }
+
+        // Update parent's children list
+        if let Some(parent_cell) = self.cells.get_mut(cell_id) {
+            parent_cell.children_ids = children_ids;
+        }
+
+        self.refinement_history.push(RefinementEvent {
+            timestamp: current_time,
+            cell_id,
+            event_type: RefinementEventType::Refinement,
+            old_level: parent_level,
+            new_level: parent_level, // Level of parent doesn't change
+            trigger_value: self.cells[cell_id].refinement_criterion,
+        });
         
         Ok(())
     }

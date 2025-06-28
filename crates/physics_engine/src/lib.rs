@@ -137,6 +137,21 @@ impl FundamentalParticle {
             acceleration: Vector3::zeros(),
         }
     }
+
+    /// Identity helper mirroring `Result::unwrap` so existing call sites compile.
+    pub fn unwrap(self) -> Self {
+        self
+    }
+
+    /// Identity helper mirroring `Result::unwrap_or`.
+    pub fn unwrap_or(self, _default: Self) -> Self {
+        self
+    }
+
+    /// Identity helper mirroring `Result::unwrap_or_else`.
+    pub fn unwrap_or_else<F: FnOnce() -> Self>(self, _op: F) -> Self {
+        self
+    }
 }
 
 /// Quantum state representation

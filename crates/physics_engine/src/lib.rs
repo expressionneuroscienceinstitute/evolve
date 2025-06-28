@@ -3165,3 +3165,88 @@ pub mod data_ingestion;
 
 /// Gravitational constant in N·(m/kg)²
 pub const G: f64 = 6.67430e-11;
+
+impl Atom {
+    /// Calculate net ionic charge (protons – electrons)
+    pub fn charge(&self) -> i32 {
+        let z = self.nucleus.atomic_number as i32;
+        let e = self.electrons.len() as i32;
+        z - e
+    }
+
+    /// Remove the highest-n electron and return its binding energy (positive, eV).
+    pub fn ionize(&mut self) -> anyhow::Result<f64> {
+        if self.electrons.is_empty() {
+            anyhow::bail!("Atom has no electrons to ionize");
+        }
+        // Find electron with maximum principal quantum number n
+        let (idx, electron) = self
+            .electrons
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, e)| e.quantum_numbers.n)
+            .map(|(i, e)| (i, e.clone()))
+            .unwrap();
+        // Bohr-model binding energy –Z² / n² * 13.6 eV  (negative value)
+        let z = self.nucleus.atomic_number as f64;
+        let n = electron.quantum_numbers.n.max(1) as f64;
+        let binding_ev = 13.605693122994 * z.powi(2) / n.powi(2);
+        self.electrons.remove(idx);
+        Ok(binding_ev)
+    }
+
+    /// Perform an electronic transition and return emitted photon energy (eV).
+    pub fn spectral_emission(&mut self, from_shell_n: u32, to_shell_n: u32) -> anyhow::Result<f64> {
+        if from_shell_n <= to_shell_n {
+            anyhow::bail!("Electron must move to a lower shell");
+        }
+        // Ensure an electron exists in the from-shell.
+        if let Some((idx, _)) = self
+            .electrons
+            .iter()
+            .enumerate()
+            .find(|(_, e)| e.quantum_numbers.n == from_shell_n)
+        {
+            // Capacity of destination shell 2n².
+            let dest_capacity = (2 * (to_shell_n as usize).pow(2)) as usize;
+            let dest_count = self
+                .electrons
+                .iter()
+                .filter(|e| e.quantum_numbers.n == to_shell_n)
+                .count();
+            if dest_count >= dest_capacity {
+                anyhow::bail!("Destination shell full");
+            }
+            // Move electron.
+            let mut e = self.electrons.remove(idx);
+            let z = self.nucleus.atomic_number as f64;
+            let ene_from = 13.605693122994 * z.powi(2) / (from_shell_n as f64).powi(2);
+            let ene_to = 13.605693122994 * z.powi(2) / (to_shell_n as f64).powi(2);
+            e.quantum_numbers.n = to_shell_n;
+            e.binding_energy = ene_to;
+            self.electrons.push(e);
+            Ok((ene_from - ene_to).abs())
+        } else {
+            anyhow::bail!("No electron found in from_shell")
+        }
+    }
+
+    /// Simple diagnostics mirroring atomic_physics::compute_atomic_properties (prints only).
+    pub fn compute_atomic_properties(&self) -> anyhow::Result<()> {
+        println!("Atom diagnostics:");
+        println!("  Z={}, electrons={} charge={}", self.nucleus.atomic_number, self.electrons.len(), self.charge());
+        // Group electrons by n
+        use std::collections::HashMap;
+        let mut shells: HashMap<u32, usize> = HashMap::new();
+        for e in &self.electrons {
+            *shells.entry(e.quantum_numbers.n).or_default() += 1;
+        }
+        for (n, count) in shells.iter().sorted_by_key(|(n, _)| *n) {
+            let capacity = 2 * (*n as usize).pow(2);
+            let z = self.nucleus.atomic_number as f64;
+            let energy = -13.605693122994 * z.powi(2) / (*n as f64).powi(2);
+            println!("    Shell n={}: {} electrons (capacity {}), energy level: {:.2} eV", n, count, capacity, energy);
+        }
+        Ok(())
+    }
+}

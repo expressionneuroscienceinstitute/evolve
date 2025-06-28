@@ -349,10 +349,12 @@ fn particles_to_physics_states(particles: &[Particle]) -> Vec<PhysicsState> {
         position: nalgebra::Vector3::new(p.position[0], p.position[1], p.position[2]),
         velocity: nalgebra::Vector3::new(p.velocity[0], p.velocity[1], p.velocity[2]),
         acceleration: nalgebra::Vector3::zeros(),
+        force: nalgebra::Vector3::zeros(), // Default force
         mass: p.mass,
         charge: 0.0, // Particle struct does not have charge, set to 0.0
         temperature: 300.0, // Default temperature
         entropy: 1e-20, // Default entropy
+        type_id: p.type_id, // Particle type ID
     }).collect()
 }
 

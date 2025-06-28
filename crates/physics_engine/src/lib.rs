@@ -194,8 +194,8 @@ pub struct InteractionMatrix {
     pub g_grav: f64,
     /// Interaction matrix elements for different particle types
     pub matrix_elements: HashMap<(ParticleType, ParticleType), f64>,
-    /// Running coupling constants at different energy scales
-    pub running_couplings: HashMap<f64, RunningCouplings>,
+    /// Running coupling constants at different energy scales (key is energy scale in GeV, stored as u64 bits)
+    pub running_couplings: HashMap<u64, RunningCouplings>,
 }
 
 impl InteractionMatrix {
@@ -238,7 +238,8 @@ impl InteractionMatrix {
     }
     /// Get running couplings at a given energy scale (GeV)
     pub fn get_running_couplings(&mut self, scale_gev: f64) -> RunningCouplings {
-        if let Some(&couplings) = self.running_couplings.get(&scale_gev) {
+        let scale_bits = scale_gev.to_bits();
+        if let Some(&couplings) = self.running_couplings.get(&scale_bits) {
             return couplings;
         }
         let alpha_em = self.calculate_running_alpha_em(scale_gev);
@@ -251,7 +252,7 @@ impl InteractionMatrix {
             alpha_s,
         };
         
-        self.running_couplings.insert(scale_gev, couplings);
+        self.running_couplings.insert(scale_bits, couplings);
         couplings
     }
     
@@ -390,10 +391,14 @@ impl InteractionMatrix {
 pub struct SpacetimeGrid;
 
 #[derive(Debug, Clone, Default)]
-pub struct QuantumVacuum;
+pub struct QuantumVacuum {
+    pub fluctuation_level: f64,
+}
 
 impl QuantumVacuum {
-    pub fn initialize_fluctuations(&mut self, _temperature: f64) -> Result<()> {
+    pub fn initialize_fluctuations(&mut self, temperature: f64) -> Result<()> {
+        // Scale fluctuations linearly with temperature for now
+        self.fluctuation_level = temperature * 1e-5;
         Ok(())
     }
 }
@@ -482,6 +487,27 @@ pub struct AtomicNucleus {
     pub position: Vector3<f64>,
     pub momentum: Vector3<f64>,
     pub excitation_energy: f64,
+}
+
+impl AtomicNucleus {
+    /// Create a new atomic nucleus with given atomic and mass numbers
+    pub fn new(atomic_number: u32, mass_number: u32) -> Self {
+        Self {
+            atomic_number,
+            mass_number,
+            protons: Vec::new(),
+            neutrons: Vec::new(),
+            binding_energy: 0.0,
+            nuclear_spin: Vector3::zeros(),
+            magnetic_moment: Vector3::zeros(),
+            electric_quadrupole_moment: 0.0,
+            nuclear_radius: 1.2e-15 * (mass_number as f64).powf(1.0/3.0), // fm
+            shell_model_state: NuclearShellState::new(),
+            position: Vector3::zeros(),
+            momentum: Vector3::zeros(),
+            excitation_energy: 0.0,
+        }
+    }
 }
 
 /// Individual nucleon (proton or neutron)
@@ -961,10 +987,12 @@ impl PhysicsEngine {
                     position: p.position,
                     velocity: p.velocity,
                     acceleration: Vector3::zeros(),
+                    force: Vector3::zeros(),
                     mass: p.mass,
                     charge: p.charge,
                     temperature: self.temperature,
                     entropy: 0.0,
+                    type_id: 0, // Default type ID
                 })
                 .collect();
             self.update_emergent_properties(&mut emergent_states)?;
@@ -1018,7 +1046,7 @@ impl PhysicsEngine {
                 .collect();
             
             // Calculate forces using molecular dynamics module
-            let forces = self.calculate_molecular_forces(&physics_states, molecule)?;
+            let forces = self.calculate_molecular_forces_physics(&physics_states, molecule)?;
             
             // Apply velocity Verlet integration
             for (i, atom) in molecule.atoms.iter_mut().enumerate() {
@@ -2483,10 +2511,12 @@ impl PhysicsEngine {
             position: p.position,
             velocity: p.velocity,
             acceleration: p.acceleration,
+            force: Vector3::zeros(),
             mass: p.mass,
             charge: p.charge,
             temperature: self.temperature,
             entropy: 0.0, // Will be calculated
+            type_id: 0, // Default type ID
         }).collect();
         
         // Apply quantum evolution to all states
@@ -2791,10 +2821,12 @@ impl PhysicsEngine {
                 position: p.position,
                 velocity: p.velocity,
                 acceleration: p.acceleration,
+                force: Vector3::zeros(),
                 mass: p.mass,
                 charge: p.charge,
                 temperature: self.temperature,
                 entropy,
+                type_id: 0, // Default type ID
             }
         }).collect();
 
@@ -2871,10 +2903,28 @@ impl PhysicsEngine {
         let charge1 = atom1.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE;
         let charge2 = atom2.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE;
         
-        // Coulomb's law: F = k * q1 * q2 / r²
-        let force_magnitude = COULOMB_CONSTANT * atom1.charge * atom2.charge / (distance * distance);
+        // Coulomb energy: E = k * q1 * q2 / r
+        let energy = COULOMB_CONSTANT * charge1 * charge2 / distance;
         
-        direction * force_magnitude
+        energy
+    }
+    
+    /// Calculate exchange energy (quantum mechanical effect) between two atoms
+    fn calculate_exchange_energy(&self, atom1: &Atom, atom2: &Atom, distance: f64) -> f64 {
+        // Simplified exchange energy based on overlap of electronic wave functions
+        // Real implementation would solve Schrödinger equation
+        
+        // Get the covalent radii
+        let r1 = 1e-10; // Simplified - would use actual covalent radius
+        let r2 = 1e-10;
+        
+        // Overlap integral approximation
+        let overlap = (-distance / (r1 + r2)).exp();
+        
+        // Exchange energy proportional to overlap and electronic energies
+        let exchange_strength = -1e-19; // Typical exchange energy scale (J)
+        
+        exchange_strength * overlap
     }
     
     /// Calculate van der Waals force using Lennard-Jones potential for PhysicsState

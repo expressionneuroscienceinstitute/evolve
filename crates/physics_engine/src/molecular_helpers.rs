@@ -1,4 +1,4 @@
-THIS SHOULD BE A LINTER ERROR//! Molecular-dynamics helper routines that used to live at the end of
+//! Molecular-dynamics helper routines that used to live at the end of
 //! `physics_engine/src/lib.rs`.
 //!
 //! These are now implemented as inherent methods on `PhysicsEngine`, which
@@ -32,7 +32,7 @@ impl PhysicsEngine {
             for j in (i + 1)..states.len() {
                 if !self.are_bonded_in_molecule(i, j, molecule) {
                     let vdw_force = self.calculate_lennard_jones_force(&states[i], &states[j])?;
-                    let coulomb_force = PhysicsEngine::calculate_coulomb_force(self, &states[i], &states[j])?;
+                    let coulomb_force = self.calculate_coulomb_force_physics(&states[i], &states[j])?;
                     let total_force = vdw_force + coulomb_force;
 
                     forces[i] += total_force;
@@ -87,7 +87,7 @@ impl PhysicsEngine {
     fn get_element_specific_lj_parameters(&self, atom1: &PhysicsState, atom2: &PhysicsState) -> (f64, f64) {
         // Element-specific parameters from quantum chemistry calculations
         // Using Lorentz-Berthelot mixing rules for cross-interactions
-        let (epsilon1, sigma1) = match atom1.atomic_number {
+        let (epsilon1, sigma1) = match atom1.type_id {
             1 => (0.0657e-21, 2.65e-10),   // Hydrogen
             6 => (0.2337e-21, 3.40e-10),   // Carbon
             7 => (0.1554e-21, 3.25e-10),   // Nitrogen
@@ -102,7 +102,7 @@ impl PhysicsEngine {
             _ => (1.0e-21, 3.5e-10),       // Default
         };
         
-        let (epsilon2, sigma2) = match atom2.atomic_number {
+        let (epsilon2, sigma2) = match atom2.type_id {
             1 => (0.0657e-21, 2.65e-10),   // Hydrogen
             6 => (0.2337e-21, 3.40e-10),   // Carbon
             7 => (0.1554e-21, 3.25e-10),   // Nitrogen
@@ -125,7 +125,7 @@ impl PhysicsEngine {
     }
 
     /// Coulomb electrostatic force between two point charges.
-    fn calculate_coulomb_force(&self, atom1: &PhysicsState, atom2: &PhysicsState) -> Result<Vector3<f64>> {
+    fn calculate_coulomb_force_physics(&self, atom1: &PhysicsState, atom2: &PhysicsState) -> Result<Vector3<f64>> {
         let displacement = atom2.position - atom1.position;
         let distance = displacement.magnitude();
 

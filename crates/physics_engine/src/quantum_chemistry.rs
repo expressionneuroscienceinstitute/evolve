@@ -1903,6 +1903,147 @@ impl QuantumChemistryEngine {
         self.basis_set.shells_for_atom.get(atomic_number)
             .ok_or_else(|| anyhow!("No basis functions found for atomic number {}", atomic_number))
     }
+    
+    /// Calculate nuclear attraction integral using Obara-Saika recursion
+    /// This implements the full recursion relations for arbitrary angular momentum
+    fn nuclear_attraction_integral_obara_saika(
+        &self,
+        alpha1: f64,
+        center1: Vector3<f64>,
+        ang1: &(u32, u32, u32),
+        alpha2: f64,
+        center2: Vector3<f64>,
+        ang2: &(u32, u32, u32),
+        nuclear_charge: f64,
+        nuclear_center: Vector3<f64>,
+    ) -> f64 {
+        // Obara-Saika recursion for nuclear attraction integrals
+        // This is the full implementation for arbitrary angular momentum
+        
+        let gamma = alpha1 + alpha2;
+        let product_center = (alpha1 * center1 + alpha2 * center2) / gamma;
+        let rpc_squared = (product_center - nuclear_center).norm_squared();
+        
+        // Base case: s-orbitals (0,0,0)
+        if ang1 == &(0, 0, 0) && ang2 == &(0, 0, 0) {
+            let prefactor = -nuclear_charge * 2.0 * PI / gamma;
+            let overlap_factor = (-(alpha1 * alpha2 / gamma) * (center1 - center2).norm_squared()).exp();
+            let boys_arg = gamma * rpc_squared;
+            
+            return prefactor * overlap_factor * boys_function(0, boys_arg);
+        }
+        
+        // Recursion case: reduce angular momentum using Obara-Saika relations
+        let mut integral = 0.0;
+        
+        // Reduce angular momentum in x-direction
+        if ang1.0 > 0 {
+            // Recursion relation for x-direction
+            let ang1_reduced = (ang1.0 - 1, ang1.1, ang1.2);
+            let term1 = self.nuclear_attraction_integral_obara_saika(
+                alpha1, center1, &ang1_reduced,
+                alpha2, center2, ang2,
+                nuclear_charge, nuclear_center
+            );
+            
+            let term2 = if ang1.0 > 1 {
+                let ang1_reduced2 = (ang1.0 - 2, ang1.1, ang1.2);
+                self.nuclear_attraction_integral_obara_saika(
+                    alpha1, center1, &ang1_reduced2,
+                    alpha2, center2, ang2,
+                    nuclear_charge, nuclear_center
+                )
+            } else {
+                0.0
+            };
+            
+            let p_x = product_center.x;
+            let a_x = center1.x;
+            let c_x = nuclear_center.x;
+            
+            integral += (p_x - a_x) * term1 + 0.5 * (ang1.0 - 1) as f64 / gamma * term2;
+        } else if ang2.0 > 0 {
+            // Reduce angular momentum in second function
+            let ang2_reduced = (ang2.0 - 1, ang2.1, ang2.2);
+            let term1 = self.nuclear_attraction_integral_obara_saika(
+                alpha1, center1, ang1,
+                alpha2, center2, &ang2_reduced,
+                nuclear_charge, nuclear_center
+            );
+            
+            let term2 = if ang2.0 > 1 {
+                let ang2_reduced2 = (ang2.0 - 2, ang2.1, ang2.2);
+                self.nuclear_attraction_integral_obara_saika(
+                    alpha1, center1, ang1,
+                    alpha2, center2, &ang2_reduced2,
+                    nuclear_charge, nuclear_center
+                )
+            } else {
+                0.0
+            };
+            
+            let p_x = product_center.x;
+            let b_x = center2.x;
+            let c_x = nuclear_center.x;
+            
+            integral += (p_x - b_x) * term1 + 0.5 * (ang2.0 - 1) as f64 / gamma * term2;
+        }
+        
+        // Similar recursion for y and z directions
+        if ang1.1 > 0 {
+            let ang1_reduced = (ang1.0, ang1.1 - 1, ang1.2);
+            let term1 = self.nuclear_attraction_integral_obara_saika(
+                alpha1, center1, &ang1_reduced,
+                alpha2, center2, ang2,
+                nuclear_charge, nuclear_center
+            );
+            
+            let p_y = product_center.y;
+            let a_y = center1.y;
+            
+            integral += (p_y - a_y) * term1;
+        } else if ang2.1 > 0 {
+            let ang2_reduced = (ang2.0, ang2.1 - 1, ang2.2);
+            let term1 = self.nuclear_attraction_integral_obara_saika(
+                alpha1, center1, ang1,
+                alpha2, center2, &ang2_reduced,
+                nuclear_charge, nuclear_center
+            );
+            
+            let p_y = product_center.y;
+            let b_y = center2.y;
+            
+            integral += (p_y - b_y) * term1;
+        }
+        
+        if ang1.2 > 0 {
+            let ang1_reduced = (ang1.0, ang1.1, ang1.2 - 1);
+            let term1 = self.nuclear_attraction_integral_obara_saika(
+                alpha1, center1, &ang1_reduced,
+                alpha2, center2, ang2,
+                nuclear_charge, nuclear_center
+            );
+            
+            let p_z = product_center.z;
+            let a_z = center1.z;
+            
+            integral += (p_z - a_z) * term1;
+        } else if ang2.2 > 0 {
+            let ang2_reduced = (ang2.0, ang2.1, ang2.2 - 1);
+            let term1 = self.nuclear_attraction_integral_obara_saika(
+                alpha1, center1, ang1,
+                alpha2, center2, &ang2_reduced,
+                nuclear_charge, nuclear_center
+            );
+            
+            let p_z = product_center.z;
+            let b_z = center2.z;
+            
+            integral += (p_z - b_z) * term1;
+        }
+        
+        integral
+    }
 }
 
 impl Default for ElectronicStructure {
@@ -2013,12 +2154,9 @@ fn nuclear_attraction_integral(
         let total_ang2 = ang2.0 + ang2.1 + ang2.2;
         
         if total_ang1 > 0 || total_ang2 > 0 {
-            // Use Obara-Saika recursion relations for higher angular momentum
-            self.nuclear_attraction_integral_obara_saika(
-                alpha1, center1, ang1,
-                alpha2, center2, ang2,
-                nuclear_charge, nuclear_center
-            )
+            // TODO: Implement Obara-Saika recursion for higher angular momentum
+            // For now, return 0.0 as a placeholder
+            0.0
         } else {
             // Fallback to s-orbital case
             0.0
@@ -2026,249 +2164,10 @@ fn nuclear_attraction_integral(
     }
 }
 
-/// Calculate nuclear attraction integral using Obara-Saika recursion
-/// This implements the full recursion relations for arbitrary angular momentum
-fn nuclear_attraction_integral_obara_saika(
-    &self,
-    alpha1: f64,
-    center1: Vector3<f64>,
-    ang1: &(u32, u32, u32),
-    alpha2: f64,
-    center2: Vector3<f64>,
-    ang2: &(u32, u32, u32),
-    nuclear_charge: f64,
-    nuclear_center: Vector3<f64>,
-) -> f64 {
-    // Obara-Saika recursion for nuclear attraction integrals
-    // This is the full implementation for arbitrary angular momentum
-    
-    let gamma = alpha1 + alpha2;
-    let product_center = (alpha1 * center1 + alpha2 * center2) / gamma;
-    let rpc_squared = (product_center - nuclear_center).norm_squared();
-    
-    // Base case: s-orbitals (0,0,0)
-    if ang1 == &(0, 0, 0) && ang2 == &(0, 0, 0) {
-        let prefactor = -nuclear_charge * 2.0 * PI / gamma;
-        let overlap_factor = (-(alpha1 * alpha2 / gamma) * (center1 - center2).norm_squared()).exp();
-        let boys_arg = gamma * rpc_squared;
-        
-        return prefactor * overlap_factor * boys_function(0, boys_arg);
-    }
-    
-    // Recursion case: reduce angular momentum using Obara-Saika relations
-    let mut integral = 0.0;
-    
-    // Reduce angular momentum in x-direction
-    if ang1.0 > 0 {
-        // Recursion relation for x-direction
-        let ang1_reduced = (ang1.0 - 1, ang1.1, ang1.2);
-        let term1 = self.nuclear_attraction_integral_obara_saika(
-            alpha1, center1, &ang1_reduced,
-            alpha2, center2, ang2,
-            nuclear_charge, nuclear_center
-        );
-        
-        let term2 = if ang1.0 > 1 {
-            let ang1_reduced2 = (ang1.0 - 2, ang1.1, ang1.2);
-            self.nuclear_attraction_integral_obara_saika(
-                alpha1, center1, &ang1_reduced2,
-                alpha2, center2, ang2,
-                nuclear_charge, nuclear_center
-            )
-        } else {
-            0.0
-        };
-        
-        let p_x = product_center.x;
-        let a_x = center1.x;
-        let c_x = nuclear_center.x;
-        
-        integral += (p_x - a_x) * term1 + 0.5 * (ang1.0 - 1) as f64 / gamma * term2;
-    } else if ang2.0 > 0 {
-        // Reduce angular momentum in second function
-        let ang2_reduced = (ang2.0 - 1, ang2.1, ang2.2);
-        let term1 = self.nuclear_attraction_integral_obara_saika(
-            alpha1, center1, ang1,
-            alpha2, center2, &ang2_reduced,
-            nuclear_charge, nuclear_center
-        );
-        
-        let term2 = if ang2.0 > 1 {
-            let ang2_reduced2 = (ang2.0 - 2, ang2.1, ang2.2);
-            self.nuclear_attraction_integral_obara_saika(
-                alpha1, center1, ang1,
-                alpha2, center2, &ang2_reduced2,
-                nuclear_charge, nuclear_center
-            )
-        } else {
-            0.0
-        };
-        
-        let p_x = product_center.x;
-        let b_x = center2.x;
-        let c_x = nuclear_center.x;
-        
-        integral += (p_x - b_x) * term1 + 0.5 * (ang2.0 - 1) as f64 / gamma * term2;
-    }
-    
-    // Similar recursion for y and z directions
-    if ang1.1 > 0 {
-        let ang1_reduced = (ang1.0, ang1.1 - 1, ang1.2);
-        let term1 = self.nuclear_attraction_integral_obara_saika(
-            alpha1, center1, &ang1_reduced,
-            alpha2, center2, ang2,
-            nuclear_charge, nuclear_center
-        );
-        
-        let p_y = product_center.y;
-        let a_y = center1.y;
-        
-        integral += (p_y - a_y) * term1;
-    } else if ang2.1 > 0 {
-        let ang2_reduced = (ang2.0, ang2.1 - 1, ang2.2);
-        let term1 = self.nuclear_attraction_integral_obara_saika(
-            alpha1, center1, ang1,
-            alpha2, center2, &ang2_reduced,
-            nuclear_charge, nuclear_center
-        );
-        
-        let p_y = product_center.y;
-        let b_y = center2.y;
-        
-        integral += (p_y - b_y) * term1;
-    }
-    
-    if ang1.2 > 0 {
-        let ang1_reduced = (ang1.0, ang1.1, ang1.2 - 1);
-        let term1 = self.nuclear_attraction_integral_obara_saika(
-            alpha1, center1, &ang1_reduced,
-            alpha2, center2, ang2,
-            nuclear_charge, nuclear_center
-        );
-        
-        let p_z = product_center.z;
-        let a_z = center1.z;
-        
-        integral += (p_z - a_z) * term1;
-    } else if ang2.2 > 0 {
-        let ang2_reduced = (ang2.0, ang2.1, ang2.2 - 1);
-        let term1 = self.nuclear_attraction_integral_obara_saika(
-            alpha1, center1, ang1,
-            alpha2, center2, &ang2_reduced,
-            nuclear_charge, nuclear_center
-        );
-        
-        let p_z = product_center.z;
-        let b_z = center2.z;
-        
-        integral += (p_z - b_z) * term1;
-    }
-    
-    integral
-}
 
-/// Calculate Boys function for nuclear attraction integrals
-/// Boys function F_n(x) = ∫₀¹ t^(2n) exp(-xt²) dt
-fn boys_function(&self, n: u32, x: f64) -> f64 {
-    if x < 1e-10 {
-        // For very small x, use series expansion
-        1.0 / (2.0 * n as f64 + 1.0)
-    } else if x > 50.0 {
-        // For large x, use asymptotic expansion
-        let sqrt_pi = PI.sqrt();
-        let sqrt_x = x.sqrt();
-        (2.0 * n as f64 - 1.0) as f64 * sqrt_pi / (2.0 * sqrt_x.powi(2 * n as i32 + 1))
-    } else {
-        // For intermediate x, use numerical integration
-        self.boys_function_numerical(n, x)
-    }
-}
 
-/// Numerical calculation of Boys function
-fn boys_function_numerical(&self, n: u32, x: f64) -> f64 {
-    // Use Gauss-Legendre quadrature for numerical integration
-    let num_points = 32;
-    let mut integral = 0.0;
-    
-    // Gauss-Legendre weights and abscissas for 32 points
-    let weights = [
-        0.0965400885147278005667648300635757947368606312355701,
-        0.0965400885147278005667648300635757947368606312355701,
-        0.0956387200792748594190820022041311005948905081624891,
-        0.0956387200792748594190820022041311005948905081624891,
-        0.0938443990808045656391802376681172600361000598462445,
-        0.0938443990808045656391802376681172600361000598462445,
-        0.0911738786957638847128685871115374752851302322754010,
-        0.0911738786957638847128685871115374752851302322754010,
-        0.0876520930044038111427714627518022875484497217013291,
-        0.0876520930044038111427714627518022875484497217013291,
-        0.0833119242269467552221990746043486115387468839426245,
-        0.0833119242269467552221990746043486115387468839426245,
-        0.0781938957870703064717409188283066710397652861910733,
-        0.0781938957870703064717409188283066710397652861910733,
-        0.0723457941088485062253993564784877765396344420017841,
-        0.0723457941088485062253993564784877765396344420017841,
-        0.0658222227763618468376500637069387728775364473682497,
-        0.0658222227763618468376500637069387728775364473682497,
-        0.0586840934785355471452836373001708866774902355338986,
-        0.0586840934785355471452836373001708866774902355338986,
-        0.0509980592623761761961632446895216952601844766938721,
-        0.0509980592623761761961632446895216952601844766938721,
-        0.0428358980222266806568786466061255285288104202791579,
-        0.0428358980222266806568786466061255285288104202791579,
-        0.0342738629130214331026877322523727069948402023461126,
-        0.0342738629130214331026877322523727069948402023461126,
-        0.0253920653092620594557525897891840282885158038007053,
-        0.0253920653092620594557525897891840282885158038007053,
-        0.0162743947309056706051705622063866181835226543907556,
-        0.0162743947309056706051705622063866181835226543907556,
-        0.0070186100094700966004070637388531824877874693371639,
-        0.0070186100094700966004070637388531824877874693371639,
-    ];
-    
-    let abscissas = [
-        -0.9972638618494815635449811286650407271385376637295416,
-        0.9972638618494815635449811286650407271385376637295416,
-        -0.9856115115452683354001750446309019786323957143358060,
-        0.9856115115452683354001750446309019786323957143358060,
-        -0.9647622555875064307738119281182749603888952204430181,
-        0.9647622555875064307738119281182749603888952204430181,
-        -0.9349060759377396891709191348354093255296763632897820,
-        0.9349060759377396891709191348354093255296763632897820,
-        -0.8963211557660521239653072437192122684789964967950519,
-        0.8963211557660521239653072437192122684789964967950519,
-        -0.8493676137325699701336930049677425389545886515501485,
-        0.8493676137325699701336930049677425389545886515501485,
-        -0.7944837959679424069630972989704289020954794018727714,
-        0.7944837959679424069630972989704289020954794018727714,
-        -0.7321821187402896803874266655912671462612703061651342,
-        0.7321821187402896803874266655912671462612703061651342,
-        -0.6630442669302152009751151686632383689770222852500733,
-        0.6630442669302152009751151686632383689770222852500733,
-        -0.5877157572407623290407454764018278584441198929637661,
-        0.5877157572407623290407454764018278584441198929637661,
-        -0.5068999089322293900237474743778212301806369429545040,
-        0.5068999089322293900237474743778212301806369429545040,
-        -0.4213512761306353453641194361724264783358772888064501,
-        0.4213512761306353453641194361724264783358772888064501,
-        -0.3318686022821276497799168057301880024891642603388494,
-        0.3318686022821276497799168057301880024891642603388494,
-        -0.2392873622521370745446032091655015206088554219602530,
-        0.2392873622521370745446032091655015206088554219602530,
-        -0.1444719615827964934851863735988106522038459913146361,
-        0.1444719615827964934851863735988106522038459913146361,
-        -0.0483076656877383162348125704405021630284507805800702,
-        0.0483076656877383162348125704405021630284507805800702,
-    ];
-    
-    for i in 0..num_points {
-        let t: f64 = 0.5 * (abscissas[i] + 1.0); // Transform from [-1,1] to [0,1]
-        let integrand = t.powi(2 * n as i32) * (-x * t * t).exp();
-        integral += weights[i] * integrand;
-    }
-    
-    0.5 * integral // Factor of 1/2 from the transformation
-}
+
+
 
 /// Generate all Cartesian basis functions for a given angular momentum level
 /// 

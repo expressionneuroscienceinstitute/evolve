@@ -427,7 +427,7 @@ impl EndfParser {
             energy_min,
             energy_max,
             scattering_radius,
-            parameters: resonance_parameters,
+            parameters: resonance_parameters.clone(),
         };
         
         self.resonance_data.insert(mat, resonance_data);

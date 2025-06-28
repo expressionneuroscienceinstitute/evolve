@@ -610,8 +610,6 @@ pub struct NativeRenderer<'window> {
     #[cfg(feature = "heavy")]
     heavy_mode_enabled: bool,
     #[cfg(feature = "heavy")]
-    interaction_heatmap: Vec<f32>,
-    #[cfg(feature = "heavy")]
     temperature_field: Vec<Vector3<f32>>,
 
     // Quantum visualization state
@@ -1347,8 +1345,6 @@ impl<'window> NativeRenderer<'window> {
             
             #[cfg(feature = "heavy")]
             heavy_mode_enabled: false,
-            #[cfg(feature = "heavy")]
-            interaction_heatmap: Vec::new(),
             #[cfg(feature = "heavy")]
             temperature_field: Vec::new(),
 

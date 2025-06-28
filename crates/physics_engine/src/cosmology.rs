@@ -527,15 +527,16 @@ pub struct TreePmGravitySolver {
 
 impl TreePmGravitySolver {
     pub fn new(params: CosmologicalParameters) -> Self {
+        let box_size = params.box_size;
         Self {
-            cosmological_params: params.clone(),
+            cosmological_params: params,
             tree_opening_angle: 0.5, // Standard opening angle
             softening_length: 1.0e-6, // 1 μm default
             force_accuracy: 1.0e-4,   // 0.01% accuracy
             pm_grid_size: 256,        // 256³ PM grid
             pm_smoothing_scale: 1.0,  // 1 grid cell smoothing
             periodic_boundaries: true,
-            box_size: params.box_size,
+            box_size,
         }
     }
 

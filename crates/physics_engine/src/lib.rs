@@ -3221,7 +3221,9 @@ impl Atom {
         for e in &self.electrons {
             *shells.entry(e.quantum_numbers.n).or_default() += 1;
         }
-        for (n, count) in shells.iter().sorted_by_key(|(n, _)| *n) {
+        let mut shell_pairs: Vec<_> = shells.iter().collect();
+        shell_pairs.sort_by_key(|(n, _)| *n);
+        for (n, count) in shell_pairs {
             let capacity = 2 * (*n as usize).pow(2);
             let z = self.nucleus.atomic_number as f64;
             let energy = -13.605693122994 * z.powi(2) / (*n as f64).powi(2);

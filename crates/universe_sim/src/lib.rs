@@ -39,6 +39,8 @@ pub use storage::{CelestialBodyType, PlanetClass, StellarEvolution, StellarPhase
 // Import molecular dynamics types for visualization integration
 use physics_engine::molecular_dynamics::{MDSnapshot, ReactionEvent, ReactionEventType};
 
+
+
 /// Calculate relativistic total energy from momentum and mass
 /// E = sqrt((pc)^2 + (mc^2)^2) where c = speed of light
 #[allow(dead_code)]
@@ -215,7 +217,7 @@ impl UniverseSimulation {
                 (6.64466e-27, 2.0 * 1.602176e-19) // Alpha particle
             };
             
-            self.store.particles.add(
+            let _ = self.store.particles.add(
                 position,
                 velocity,
                 mass,
@@ -425,12 +427,24 @@ impl UniverseSimulation {
         let universe_age = self.universe_age_gyr();
         let cosmic_era = cosmic_era::determine_cosmic_era(universe_age);
         
-        // Process agent evolution on habitable planets
-        for (planet_id, planet) in self.store.celestials.iter_mut().enumerate() {
-            if planet.body_type == BodyType::Planet && planet.is_habitable {
-                // Update agent population on this planet
-                self.update_planet_agents(planet_id, planet, universe_age, cosmic_era)?;
-            }
+        // Process agent evolution on habitable planets - collect first to avoid borrow conflicts
+        let habitable_planets: Vec<usize> = self.store.celestials.iter().enumerate()
+            .filter_map(|(id, planet)| {
+                if planet.body_type == BodyType::Planet && planet.is_habitable {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        for planet_id in habitable_planets {
+            // Extract planet data before mutable borrow
+            let planet_temperature = self.store.celestials[planet_id].temperature;
+            let planet_gravity = self.store.celestials[planet_id].gravity;
+            let planet_atmosphere = self.store.celestials[planet_id].atmosphere.clone();
+            
+            self.update_planet_agents_extracted(planet_id, planet_temperature, planet_gravity, planet_atmosphere, universe_age, cosmic_era.clone())?;
         }
         
         // Process inter-planetary agent interactions
@@ -443,6 +457,7 @@ impl UniverseSimulation {
     }
     
     /// Update agents on a specific habitable planet
+    #[allow(dead_code)]
     fn update_planet_agents(
         &mut self,
         planet_id: usize,
@@ -456,8 +471,23 @@ impl UniverseSimulation {
             let evolution_context = agent_evolution::EvolutionContext {
                 planet_temperature: planet.temperature,
                 planet_gravity: planet.gravity,
-                planet_atmosphere: planet.atmosphere.clone(),
-                cosmic_era,
+                planet_atmosphere: agent_evolution::Atmosphere {
+                    pressure: planet.atmosphere.pressure,
+                    composition: planet.atmosphere.composition.clone(),
+                    temperature: planet.atmosphere.temperature,
+                    density: planet.atmosphere.density,
+                    scale_height: planet.atmosphere.scale_height,
+                },
+                cosmic_era: agent_evolution::CosmicEra {
+                    age_gyr: cosmic_era.age_gyr,
+                    mean_temperature: cosmic_era.mean_temperature,
+                    stellar_fraction: cosmic_era.stellar_fraction,
+                    metallicity: cosmic_era.metallicity,
+                    habitable_count: cosmic_era.habitable_count,
+                    max_complexity: cosmic_era.max_complexity,
+                    energy_density: cosmic_era.energy_density,
+                    hubble_constant: cosmic_era.hubble_constant,
+                },
                 universe_age,
                 time_step: self.physics_engine.time_step,
             };
@@ -466,6 +496,55 @@ impl UniverseSimulation {
             agent_population.evolve(&evolution_context)?;
             
             // Update planet's agent-related properties
+            planet.agent_population = agent_population.total_population();
+            planet.tech_level = agent_population.average_tech_level();
+        }
+        
+        Ok(())
+    }
+    
+    /// Update agents on a specific habitable planet (extracted version to avoid borrow conflicts)
+    fn update_planet_agents_extracted(
+        &mut self,
+        planet_id: usize,
+        planet_temperature: f64,
+        planet_gravity: f64,
+        planet_atmosphere: Atmosphere,
+        universe_age: f64,
+        cosmic_era: cosmic_era::CosmicEra,
+    ) -> Result<()> {
+        // Check if agents exist on this planet
+        if let Some(agent_population) = self.store.agent_populations.get_mut(&planet_id) {
+            // Update agent evolution based on planet conditions
+            let evolution_context = agent_evolution::EvolutionContext {
+                planet_temperature,
+                planet_gravity,
+                planet_atmosphere: agent_evolution::Atmosphere {
+                    pressure: planet_atmosphere.pressure,
+                    composition: planet_atmosphere.composition.clone(),
+                    temperature: planet_atmosphere.temperature,
+                    density: planet_atmosphere.density,
+                    scale_height: planet_atmosphere.scale_height,
+                },
+                cosmic_era: agent_evolution::CosmicEra {
+                    age_gyr: cosmic_era.age_gyr,
+                    mean_temperature: cosmic_era.mean_temperature,
+                    stellar_fraction: cosmic_era.stellar_fraction,
+                    metallicity: cosmic_era.metallicity,
+                    habitable_count: cosmic_era.habitable_count,
+                    max_complexity: cosmic_era.max_complexity,
+                    energy_density: cosmic_era.energy_density,
+                    hubble_constant: cosmic_era.hubble_constant,
+                },
+                universe_age,
+                time_step: self.physics_engine.time_step,
+            };
+            
+            // Evolve agents using the agent evolution system
+            agent_population.evolve(&evolution_context)?;
+            
+            // Update planet's agent-related properties
+            let planet = &mut self.store.celestials[planet_id];
             planet.agent_population = agent_population.total_population();
             planet.tech_level = agent_population.average_tech_level();
         }
@@ -485,12 +564,12 @@ impl UniverseSimulation {
     /// Update global agent statistics
     fn update_agent_statistics(&mut self) -> Result<()> {
         // Calculate global agent population and technology statistics
-        let mut total_agents = 0;
+        let mut _total_agents = 0;
         let mut total_tech_level = 0.0;
         let mut habitable_planets = 0;
         
         for (_, population) in &self.store.agent_populations {
-            total_agents += population.total_population();
+            _total_agents += population.total_population();
             total_tech_level += population.average_tech_level();
             habitable_planets += 1;
         }
@@ -533,7 +612,7 @@ impl UniverseSimulation {
     }
     
     /// Process galactic evolution and large-scale structure formation
-    fn process_galactic_evolution(&mut self, dt: f64) -> Result<()> {
+    fn process_galactic_evolution(&mut self, _dt: f64) -> Result<()> {
         // This would handle galaxy formation, mergers, and evolution
         // For now, this is a placeholder for future implementation
         
@@ -550,7 +629,7 @@ impl UniverseSimulation {
     }
     
     /// Process dark matter and dark energy effects on cosmic expansion
-    fn process_dark_matter_effects(&mut self, dt: f64) -> Result<()> {
+    fn process_dark_matter_effects(&mut self, _dt: f64) -> Result<()> {
         // Calculate dark matter and dark energy contributions to expansion
         let current_age = self.universe_age_gyr();
         let hubble_constant = self.get_hubble_constant(current_age);
@@ -570,7 +649,7 @@ impl UniverseSimulation {
     }
     
     /// Process cosmic ray generation and propagation
-    fn process_cosmic_rays(&mut self, dt: f64) -> Result<()> {
+    fn process_cosmic_rays(&mut self, _dt: f64) -> Result<()> {
         // Calculate cosmic ray flux from stellar sources
         let cosmic_ray_flux = self.calculate_cosmic_ray_flux()?;
         
@@ -581,7 +660,7 @@ impl UniverseSimulation {
     }
     
     /// Process gravitational wave generation from compact object mergers
-    fn process_gravitational_waves(&mut self, dt: f64) -> Result<()> {
+    fn process_gravitational_waves(&mut self, _dt: f64) -> Result<()> {
         // Calculate gravitational wave strain from stellar mergers
         let gw_strain = self.calculate_gravitational_wave_strain()?;
         
@@ -739,16 +818,17 @@ impl UniverseSimulation {
     
     /// Process a single supernova event
     fn process_single_supernova(&mut self, star_id: usize) -> Result<()> {
-        let star = &self.store.celestials[star_id];
+        // Extract star mass before any mutable borrows
+        let star_mass = self.store.celestials[star_id].mass;
         
         // Calculate nucleosynthesis yields based on stellar mass
-        let yields = self.calculate_supernova_yields(star.mass)?;
+        let yields = self.calculate_supernova_yields(star_mass)?;
         
         // Create enriched gas cloud from supernova ejecta
         self.create_supernova_remnant(star_id, &yields)?;
         
         // Update stellar remnant (neutron star or black hole)
-        self.create_stellar_remnant(star_id, star.mass)?;
+        self.create_stellar_remnant(star_id, star_mass)?;
         
         // Update global chemical composition
         self.update_global_chemical_composition(&yields)?;
@@ -833,7 +913,7 @@ impl UniverseSimulation {
     
     /// Create a stellar remnant (neutron star or black hole)
     fn create_stellar_remnant(&mut self, star_id: usize, original_mass: f64) -> Result<()> {
-        let star = &self.store.celestials[star_id];
+        let _star = &self.store.celestials[star_id];
         
         // Determine remnant type based on original mass
         let remnant_type = if original_mass > 20.0 {
@@ -851,7 +931,7 @@ impl UniverseSimulation {
         
         // Update the original star to become the remnant
         let star_mut = &mut self.store.celestials[star_id];
-        star_mut.body_type = remnant_type;
+        star_mut.body_type = remnant_type.clone();
         star_mut.mass = remnant_mass;
         star_mut.radius = match remnant_type {
             BodyType::BlackHole => 2.0 * 6.67430e-11 * remnant_mass * 1.989e30 / (3e8 * 3e8), // Schwarzschild radius
@@ -880,16 +960,7 @@ impl UniverseSimulation {
         Ok(())
     }
     
-    /// Supernova nucleosynthesis yields
-    #[derive(Debug, Default)]
-    struct SupernovaYields {
-        iron_mass: f64,
-        silicon_group_mass: f64,
-        oxygen_group_mass: f64,
-        carbon_group_mass: f64,
-        heavy_elements_mass: f64,
-        total_ejected_mass: f64,
-    }
+
 
     /// Create enriched gas clouds from stellar death events
     #[allow(dead_code)]
@@ -931,8 +1002,8 @@ impl UniverseSimulation {
             atmosphere: Atmosphere {
                 composition: {
                     let mut comp = HashMap::new();
-                    for (element, fraction) in composition {
-                        comp.insert(element, fraction);
+                    for (element, fraction) in &composition {
+                        comp.insert(element.clone(), *fraction);
                     }
                     comp
                 },
@@ -1017,7 +1088,7 @@ impl UniverseSimulation {
     }
     
     /// Calculate enriched chemical composition
-    fn calculate_enriched_composition(&self, stellar_mass: f64, evolution: &StellarEvolution) -> Result<Vec<(String, f64)>> {
+    fn calculate_enriched_composition(&self, _stellar_mass: f64, evolution: &StellarEvolution) -> Result<Vec<(String, f64)>> {
         let mut composition = vec![
             ("H".to_string(), 0.7), // Base hydrogen fraction
             ("He".to_string(), 0.28), // Base helium fraction
@@ -1090,15 +1161,7 @@ impl UniverseSimulation {
         Ok(())
     }
     
-    /// Enrichment factor for gas cloud creation
-    #[derive(Debug, Default)]
-    struct EnrichmentFactor {
-        ejected_fraction: f64,
-        metallicity_enhancement: f64,
-        carbon_enhancement: f64,
-        nitrogen_enhancement: f64,
-        oxygen_enhancement: f64,
-    }
+
 
     /// Handle r-process nucleosynthesis in neutron star mergers
     #[allow(dead_code)]
@@ -1140,7 +1203,7 @@ impl UniverseSimulation {
     }
     
     /// Calculate r-process element yields
-    fn calculate_r_process_yields(&self, stellar_mass: f64, neutron_flux: f64) -> Result<Vec<(String, f64)>> {
+    fn calculate_r_process_yields(&self, stellar_mass: f64, _neutron_flux: f64) -> Result<Vec<(String, f64)>> {
         // R-process creates elements from A=80 to A=250
         // Peak abundances around A=130 (tellurium) and A=195 (platinum)
         
@@ -1765,7 +1828,7 @@ impl UniverseSimulation {
         
         // Cosmological parameters (Planck 2018 values)
         const OMEGA_DM: f64 = 0.265; // Dark matter density parameter
-        const OMEGA_M: f64 = 0.315;  // Total matter density parameter
+        const _OMEGA_M: f64 = 0.315;  // Total matter density parameter
         const H0: f64 = 67.4;        // Hubble constant (km/s/Mpc)
         const RHO_CRIT_0: f64 = 3.0 * H0 * H0 / (8.0 * std::f64::consts::PI * 6.67430e-11) * 1e-6; // kg/m³
         
@@ -1773,7 +1836,7 @@ impl UniverseSimulation {
         let scale_factor = self.get_cosmological_parameters()
             .map(|params| params.scale_factor)
             .unwrap_or(1.0);
-        let redshift = (1.0 / scale_factor) - 1.0;
+        let _redshift = (1.0 / scale_factor) - 1.0;
         
         // Dark matter density evolves as ρ_dm ∝ a⁻³ (matter-dominated)
         let rho_dm_cosmic = OMEGA_DM * RHO_CRIT_0 * scale_factor.powi(-3);
@@ -1803,7 +1866,7 @@ impl UniverseSimulation {
         let scale_factor = self.get_cosmological_parameters()
             .map(|params| params.scale_factor)
             .unwrap_or(1.0);
-        let redshift = (1.0 / scale_factor) - 1.0;
+        let _redshift = (1.0 / scale_factor) - 1.0;
         
         // CMB temperature evolves as T ∝ a⁻¹
         let t_cmb = T_CMB_0 / scale_factor;
@@ -1963,7 +2026,8 @@ impl UniverseSimulation {
                     StellarPhase::MainSequence | StellarPhase::SubgiantBranch => {
                         main_sequence_count += 1;
                     }
-                    StellarPhase::RedGiantBranch
+                    StellarPhase::RedGiant
+                    | StellarPhase::RedGiantBranch
                     | StellarPhase::HorizontalBranch
                     | StellarPhase::AsymptoticGiantBranch => {
                         evolved_count += 1;
@@ -2891,7 +2955,7 @@ impl UniverseSimulation {
                     let mut cross_section_count = 0;
                     for z in 1..=118 {
                         for n in 0..=300 {
-                            if cross_section_db.get_cross_section(z, n, 1e-6).is_some() {
+                                                         if cross_section_db.get_endf_cross_section(z as u32, n as u32, 2).is_some() {
                                 cross_section_count += 1;
                             }
                         }
@@ -3300,19 +3364,19 @@ impl UniverseSimulation {
         
         // Calculate actual bonds from particle positions
         let mut total_bonds = 0.0;
-        let mut bonded_particles = 0;
+        let mut _bonded_particles = 0;
         
         // Use a cutoff distance for bonding (typical chemical bond length ~1-3 Å)
         let bond_cutoff = 3e-10; // 3 Å in meters
         
         for i in 0..particle_count {
             let pos_i = &self.store.particles.position[i];
-            let mass_i = self.store.particles.mass[i];
+            let _mass_i = self.store.particles.mass[i];
             let mut particle_bonds = 0;
             
             for j in (i + 1)..particle_count {
                 let pos_j = &self.store.particles.position[j];
-                let mass_j = self.store.particles.mass[j];
+                let _mass_j = self.store.particles.mass[j];
                 
                 // Calculate distance between particles
                 let dx = pos_i.x - pos_j.x;
@@ -3334,7 +3398,7 @@ impl UniverseSimulation {
             }
             
             if particle_bonds > 0 {
-                bonded_particles += 1;
+                _bonded_particles += 1;
             }
         }
         
@@ -3550,7 +3614,7 @@ impl UniverseSimulation {
     /// and atom/particle focus requirements
     fn calculate_adaptive_stellar_time_step(&self, base_dt: f64) -> f64 {
         // Get current visualization scale from physics engine if available
-        let visualization_scale = self.physics_engine.get_visualization_scale().unwrap_or(1.0);
+        let visualization_scale = 1.0; // Default visualization scale since method not available
         
         // Adjust time step based on visualization scale
         // For atomic/molecular scales, use finer time steps for detailed particle tracking

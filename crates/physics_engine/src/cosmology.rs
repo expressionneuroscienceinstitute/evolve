@@ -901,7 +901,7 @@ pub struct CosmologicalGravitySolver {
 impl CosmologicalGravitySolver {
     pub fn new(params: CosmologicalParameters) -> Self {
         Self {
-            cosmological_params: params,
+            cosmological_params: params.clone(),
             softening_length: 1.0e-6,
             force_accuracy: 1.0e-4,
             tree_opening_angle: 0.5, // Standard Barnes-Hut opening angle

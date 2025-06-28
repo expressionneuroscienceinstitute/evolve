@@ -2248,11 +2248,7 @@ impl PhysicsEngine {
                                     ParticleType::Electron,
                                     9.10938356e-31, // Electron mass
                                     atom.position + Vector3::new(1e-10, 0.0, 0.0) // Slightly offset position
-                                ).unwrap_or_else(|_| FundamentalParticle::new(
-                                    ParticleType::Electron,
-                                    9.10938356e-31,
-                                    atom.position
-                                ).unwrap())],
+                                )],
                             });
                         }
                     }
@@ -2273,11 +2269,7 @@ impl PhysicsEngine {
                                     ParticleType::Photon,
                                     0.0, // Photons are massless
                                     atom.position
-                                ).unwrap_or_else(|_| FundamentalParticle::new(
-                                    ParticleType::Photon,
-                                    0.0,
-                                    atom.position
-                                ).unwrap());
+                                );
                                 photon.energy = photon_energy * 1.602176634e-19; // Convert eV to J
                                 photon.momentum = Vector3::new(
                                     photon.energy / 299792458.0, // p = E/c
@@ -2410,11 +2402,7 @@ impl PhysicsEngine {
                                             rand::thread_rng().gen_range(-1e-10..1e-10),
                                             rand::thread_rng().gen_range(-1e-10..1e-10)
                                         )
-                                    ).unwrap_or_else(|_| FundamentalParticle::new(
-                                        ParticleType::Proton,
-                                        1.67262192369e-27,
-                                        particle.position
-                                    ).unwrap());
+                                    );
                                     hydrogen.energy = 13.6 * 1.602176634e-19; // Ionization energy
                                     products_to_add.push(hydrogen);
                                 }
@@ -2424,11 +2412,7 @@ impl PhysicsEngine {
                                     ParticleType::Alpha, // Use Alpha as placeholder for O nucleus
                                     2.6560176e-26, // Oxygen-16 mass
                                     particle.position
-                                ).unwrap_or_else(|_| FundamentalParticle::new(
-                                    ParticleType::Alpha,
-                                    2.6560176e-26,
-                                    particle.position
-                                ).unwrap());
+                                );
                                 oxygen.charge = 8.0; // Fully ionized oxygen
                                 products_to_add.push(oxygen);
                                 
@@ -2442,11 +2426,7 @@ impl PhysicsEngine {
                                             rand::thread_rng().gen_range(-1e-9..1e-9),
                                             rand::thread_rng().gen_range(-1e-9..1e-9)
                                         )
-                                    ).unwrap_or_else(|_| FundamentalParticle::new(
-                                        ParticleType::Electron,
-                                        9.10938356e-31,
-                                        particle.position
-                                    ).unwrap());
+                                    );
                                     products_to_add.push(electron);
                                 }
                             }

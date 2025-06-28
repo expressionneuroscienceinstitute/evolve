@@ -118,7 +118,7 @@ impl PhysicsEngine {
         };
         
         // Lorentz-Berthelot mixing rules
-        let epsilon_mixed: f64 = (epsilon1 * epsilon2).sqrt();
+        let epsilon_mixed: f64 = (epsilon1 as f64 * epsilon2 as f64).sqrt();
         let sigma_mixed = (sigma1 + sigma2) / 2.0;
         
         (epsilon_mixed, sigma_mixed)

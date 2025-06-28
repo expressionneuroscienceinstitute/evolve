@@ -21,7 +21,7 @@ use nalgebra::ComplexField;
 
 use std::collections::VecDeque;
 use serde_json::json;
-use crate::storage::{Store, AgentLineage, CelestialBody};
+use crate::storage::{Store, AgentLineage, CelestialBody, BodyType, SupernovaYields, EnrichmentFactor, Atmosphere};
 use tracing::{info, warn, debug};
 use crate::config::SimulationConfig;
 // Agent config is now part of SimulationConfig
@@ -339,9 +339,15 @@ impl UniverseSimulation {
         
         if previous_era != current_era {
             let transition = cosmic_era::PhysicalTransition {
-                timestamp: self.current_tick,
+                tick: self.current_tick,
+                timestamp: self.current_tick as f64,
                 transition_type: cosmic_era::TransitionType::CosmicEra,
                 description: format!("Transition from {:?} to {:?}", previous_era, current_era),
+                physical_parameters: vec![
+                    ("age_gyr".to_string(), current_state.age_gyr),
+                    ("temperature".to_string(), current_state.mean_temperature),
+                    ("energy_density".to_string(), current_state.energy_density),
+                ],
                 age_gyr: current_state.age_gyr,
                 temperature: current_state.mean_temperature,
                 energy_density: current_state.energy_density,
@@ -354,10 +360,16 @@ impl UniverseSimulation {
         let temp_change = (current_state.mean_temperature - previous_state.mean_temperature).abs();
         if temp_change > temp_threshold {
             let transition = cosmic_era::PhysicalTransition {
-                timestamp: self.current_tick,
+                tick: self.current_tick,
+                timestamp: self.current_tick as f64,
                 transition_type: cosmic_era::TransitionType::Temperature,
                 description: format!("Temperature change: {:.2} K -> {:.2} K", 
                                    previous_state.mean_temperature, current_state.mean_temperature),
+                physical_parameters: vec![
+                    ("temp_change".to_string(), temp_change),
+                    ("previous_temp".to_string(), previous_state.mean_temperature),
+                    ("current_temp".to_string(), current_state.mean_temperature),
+                ],
                 age_gyr: current_state.age_gyr,
                 temperature: current_state.mean_temperature,
                 energy_density: current_state.energy_density,
@@ -370,10 +382,16 @@ impl UniverseSimulation {
         let energy_change = (current_state.energy_density - previous_state.energy_density).abs();
         if energy_change > energy_threshold {
             let transition = cosmic_era::PhysicalTransition {
-                timestamp: self.current_tick,
+                tick: self.current_tick,
+                timestamp: self.current_tick as f64,
                 transition_type: cosmic_era::TransitionType::EnergyDensity,
                 description: format!("Energy density change: {:.2e} -> {:.2e} J/m³", 
                                    previous_state.energy_density, current_state.energy_density),
+                physical_parameters: vec![
+                    ("energy_change".to_string(), energy_change),
+                    ("previous_energy".to_string(), previous_state.energy_density),
+                    ("current_energy".to_string(), current_state.energy_density),
+                ],
                 age_gyr: current_state.age_gyr,
                 temperature: current_state.mean_temperature,
                 energy_density: current_state.energy_density,
@@ -774,7 +792,8 @@ impl UniverseSimulation {
         
         // Create a new celestial body for the supernova remnant
         let remnant = CelestialBody {
-            id: self.store.celestials.len(),
+            id: Uuid::new_v4(),
+            entity_id: self.store.celestials.len(),
             body_type: BodyType::GasCloud,
             mass: yields.total_ejected_mass,
             radius: star.radius * 10.0, // Expanded remnant
@@ -784,15 +803,22 @@ impl UniverseSimulation {
             position: star.position,
             velocity: star.velocity,
             gravity: star.gravity * 0.1, // Lower gravity for gas cloud
+            composition: physics_engine::types::ElementTable::new(),
+            has_planets: false,
+            has_life: false,
             atmosphere: Atmosphere {
-                composition: vec![
-                    ("Fe".to_string(), yields.iron_mass / yields.total_ejected_mass),
-                    ("Si".to_string(), yields.silicon_group_mass / yields.total_ejected_mass),
-                    ("O".to_string(), yields.oxygen_group_mass / yields.total_ejected_mass),
-                    ("C".to_string(), yields.carbon_group_mass / yields.total_ejected_mass),
-                ],
+                composition: {
+                    let mut comp = HashMap::new();
+                    comp.insert("Fe".to_string(), yields.iron_mass / yields.total_ejected_mass);
+                    comp.insert("Si".to_string(), yields.silicon_group_mass / yields.total_ejected_mass);
+                    comp.insert("O".to_string(), yields.oxygen_group_mass / yields.total_ejected_mass);
+                    comp.insert("C".to_string(), yields.carbon_group_mass / yields.total_ejected_mass);
+                    comp
+                },
                 pressure: 1e-10, // Low pressure in remnant
                 temperature: 1e4,
+                density: 1e-15, // Very low density for gas cloud
+                scale_height: 1e6, // Large scale height for expanded remnant
             },
             is_habitable: false,
             agent_population: 0,
@@ -888,7 +914,8 @@ impl UniverseSimulation {
         
         // Create the enriched gas cloud
         let gas_cloud = CelestialBody {
-            id: self.store.celestials.len(),
+            id: Uuid::new_v4(),
+            entity_id: self.store.celestials.len(),
             body_type: BodyType::GasCloud,
             mass: cloud_mass,
             radius: cloud_radius,
@@ -898,10 +925,21 @@ impl UniverseSimulation {
             position: star.position,
             velocity: star.velocity,
             gravity: star.gravity * 0.01, // Very low gravity for gas cloud
+            composition: physics_engine::types::ElementTable::new(),
+            has_planets: false,
+            has_life: false,
             atmosphere: Atmosphere {
-                composition,
+                composition: {
+                    let mut comp = HashMap::new();
+                    for (element, fraction) in composition {
+                        comp.insert(element, fraction);
+                    }
+                    comp
+                },
                 pressure: 1e-12, // Very low pressure
                 temperature: cloud_temperature,
+                density: 1e-18, // Very low density for gas cloud
+                scale_height: 1e8, // Large scale height
             },
             is_habitable: false,
             agent_population: 0,
@@ -1192,16 +1230,23 @@ impl UniverseSimulation {
                 luminosity: Self::calculate_stellar_luminosity(mass_kg),
                 temperature: Self::calculate_stellar_temperature(mass_kg),
                 age: 0.0,
+                lifetime: 1e10, // 10 billion years default
+                position: Vector3::zeros(), // Initial position at origin
+                velocity: Vector3::zeros(), // Initial velocity
+                gravity: 9.8 * (mass_kg / 5.972e24), // Rough surface gravity scaling
                 composition: physics_engine::types::ElementTable::new(),
                 has_planets: false,
                 has_life: false,
-                position: Vector3::zeros(), // Initial position at origin
+                atmosphere: Atmosphere::default(),
+                is_habitable: false,
+                agent_population: 0,
+                tech_level: 0.0,
             };
 
-            let entity_id = self.store.spawn_celestial(stellar_body);
+            let entity_id = self.store.spawn_celestial(stellar_body)?;
 
             // 3. Create StellarEvolution track and link entity ID
-            let mut evolution = StellarEvolution::new(mass_kg);
+            let mut evolution = StellarEvolution::new(mass_kg)?;
             evolution.entity_id = entity_id;
             self.store.stellar_evolutions.push(evolution);
 
@@ -1393,12 +1438,19 @@ impl UniverseSimulation {
                     luminosity: 0.0,
                     temperature: t_eq,
                     age: 0.0,
+                    lifetime: 1e12, // Very long lifetime for planets
+                    position: Vector3::zeros(), // Initial position at origin
+                    velocity: Vector3::zeros(), // Initial velocity
+                    gravity: 6.67430e-11 * mass_kg / (radius_m * radius_m), // Surface gravity
                     composition: composition.clone(),
                     has_planets: false,
                     has_life: false,
-                    position: Vector3::zeros(), // Initial position at origin
+                    atmosphere: Atmosphere::default(),
+                    is_habitable: habitability_score > 0.8,
+                    agent_population: 0,
+                    tech_level: 0.0,
                 };
-                let entity_id = self.store.spawn_celestial(planet_body);
+                let entity_id = self.store.spawn_celestial(planet_body)?;
 
                 // 8. Build PlanetaryEnvironment record
                 let env_profile = EnvironmentProfile {
@@ -1981,6 +2033,8 @@ impl UniverseSimulation {
                 charge: self.store.particles.charge[i],
                 temperature: self.store.particles.temperature[i],
                 entropy: self.store.particles.entropy[i],
+                force: Vector3::zeros(), // Initialize force to zero
+                type_id: 0, // Default particle type ID
             });
         }
 

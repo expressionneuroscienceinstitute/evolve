@@ -15,7 +15,7 @@ use nalgebra::DVector;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use crate::{PlasticityInput, PlasticityOutput};
+use crate::{PlasticityInput, PlasticityOutput, LearningPhase, PlasticityEvent};
 use nalgebra::Complex;
 use physics_engine::{QuantumField, particle_types::FieldType};
 
@@ -271,7 +271,7 @@ impl PhysicsInformedNeuralNetwork {
             // Simple linear transformation (weights would be stored in the network)
             // For now, use identity mapping scaled by layer size
             let mut layer_output = DVector::zeros(*layer_size);
-            for i in 0..layer_size.min(current_input.len()) {
+            for i in 0..(*layer_size).min(current_input.len()) {
                 layer_output[i] = current_input[i];
             }
             

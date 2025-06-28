@@ -1058,60 +1058,84 @@ impl PhysicsEngine {
         self.process_native_interactions()
     }
 
-    /// Process molecular dynamics using LAMMPS if available
+    /// Process molecular dynamics using velocity Verlet integration
     pub fn process_molecular_dynamics(&mut self) -> Result<()> {
-        // Use native Rust molecular dynamics implementation
-        // Process molecular dynamics for all molecules using velocity Verlet integration
+        // Process each molecule separately to avoid borrow conflicts
+        let num_molecules = self.molecules.len();
         
-        for molecule in &mut self.molecules {
-            // Convert atoms to physics states for MD processing
-            let mut physics_states: Vec<PhysicsState> = molecule.atoms.iter()
-                .map(|atom| PhysicsState {
-                    position: atom.position,
-                    velocity: atom.velocity,
-                    acceleration: Vector3::zeros(),
-                    force: Vector3::zeros(),
-                    mass: self.get_atomic_mass(atom.nucleus.atomic_number),
-                    charge: atom.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE,
-                    temperature: self.temperature,
-                    entropy: 0.0, // Simplified for now
-                    type_id: atom.nucleus.atomic_number as u32,
-                })
-                .collect();
+        for mol_idx in 0..num_molecules {
+            // Extract needed data first to avoid borrow conflicts
+            let (physics_states, dt) = {
+                let molecule = &self.molecules[mol_idx];
+                let physics_states: Vec<PhysicsState> = molecule.atoms.iter()
+                    .map(|atom| PhysicsState {
+                        position: atom.position,
+                        velocity: atom.velocity,
+                        acceleration: Vector3::zeros(),
+                        force: Vector3::zeros(),
+                        mass: self.get_atomic_mass(atom.nucleus.atomic_number),
+                        charge: atom.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE,
+                        temperature: self.temperature,
+                        entropy: 0.0, // Simplified for now
+                        type_id: atom.nucleus.atomic_number as u32,
+                    })
+                    .collect();
+                (physics_states, self.time_step)
+            };
             
-            // Calculate forces using molecular dynamics module
-            let forces = self.calculate_molecular_forces_physics(&physics_states, molecule)?;
+            // Calculate initial forces
+            let mut forces = {
+                let molecule = &self.molecules[mol_idx];
+                self.calculate_molecular_forces_physics(&physics_states, molecule)?
+            };
             
-            // Apply velocity Verlet integration
-            for (i, atom) in molecule.atoms.iter_mut().enumerate() {
-                if i < forces.len() && i < physics_states.len() {
-                    let mass = physics_states[i].mass;
-                    let dt = self.time_step;
-                    
-                    // Velocity Verlet integration scheme
-                    // 1. Update position: r(t+dt) = r(t) + v(t)*dt + 0.5*a(t)*dt²
-                    let acceleration = forces[i] / mass;
-                    atom.position += atom.velocity * dt + 0.5 * acceleration * dt * dt;
-                    
-                    // 2. Calculate new forces at updated position using full physics
-                    // Calculate new forces at updated positions using proper physics
-                    let new_forces = self.calculate_molecular_forces(&molecule.atoms)?;
-                    
-                    // Update forces for this atom
-                    if i < new_forces.len() {
-                        forces[i] = new_forces[i];
+            // Apply velocity Verlet integration to each atom
+            {
+                let molecule = &mut self.molecules[mol_idx];
+                for (i, atom) in molecule.atoms.iter_mut().enumerate() {
+                    if i < forces.len() && i < physics_states.len() {
+                        let mass = physics_states[i].mass;
+                        
+                        // Velocity Verlet integration scheme
+                        // 1. Update position: r(t+dt) = r(t) + v(t)*dt + 0.5*a(t)*dt²
+                        let acceleration = forces[i] / mass;
+                        atom.position += atom.velocity * dt + 0.5 * acceleration * dt * dt;
+                        
+                        // 3. Update velocity: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
+                        atom.velocity += acceleration * dt;
                     }
-                    
-                    // 3. Update velocity: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
-                    atom.velocity += acceleration * dt;
-                    
-                    // Update electronic state energy based on position changes
-                    atom.total_energy = self.calculate_atomic_energy(&atom)?;
+                }
+            }
+            
+            // Calculate new forces at updated positions
+            let new_forces = {
+                let molecule = &self.molecules[mol_idx];
+                self.calculate_molecular_forces(&molecule.atoms)?
+            };
+            
+            // Update velocities with new forces and calculate energies
+            {
+                let molecule = &mut self.molecules[mol_idx];
+                for (i, atom) in molecule.atoms.iter_mut().enumerate() {
+                    if i < new_forces.len() && i < physics_states.len() {
+                        let mass = physics_states[i].mass;
+                        let new_acceleration = new_forces[i] / mass;
+                        let old_acceleration = forces[i] / mass;
+                        
+                        // Complete velocity Verlet: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
+                        atom.velocity += 0.5 * (new_acceleration - old_acceleration) * dt;
+                        
+                        // Update electronic state energy based on position changes
+                        atom.total_energy = self.calculate_atomic_energy(&atom)?;
+                    }
                 }
             }
             
             // Update molecular properties
-            self.update_molecular_properties(molecule)?;
+            {
+                let molecule = &mut self.molecules[mol_idx];
+                self.update_molecular_properties(molecule)?;
+            }
         }
         
         // Process intermolecular interactions
@@ -2334,9 +2358,17 @@ impl PhysicsEngine {
             let electron_density = self.particles.iter()
                 .filter(|p| p.particle_type == ParticleType::Electron)
                 .count() as f64 / self.volume;
-            let ion_density = self.atoms.iter()
-                .filter(|a| a.charge() > 0)
-                .count() as f64 / self.volume;
+            let ion_density = {
+                let mut ion_count = 0;
+                for other_atom_idx in 0..self.atoms.len() {
+                    if other_atom_idx != atom_idx { // Skip current atom to avoid double counting
+                        if self.atoms[other_atom_idx].charge() > 0 {
+                            ion_count += 1;
+                        }
+                    }
+                }
+                ion_count as f64 / self.volume
+            };
                 
             if electron_density > 0.0 && ion_density > 0.0 {
                 let recomb_rate = radiative_recombination_rate(electron_density, ion_density, self.temperature);
@@ -2628,14 +2660,26 @@ impl PhysicsEngine {
         
         // Process quantum entanglement between particles
         for i in 0..self.particles.len() {
-            for &entangled_idx in &self.particles[i].quantum_state.entanglement_partners {
+            // Collect entanglement partners first to avoid borrow conflicts
+            let entangled_partners: Vec<usize> = self.particles[i].quantum_state.entanglement_partners.clone();
+            
+            for &entangled_idx in &entangled_partners {
                 if entangled_idx < self.particles.len() && entangled_idx != i {
-                    // Create/maintain entangled states between particles
-                    if let Err(e) = quantum_solver.create_entangled_state(
-                        &mut self.particles[i], 
-                        &mut self.particles[entangled_idx]
-                    ) {
-                        log::debug!("Failed to maintain entanglement between particles {} and {}: {}", i, entangled_idx, e);
+                    // Use split_at_mut to safely access two different indices
+                    if i < entangled_idx {
+                        let (left, right) = self.particles.split_at_mut(entangled_idx);
+                        if let (Some(particle_i), Some(particle_j)) = (left.get_mut(i), right.get_mut(0)) {
+                            if let Err(e) = quantum_solver.create_entangled_state(particle_i, particle_j) {
+                                log::debug!("Failed to maintain entanglement between particles {} and {}: {}", i, entangled_idx, e);
+                            }
+                        }
+                    } else {
+                        let (left, right) = self.particles.split_at_mut(i);
+                        if let (Some(particle_j), Some(particle_i)) = (left.get_mut(entangled_idx), right.get_mut(0)) {
+                            if let Err(e) = quantum_solver.create_entangled_state(particle_i, particle_j) {
+                                log::debug!("Failed to maintain entanglement between particles {} and {}: {}", i, entangled_idx, e);
+                            }
+                        }
                     }
                 }
             }
@@ -3199,6 +3243,19 @@ pub mod data_ingestion;
 
 /// Gravitational constant in N·(m/kg)²
 pub const G: f64 = 6.67430e-11;
+
+/// Relativistic corrections for general relativity effects
+#[derive(Debug, Clone)]
+enum RelativisticCorrection {
+    TimeDilation {
+        factor: f64,
+        massive_particle_idx: usize,
+    },
+    PostNewtonianForce {
+        force_correction: Vector3<f64>,
+        partner_idx: usize,
+    },
+}
 
 impl Atom {
     /// Calculate net ionic charge (protons – electrons)

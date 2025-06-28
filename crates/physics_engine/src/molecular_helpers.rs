@@ -230,9 +230,13 @@ impl PhysicsEngine {
         let force_direction = (pos2 - pos1).normalize();
         let force = weak_force_magnitude * force_direction;
 
-        if let Some(molecule1) = self.molecules.get_mut(mol1_idx) {
+        // Extract atomic number and calculate mass before mutable borrow
+        let atomic_mass = self.molecules.get(mol1_idx)
+            .and_then(|mol| mol.atoms.first())
+            .map(|atom| self.get_atomic_mass(atom.nucleus.atomic_number));
+        
+        if let (Some(molecule1), Some(mass)) = (self.molecules.get_mut(mol1_idx), atomic_mass) {
             if let Some(first_atom) = molecule1.atoms.first_mut() {
-                let mass = self.get_atomic_mass(first_atom.nucleus.atomic_number);
                 first_atom.velocity += (force / mass) * self.time_step;
             }
         }

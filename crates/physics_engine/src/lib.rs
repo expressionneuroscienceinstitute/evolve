@@ -1073,6 +1073,11 @@ impl PhysicsEngine {
         // Phase 2: Apply mutations using collected data
         for (mol_idx, physics_states, forces_result) in molecular_data {
             if let (Some(molecule), Ok(forces)) = (self.molecules.get_mut(mol_idx), forces_result) {
+                // Pre-calculate atomic energies to avoid borrow conflicts
+                let atomic_energies: Vec<f64> = molecule.atoms.iter()
+                    .map(|atom| self.get_atomic_energy(&atom.nucleus.atomic_number))
+                    .collect();
+                
                 // Apply velocity Verlet integration
                 for (i, atom) in molecule.atoms.iter_mut().enumerate() {
                     if i < forces.len() && i < physics_states.len() {
@@ -1087,8 +1092,10 @@ impl PhysicsEngine {
                         // 3. Update velocity: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
                         atom.velocity += acceleration * dt;
                         
-                        // Update electronic state energy based on position changes
-                        atom.total_energy = self.get_atomic_energy(&atom.nucleus.atomic_number);
+                        // Update electronic state energy from pre-calculated values
+                        if i < atomic_energies.len() {
+                            atom.total_energy = atomic_energies[i];
+                        }
                     }
                 }
             }
@@ -2233,6 +2240,11 @@ impl PhysicsEngine {
         
         let mut updates_to_apply = Vec::new();
         
+        // Pre-calculate ion density to avoid borrow conflicts
+        let ion_density = self.atoms.iter()
+            .filter(|a| a.charge() > 0)
+            .count() as f64 / self.volume;
+        
         // Process each atom for electronic transitions and ionization
         for (atom_idx, atom) in self.atoms.iter_mut().enumerate() {
             // Compute current atomic properties
@@ -2305,9 +2317,6 @@ impl PhysicsEngine {
             // Radiative recombination: free electrons can be captured
             let electron_density = self.particles.iter()
                 .filter(|p| p.particle_type == ParticleType::Electron)
-                .count() as f64 / self.volume;
-            let ion_density = self.atoms.iter()
-                .filter(|a| a.charge() > 0)
                 .count() as f64 / self.volume;
                 
             if electron_density > 0.0 && ion_density > 0.0 {
@@ -2586,15 +2595,26 @@ impl PhysicsEngine {
             }
         }
         
-        // Process quantum entanglement between particles
+        // Process quantum entanglement between particles using split_at_mut
         for i in 0..self.particles.len() {
-            for &entangled_idx in &self.particles[i].quantum_state.entanglement_partners {
+            let entangled_partners: Vec<_> = self.particles[i].quantum_state.entanglement_partners.clone();
+            for &entangled_idx in &entangled_partners {
                 if entangled_idx < self.particles.len() && entangled_idx != i {
+                    // Use split_at_mut to safely access two different particles
+                    let (left, right) = if i < entangled_idx {
+                        self.particles.split_at_mut(entangled_idx)
+                    } else {
+                        self.particles.split_at_mut(i)
+                    };
+                    
+                    let (particle_i, particle_j) = if i < entangled_idx {
+                        (&mut left[i], &mut right[0])
+                    } else {
+                        (&mut right[0], &mut left[entangled_idx])
+                    };
+                    
                     // Create/maintain entangled states between particles
-                    if let Err(e) = quantum_solver.create_entangled_state(
-                        &mut self.particles[i], 
-                        &mut self.particles[entangled_idx]
-                    ) {
+                    if let Err(e) = quantum_solver.create_entangled_state(particle_i, particle_j) {
                         log::debug!("Failed to maintain entanglement between particles {} and {}: {}", i, entangled_idx, e);
                     }
                 }

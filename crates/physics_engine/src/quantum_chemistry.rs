@@ -1566,10 +1566,148 @@ impl QuantumChemistryEngine {
         Ok(electron_density)
     }
 
-    fn lda_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
-    fn gga_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
-    fn hybrid_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
-    fn meta_gga_exchange_correlation(&self, _molecule: &Molecule) -> Result<f64> { Ok(0.0) }
+    fn lda_exchange_correlation(&self, molecule: &Molecule) -> Result<f64> {
+        // Local Density Approximation (LDA) exchange-correlation energy
+        // E_xc[ρ] = ∫ ρ(r) ε_xc(ρ(r)) d³r
+        let mut exc_energy = 0.0;
+        
+        // Simple uniform electron gas approximation
+        let total_electrons: f64 = molecule.atoms.iter()
+            .map(|atom| atom.nucleus.atomic_number as f64)
+            .sum();
+        
+        if total_electrons > 0.0 {
+            // Wigner-Seitz radius: rs = (3/4πρ)^(1/3)
+            let volume = 1e-27; // Approximate molecular volume in m³
+            let density = total_electrons / volume;
+            let rs = (3.0 / (4.0 * PI * density)).powf(1.0/3.0);
+            
+            // LDA exchange energy: Ex = -3/4 * (3/π)^(1/3) * ρ^(4/3)
+            let exchange = -0.75 * (3.0 / PI).powf(1.0/3.0) * density.powf(4.0/3.0) * volume;
+            
+            // LDA correlation energy (Vosko-Wilk-Nusair parameterization)
+            let correlation = if rs > 1.0 {
+                -0.0621 / (1.0 + 1.0529 * rs.sqrt() + 0.3334 * rs)
+            } else {
+                -0.0311 * rs.ln() - 0.048 + 0.0020 * rs * rs.ln() - 0.0116 * rs
+            } * total_electrons;
+            
+            exc_energy = exchange + correlation;
+        }
+        
+        Ok(exc_energy)
+    }
+    
+    fn gga_exchange_correlation(&self, molecule: &Molecule) -> Result<f64> {
+        // Generalized Gradient Approximation (GGA) exchange-correlation energy
+        // E_xc[ρ] = ∫ ρ(r) ε_xc(ρ(r), ∇ρ(r)) d³r
+        let mut exc_energy = 0.0;
+        
+        let total_electrons: f64 = molecule.atoms.iter()
+            .map(|atom| atom.nucleus.atomic_number as f64)
+            .sum();
+        
+        if total_electrons > 0.0 {
+            // Start with LDA energy
+            let lda_energy = self.lda_exchange_correlation(molecule)?;
+            
+            // Add gradient corrections (Perdew-Burke-Ernzerhof functional)
+            let volume = 1e-27; // Approximate molecular volume
+            let density = total_electrons / volume;
+            
+            // Simplified gradient enhancement factor
+            let gradient_length = 1e10; // Approximate gradient scale
+            let reduced_gradient = gradient_length / (2.0 * (3.0 * PI * PI).powf(1.0/3.0) * density.powf(4.0/3.0));
+            
+            // PBE exchange enhancement factor
+            let kappa = 0.804;
+            let mu = 0.21951;
+            let fx = 1.0 + kappa - kappa / (1.0 + mu * reduced_gradient * reduced_gradient / kappa);
+            
+            // PBE correlation enhancement (simplified)
+            let fc = 1.0 + 0.1 * reduced_gradient * reduced_gradient;
+            
+            exc_energy = lda_energy * fx * fc;
+        }
+        
+        Ok(exc_energy)
+    }
+    
+    fn hybrid_exchange_correlation(&self, molecule: &Molecule) -> Result<f64> {
+        // Hybrid functional (B3LYP-type) exchange-correlation energy
+        // E_xc = a₀*E_x^HF + (1-a₀)*E_x^LDA + a_x*ΔE_x^GGA + a_c*E_c^GGA + (1-a_c)*E_c^LDA
+        // B3LYP parameters: a₀=0.20, a_x=0.72, a_c=0.81
+        
+        let a0 = 0.20; // Exact exchange mixing parameter
+        let ax = 0.72; // GGA exchange mixing parameter  
+        let ac = 0.81; // GGA correlation mixing parameter
+        
+        // Get LDA and GGA components
+        let lda_energy = self.lda_exchange_correlation(molecule)?;
+        let gga_energy = self.gga_exchange_correlation(molecule)?;
+        
+        // Approximate Hartree-Fock exchange energy
+        let total_electrons: f64 = molecule.atoms.iter()
+            .map(|atom| atom.nucleus.atomic_number as f64)
+            .sum();
+        
+        let hf_exchange = if total_electrons > 0.0 {
+            // Simplified HF exchange: -1/2 * Σᵢⱼ (ij|ji)
+            let volume = 1e-27;
+            let density = total_electrons / volume;
+            -0.25 * (3.0 / PI).powf(1.0/3.0) * density.powf(4.0/3.0) * volume
+        } else {
+            0.0
+        };
+        
+        // Separate exchange and correlation parts (approximation)
+        let lda_exchange = lda_energy * 0.8; // ~80% exchange in LDA
+        let lda_correlation = lda_energy * 0.2; // ~20% correlation in LDA
+        let gga_exchange = gga_energy * 0.8;
+        let gga_correlation = gga_energy * 0.2;
+        
+        // B3LYP formula
+        let exc_energy = a0 * hf_exchange + (1.0 - a0) * lda_exchange + ax * (gga_exchange - lda_exchange) +
+                        ac * gga_correlation + (1.0 - ac) * lda_correlation;
+        
+        Ok(exc_energy)
+    }
+    
+    fn meta_gga_exchange_correlation(&self, molecule: &Molecule) -> Result<f64> {
+        // Meta-GGA exchange-correlation energy (TPSS-type)
+        // E_xc[ρ] = ∫ ρ(r) ε_xc(ρ(r), ∇ρ(r), τ(r)) d³r
+        // where τ(r) is the kinetic energy density
+        
+        let mut exc_energy = 0.0;
+        
+        let total_electrons: f64 = molecule.atoms.iter()
+            .map(|atom| atom.nucleus.atomic_number as f64)
+            .sum();
+        
+        if total_electrons > 0.0 {
+            // Start with GGA energy
+            let gga_energy = self.gga_exchange_correlation(molecule)?;
+            
+            // Add kinetic energy density corrections
+            let volume = 1e-27;
+            let density = total_electrons / volume;
+            
+            // Approximate kinetic energy density
+            let tau = 0.3 * (3.0 * PI * PI).powf(2.0/3.0) * density.powf(5.0/3.0);
+            
+            // Meta-GGA enhancement factor (simplified TPSS)
+            let tau_unif = 0.3 * (3.0 * PI * PI).powf(2.0/3.0) * density.powf(5.0/3.0);
+            let alpha = (tau - tau_unif) / tau_unif;
+            
+            // TPSS exchange enhancement
+            let x = alpha.abs().min(10.0); // Avoid numerical issues
+            let fx_meta = 1.0 + 0.14 * x - 0.13 * x * x;
+            
+            exc_energy = gga_energy * fx_meta;
+        }
+        
+        Ok(exc_energy)
+    }
     
     /// Molecular mechanics calculation using a classical force field.
     /// The total energy is a sum of bonded (bond, angle, dihedral) and 
@@ -1588,7 +1726,115 @@ impl QuantumChemistryEngine {
         })
     }
 
-    fn qm_mm_calculation(&self, _molecule: &Molecule) -> Result<ElectronicStructure> { Ok(ElectronicStructure::default()) }
+    fn qm_mm_calculation(&self, molecule: &Molecule) -> Result<ElectronicStructure> {
+        // Quantum Mechanics / Molecular Mechanics (QM/MM) hybrid calculation
+        // Divide molecule into QM and MM regions
+        
+        let mut qm_atoms = Vec::new();
+        let mut mm_atoms = Vec::new();
+        
+        // Simple partitioning: first few atoms are QM, rest are MM
+        let qm_region_size = (molecule.atoms.len() / 3).max(1).min(molecule.atoms.len());
+        
+        for (i, atom) in molecule.atoms.iter().enumerate() {
+            if i < qm_region_size {
+                qm_atoms.push(atom.clone());
+            } else {
+                mm_atoms.push(atom.clone());
+            }
+        }
+        
+        // Create QM molecule
+        let qm_molecule = Molecule {
+            atoms: qm_atoms,
+            bonds: molecule.bonds.iter()
+                .filter(|bond| bond.atom_indices.0 < qm_region_size && bond.atom_indices.1 < qm_region_size)
+                .cloned()
+                .collect(),
+            molecular_orbitals: Vec::new(),
+            vibrational_modes: Vec::new(),
+            rotational_constants: Vector3::zeros(),
+            dipole_moment: Vector3::zeros(),
+            polarizability: Matrix3::zeros(),
+            potential_energy_surface: Vec::new(),
+            reaction_coordinates: Vec::new(),
+        };
+        
+        // Calculate QM energy using Hartree-Fock
+        let mut qm_result = self.hartree_fock_calculation(&qm_molecule)?;
+        
+        // Calculate MM energy for MM region
+        let mm_molecule = Molecule {
+            atoms: mm_atoms,
+            bonds: molecule.bonds.iter()
+                .filter(|bond| bond.atom_indices.0 >= qm_region_size && bond.atom_indices.1 >= qm_region_size)
+                .map(|bond| ChemicalBond {
+                    atom_indices: (bond.atom_indices.0 - qm_region_size, bond.atom_indices.1 - qm_region_size),
+                    bond_type: bond.bond_type,
+                    bond_length: bond.bond_length,
+                    bond_energy: bond.bond_energy,
+                    bond_order: bond.bond_order,
+                    electron_density: bond.electron_density,
+                    overlap_integral: bond.overlap_integral,
+                })
+                .collect(),
+            molecular_orbitals: Vec::new(),
+            vibrational_modes: Vec::new(),
+            rotational_constants: Vector3::zeros(),
+            dipole_moment: Vector3::zeros(),
+            polarizability: Matrix3::zeros(),
+            potential_energy_surface: Vec::new(),
+            reaction_coordinates: Vec::new(),
+        };
+        
+        let mm_result = if !mm_molecule.atoms.is_empty() {
+            self.molecular_mechanics_calculation(&mm_molecule)?
+        } else {
+            ElectronicStructure::default()
+        };
+        
+        // Calculate QM/MM interaction energy (electrostatic embedding)
+        let mut qm_mm_interaction = 0.0;
+        for qm_atom in &qm_molecule.atoms {
+            for mm_atom in &mm_molecule.atoms {
+                let distance = (qm_atom.position - mm_atom.position).norm();
+                if distance > 1e-12 {
+                    // Point charge interaction
+                    let qm_charge = self.get_partial_charge(qm_atom);
+                    let mm_charge = self.get_partial_charge(mm_atom);
+                    qm_mm_interaction += constants::COULOMB_CONSTANT * qm_charge * mm_charge / distance;
+                }
+            }
+        }
+        
+        // Combine results
+        qm_result.total_energy += mm_result.total_energy + qm_mm_interaction;
+        qm_result.dipole_moment += mm_result.dipole_moment;
+        
+        // Extend orbital energies and molecular orbitals
+        qm_result.orbital_energies.extend(mm_result.orbital_energies);
+        qm_result.molecular_orbitals.extend(mm_result.molecular_orbitals);
+        
+        // Combine atomic charges
+        qm_result.atomic_charges.extend(mm_result.atomic_charges);
+        
+        Ok(qm_result)
+    }
+    
+    /// Get partial charge for an atom based on its type and environment
+    fn get_partial_charge(&self, atom: &Atom) -> f64 {
+        // Simple partial charge assignment based on atomic number
+        let partial_charge = match atom.nucleus.atomic_number {
+            1 => 0.1,   // Hydrogen: slightly positive
+            6 => -0.1,  // Carbon: slightly negative
+            7 => -0.3,  // Nitrogen: more negative
+            8 => -0.4,  // Oxygen: most negative
+            9 => -0.5,  // Fluorine: very electronegative
+            17 => -0.3, // Chlorine: electronegative
+            _ => 0.0,   // Other atoms: neutral
+        };
+        partial_charge * constants::ELEMENTARY_CHARGE
+    }
 
     // --- Molecular Mechanics Helpers ---
 

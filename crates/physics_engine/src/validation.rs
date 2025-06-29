@@ -1650,10 +1650,12 @@ mod tests {
             position: Vector3::zeros(),
             velocity,
             acceleration: Vector3::zeros(),
+            force: Vector3::zeros(),
             mass,
             charge: 0.0,
             temperature: temp,
             entropy: 1e-20,
+            type_id: 0,
         }
     }
 
@@ -1774,10 +1776,12 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::new(0.0, 0.0, 0.0),
                 acceleration: Vector3::new(0.0, 0.0, 0.0),
+                force: Vector3::zeros(),
                 mass: -1.0, // Negative mass should cause error
                 charge: 0.0,
                 temperature: 300.0,
                 entropy: 0.0,
+                type_id: 0,
             }
         ];
         
@@ -1861,19 +1865,23 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::new(1.0, 0.0, 0.0),
                 acceleration: Vector3::new(0.0, 0.0, 0.0),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: 1.0,
                 temperature: 300.0,
                 entropy: 0.0,
+                type_id: 0,
             },
             PhysicsState {
                 position: Vector3::new(1.0, 0.0, 0.0),
                 velocity: Vector3::new(-1.0, 0.0, 0.0),
                 acceleration: Vector3::new(0.0, 0.0, 0.0),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: -1.0,
                 temperature: 300.0,
                 entropy: 0.0,
+                type_id: 1,
             }
         ];
         
@@ -1908,19 +1916,23 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::new(1.0, 0.0, 0.0),
                 acceleration: Vector3::new(0.0, 0.0, 0.0),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: 0.0,
                 temperature: 300.0,
                 entropy: 0.0,
+                type_id: 0,
             },
             PhysicsState {
                 position: Vector3::new(1.0, 0.0, 0.0),
                 velocity: Vector3::new(1000.0, 0.0, 0.0),
                 acceleration: Vector3::new(0.0, 0.0, 0.0),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: 0.0,
                 temperature: 300.0,
                 entropy: 0.0,
+                type_id: 1,
             }
         ];
         
@@ -1941,19 +1953,23 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::new(1.0, 0.0, 0.0),
                 acceleration: Vector3::new(0.0, 0.0, 0.0),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: 0.0,
                 temperature: 300.0,
                 entropy: 0.0,
+                type_id: 0,
             },
             PhysicsState {
                 position: Vector3::new(1.0, 0.0, 0.0),
                 velocity: Vector3::new(-1.0, 0.0, 0.0),
                 acceleration: Vector3::new(0.0, 0.0, 0.0),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: 0.0,
                 temperature: 300.0,
                 entropy: 0.0,
+                type_id: 1,
             }
         ];
         
@@ -1991,10 +2007,12 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::new(1.0, 0.0, 0.0),
                 acceleration: Vector3::new(0.0, 0.0, 0.0),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: 0.0,
                 temperature: 300.0,
                 entropy: 0.0,
+                type_id: 0,
             }
         ];
         
@@ -2004,10 +2022,12 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::new(10.0, 0.0, 0.0), // Much higher velocity for significant energy difference
                 acceleration: Vector3::new(0.0, 0.0, 0.0),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: 0.0,
                 temperature: 300.0,
                 entropy: 0.0,
+                type_id: 0,
             }
         ];
         

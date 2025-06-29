@@ -485,19 +485,23 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::zeros(),
                 acceleration: Vector3::zeros(),
+                force: Vector3::zeros(),
                 mass: constants.m_e,
                 charge: constants.e,
                 temperature: 0.0,
                 entropy: 0.0,
+                type_id: 0,
             },
             PhysicsState {
                 position: Vector3::new(1.0, 0.0, 0.0),
                 velocity: Vector3::zeros(),
                 acceleration: Vector3::zeros(),
+                force: Vector3::zeros(),
                 mass: constants.m_e,
                 charge: constants.e,
                 temperature: 0.0,
                 entropy: 0.0,
+                type_id: 1,
             },
         ];
         
@@ -521,10 +525,12 @@ mod tests {
                 position: Vector3::new(f64::INFINITY, 0.0, 0.0),
                 velocity: Vector3::zeros(),
                 acceleration: Vector3::zeros(),
+                force: Vector3::zeros(),
                 mass: 1.0,
                 charge: 1.0,
                 temperature: 0.0,
                 entropy: 0.0,
+                type_id: 0,
             },
         ];
         

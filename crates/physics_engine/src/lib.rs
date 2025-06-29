@@ -2437,7 +2437,7 @@ impl PhysicsEngine {
                                 
                                 // Add oxygen ion
                                 let mut oxygen = FundamentalParticle::new(
-                                    ParticleType::Alpha, // Use Alpha as placeholder for O nucleus
+                                    ParticleType::OxygenAtom, // Proper oxygen nucleus
                                     2.6560176e-26, // Oxygen-16 mass
                                     particle.position
                                 );

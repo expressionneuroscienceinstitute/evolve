@@ -554,9 +554,67 @@ impl UniverseSimulation {
     
     /// Process interactions between agents on different planets
     fn process_interplanetary_agent_interactions(&mut self) -> Result<()> {
-        // This would handle communication, trade, and conflict between
-        // agent populations on different habitable worlds
-        // For now, this is a placeholder for future implementation
+        // Handle communication, trade, and conflict between agent populations
+        let mut interaction_events = Vec::new();
+        
+        // Find all habitable planets with agent populations
+        let habitable_planets: Vec<(usize, u64, f64)> = self.store.agent_populations.iter()
+            .filter_map(|(planet_id, population)| {
+                let pop_count = population.total_population();
+                let tech_level = population.average_tech_level();
+                if pop_count > 0 && tech_level > 0.1 { // Minimum tech level for interplanetary interaction
+                    Some((*planet_id, pop_count, tech_level))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        // Process interactions between pairs of planets
+        for i in 0..habitable_planets.len() {
+            for j in (i + 1)..habitable_planets.len() {
+                let (planet_a_id, pop_a, tech_a) = habitable_planets[i];
+                let (planet_b_id, pop_b, tech_b) = habitable_planets[j];
+                
+                // Calculate distance between planets
+                let planet_a = &self.store.celestials[planet_a_id];
+                let planet_b = &self.store.celestials[planet_b_id];
+                let distance = (planet_a.position - planet_b.position).magnitude();
+                
+                // Communication probability based on technology and distance
+                let max_comm_distance = (tech_a + tech_b) * 1e15; // Light-years in meters
+                let comm_probability = if distance < max_comm_distance {
+                    (max_comm_distance - distance) / max_comm_distance * 0.01 // 1% base chance
+                } else {
+                    0.0
+                };
+                
+                // Check for communication event
+                if rand::random::<f64>() < comm_probability {
+                    // Successful communication leads to technology transfer
+                    let tech_transfer = (tech_a - tech_b).abs() * 0.1; // 10% technology transfer
+                    
+                    interaction_events.push((planet_a_id, planet_b_id, tech_transfer));
+                }
+                
+                // Trade probability (higher for closer, more advanced civilizations)
+                let trade_probability = comm_probability * (pop_a as f64 * pop_b as f64).sqrt() / 1e12;
+                
+                if rand::random::<f64>() < trade_probability {
+                    // Trade boosts both civilizations' development
+                    let trade_boost = 0.05; // 5% development boost
+                    interaction_events.push((planet_a_id, planet_b_id, trade_boost));
+                    interaction_events.push((planet_b_id, planet_a_id, trade_boost));
+                }
+            }
+        }
+        
+        // Apply interaction effects
+        for (planet_id, _other_id, benefit) in interaction_events {
+            if let Some(population) = self.store.agent_populations.get_mut(&planet_id) {
+                population.apply_external_development_boost(benefit);
+            }
+        }
         
         Ok(())
     }
@@ -612,9 +670,8 @@ impl UniverseSimulation {
     }
     
     /// Process galactic evolution and large-scale structure formation
-    fn process_galactic_evolution(&mut self, _dt: f64) -> Result<()> {
-        // This would handle galaxy formation, mergers, and evolution
-        // For now, this is a placeholder for future implementation
+    fn process_galactic_evolution(&mut self, dt: f64) -> Result<()> {
+        // Handle galaxy formation, mergers, and evolution
         
         // Update galactic-scale properties based on stellar evolution
         let total_stellar_mass: f64 = self.store.celestials.iter()
@@ -622,8 +679,106 @@ impl UniverseSimulation {
             .map(|star| star.mass)
             .sum();
         
+        // Calculate galactic rotation and dynamics
+        let galaxy_mass = total_stellar_mass * 10.0; // Include dark matter halo
+        let galaxy_radius = 5e20; // ~50 kpc in meters
+        
+        // Apply galactic rotation to stellar positions
+        let rotation_period = 2.0 * std::f64::consts::PI * (galaxy_radius.powi(3) / (6.67430e-11 * galaxy_mass)).sqrt();
+        let angular_velocity = 2.0 * std::f64::consts::PI / rotation_period;
+        
+        // Rotate stars around galactic center
+        for star in self.store.celestials.iter_mut() {
+            if star.body_type == BodyType::Star {
+                let radius = star.position.magnitude();
+                if radius > 0.0 && radius < galaxy_radius {
+                    // Calculate orbital velocity for circular orbit
+                    let orbital_velocity = angular_velocity * radius;
+                    
+                    // Update position based on galactic rotation
+                    let rotation_angle = angular_velocity * dt;
+                    let cos_theta = rotation_angle.cos();
+                    let sin_theta = rotation_angle.sin();
+                    
+                    let new_x = star.position.x * cos_theta - star.position.y * sin_theta;
+                    let new_y = star.position.x * sin_theta + star.position.y * cos_theta;
+                    
+                    star.position.x = new_x;
+                    star.position.y = new_y;
+                    
+                    // Update velocity to maintain circular orbit
+                    star.velocity.x = -orbital_velocity * sin_theta;
+                    star.velocity.y = orbital_velocity * cos_theta;
+                }
+            }
+        }
+        
+        // Process galaxy mergers (simplified)
+        let universe_age = self.universe_age_gyr();
+        if universe_age > 1.0 && rand::random::<f64>() < 0.001 { // 0.1% chance per Gyr
+            self.process_galaxy_merger()?;
+        }
+        
+        // Update spiral arm structure
+        self.update_spiral_arms(dt)?;
+        
         // Update universe state with galactic information
         self.universe_state.total_stellar_mass = total_stellar_mass;
+        
+        Ok(())
+    }
+    
+    /// Process a major galaxy merger event
+    fn process_galaxy_merger(&mut self) -> Result<()> {
+        // Increase star formation rate temporarily
+        let merger_boost = 5.0; // 5x star formation boost
+        
+        // Apply gravitational perturbations to stellar orbits
+        for star in self.store.celestials.iter_mut() {
+            if star.body_type == BodyType::Star {
+                // Add random velocity perturbation
+                let perturbation_magnitude = 1e4; // 10 km/s
+                star.velocity.x += (rand::random::<f64>() - 0.5) * perturbation_magnitude;
+                star.velocity.y += (rand::random::<f64>() - 0.5) * perturbation_magnitude;
+                star.velocity.z += (rand::random::<f64>() - 0.5) * perturbation_magnitude;
+            }
+        }
+        
+        // Trigger enhanced star formation
+        for _ in 0..(merger_boost as usize) {
+            self.process_star_formation()?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Update spiral arm structure and density waves
+    fn update_spiral_arms(&mut self, dt: f64) -> Result<()> {
+        let spiral_pattern_speed = 1e-15; // rad/s
+        let spiral_pitch_angle = 0.2; // radians
+        
+        // Calculate spiral arm density enhancement
+        for star in self.store.celestials.iter_mut() {
+            if star.body_type == BodyType::Star {
+                let radius = (star.position.x * star.position.x + star.position.y * star.position.y).sqrt();
+                let theta = star.position.y.atan2(star.position.x);
+                
+                // Spiral arm position
+                let spiral_theta = theta - spiral_pattern_speed * self.current_tick as f64 * dt;
+                let spiral_arm_distance = (spiral_theta - radius * spiral_pitch_angle.tan()).sin().abs();
+                
+                // Density enhancement in spiral arms
+                if spiral_arm_distance < 0.3 { // Within spiral arm
+                    // Increase local density and star formation probability
+                    star.atmosphere.density *= 1.5;
+                    
+                    // Enhanced stellar evolution in dense regions
+                    if star.age > star.lifetime * 0.8 { // Near end of life
+                        star.luminosity *= 1.2; // Increased luminosity
+                    }
+                }
+            }
+        }
         
         Ok(())
     }

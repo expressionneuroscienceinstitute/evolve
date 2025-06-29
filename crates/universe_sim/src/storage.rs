@@ -503,6 +503,25 @@ impl AgentPopulation {
         
         Ok(())
     }
+    
+    /// Apply external development boost (for interplanetary interactions)
+    pub fn apply_external_development_boost(&mut self, boost: f64) {
+        // Boost technology level
+        self.average_tech_level += boost;
+        self.average_tech_level = self.average_tech_level.min(1.0); // Cap at 1.0
+        
+        // Boost sentience level
+        self.average_sentience += boost * 0.5;
+        self.average_sentience = self.average_sentience.min(1.0); // Cap at 1.0
+        
+        // Boost population growth rate
+        self.population_growth_rate += boost * 10.0; // 10% boost per unit
+        
+        // Small population boost
+        let population_boost = (self.total_population as f64 * boost * 0.01) as u64;
+        self.total_population = (self.total_population + population_boost)
+            .min(self.carrying_capacity);
+    }
 }
 
 /// Supernova nucleosynthesis yields

@@ -167,10 +167,12 @@ mod tests {
             position: Vector3::zeros(),
             velocity: Vector3::new(1000.0, 0.0, 0.0), // 1 km/s
             acceleration: Vector3::zeros(),
+            force: Vector3::zeros(),
             mass: constants.m_p, // Proton mass
             charge: constants.e,
             temperature: 300.0,
             entropy: 0.0,
+            type_id: 0,
         };
         
         solver.update_temperature(&mut state, &constants).unwrap();
@@ -187,10 +189,12 @@ mod tests {
             position: Vector3::zeros(),
             velocity: Vector3::zeros(),
             acceleration: Vector3::zeros(),
+            force: Vector3::zeros(),
             mass: 1e-20,
             charge: 0.0,
             temperature: 250.0, // Below freezing
             entropy: 0.0,
+            type_id: 0,
         };
         
         let gas_state = PhysicsState {
@@ -211,10 +215,12 @@ mod tests {
             position: Vector3::zeros(),
             velocity: Vector3::zeros(),
             acceleration: Vector3::zeros(),
+            force: Vector3::zeros(),
             mass: constants.m_p,
             charge: 0.0,
             temperature: 300.0,
             entropy: 0.0,
+            type_id: 0,
         };
         
         let v_thermal = solver.thermal_velocity(&state, &constants);

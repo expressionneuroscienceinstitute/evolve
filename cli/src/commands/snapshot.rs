@@ -1,5 +1,4 @@
 use crate::data_models::SimulationState;
-use crate::formatters;
 use anyhow::Result;
 use std::fs::File;
 use std::io::Write;

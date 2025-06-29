@@ -879,11 +879,11 @@ impl EvolutionaryPopulation {
     pub fn apply_external_development_boost(&mut self, boost: f64) {
         for organism in &mut self.organisms {
             // Boost learning rate
-            organism.learning_system.learning_rate *= (1.0 + boost);
-            organism.learning_system.adaptation_speed *= (1.0 + boost);
+            organism.learning_system.learning_rate *= 1.0 + boost;
+            organism.learning_system.adaptation_speed *= 1.0 + boost;
             
             // Boost communication capabilities
-            organism.communication_system.communication_fitness.overall_fitness *= (1.0 + boost);
+            organism.communication_system.communication_fitness.overall_fitness *= 1.0 + boost;
             
             // Add energy boost
             organism.energy += boost * 10.0;

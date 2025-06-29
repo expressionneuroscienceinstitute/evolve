@@ -12,12 +12,11 @@
 //! - Statistical analysis (correlation functions, power spectra)
 //! - Multi-scale physics from quantum to cosmological scales
 
-use physics_engine::cosmology::{CosmologicalParameters, TreePmGravitySolver, CosmologicalParticle, CosmologicalParticleType};
-use physics_engine::cosmological_nbody::{CosmologicalNBodySimulation, HaloFinder, CosmologicalStatistics};
+use physics_engine::cosmology::{CosmologicalParameters, CosmologicalParticleType};
+use physics_engine::cosmological_nbody::CosmologicalNBodySimulation;
 use anyhow::Result;
 use nalgebra::Vector3;
 use std::collections::HashMap;
-use std::hash::Hash;
 
 fn main() -> Result<()> {
     println!("=== Universe Evolution Simulator: Advanced Cosmological N-body Demo ===");

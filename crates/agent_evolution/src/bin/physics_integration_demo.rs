@@ -9,7 +9,7 @@ use agent_evolution::{
     ai_core::{AICore, SensoryInput, ActionType},
     meta_learning::{MetaLearner, MetaParameter},
     hypernetwork::{Hypernetwork, TaskEmbedding, TaskType, NetworkConstraint, ConstraintType},
-    curiosity::{CuriositySystem, ActionType as CuriosityActionType, Experience},
+    curiosity::{CuriositySystem, Experience},
     self_modification::AdvancedSelfModification,
     open_ended_evolution::OpenEndedEvolution,
     genetics::Genome,
@@ -321,7 +321,7 @@ impl PhysicsAISimulation {
         self.update_environment_state()?;
         
         // Collect mutable references to agents to avoid borrow checker issues
-        let mut agent_refs: Vec<*mut EmbodiedAgent> = self.agents.iter_mut().map(|a| a as *mut _).collect();
+        let agent_refs: Vec<*mut EmbodiedAgent> = self.agents.iter_mut().map(|a| a as *mut _).collect();
         for &agent_ptr in &agent_refs {
             // SAFETY: We guarantee no aliasing because we only use each pointer once per loop
             let agent = unsafe { &mut *agent_ptr };

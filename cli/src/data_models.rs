@@ -1,6 +1,5 @@
 use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Main simulation state containing all universe data
 #[derive(Debug, Clone, Serialize, Deserialize)]

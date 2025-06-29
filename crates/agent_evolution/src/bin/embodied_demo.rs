@@ -5,10 +5,10 @@
 //! the physical world through particle-based bodies.
 
 use agent_evolution::{
-    embodied_agent::{EmbodiedAgent, PhysicsEngineInterface, ParticleData, AgentStatistics},
+    embodied_agent::{EmbodiedAgent, PhysicsEngineInterface, ParticleData},
     curiosity::ActionType,
 };
-use nalgebra::{DVector, Vector3};
+use nalgebra::Vector3;
 use anyhow::Result;
 use uuid::Uuid;
 

@@ -58,7 +58,7 @@ fn main() -> Result<()> {
     
     // Create Tree-PM gravity solver
     println!("Initializing Tree-PM gravity solver...");
-    let mut gravity_solver = TreePmGravitySolver::new(params.clone());
+    let gravity_solver = TreePmGravitySolver::new(params.clone());
     
     println!("Tree-PM Configuration:");
     println!("  Tree opening angle: {:.2}", gravity_solver.tree_opening_angle);

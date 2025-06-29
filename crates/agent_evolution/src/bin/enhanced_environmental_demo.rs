@@ -20,7 +20,6 @@ use agent_evolution::{
 use nalgebra::Vector3;
 use anyhow::Result;
 use uuid::Uuid;
-use std::collections::HashMap;
 use serde_json;
 
 /// Enhanced physics engine with environmental features

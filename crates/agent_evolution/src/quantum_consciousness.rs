@@ -638,6 +638,7 @@ impl QuantumConsciousnessSystem {
     }
 
     /// Collapse quantum states after objective reduction
+    #[allow(dead_code)]
     fn collapse_microtubule_quantum_states(microtubule: &mut MicrotubuleQuantumState) -> Result<()> {
         // Collapse superposition states
         for superposition in &mut microtubule.quantum_state.superposition_states {

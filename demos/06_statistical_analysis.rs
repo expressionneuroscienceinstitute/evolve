@@ -16,7 +16,6 @@ use physics_engine::cosmology::{CosmologicalParameters, CosmologicalParticle, Co
 use physics_engine::cosmological_nbody::{CosmologicalStatistics, HaloFinder, Halo};
 use anyhow::Result;
 use nalgebra::Vector3;
-use std::collections::HashMap;
 use rand::{thread_rng, Rng};
 
 fn main() -> Result<()> {

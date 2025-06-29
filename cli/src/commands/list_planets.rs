@@ -1,4 +1,4 @@
-use crate::data_models::{PlanetClass, SimulationState};
+use crate::data_models::PlanetClass;
 use anyhow::Result;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table};
 

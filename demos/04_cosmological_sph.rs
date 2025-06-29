@@ -12,11 +12,10 @@
 //! - Jeans instability and gas collapse
 //! - Multi-phase gas physics
 
-use physics_engine::cosmology::{CosmologicalParameters, CosmologicalParticleType};
-use physics_engine::cosmological_sph::{CosmologicalSphSolver, CosmologicalSphParticle, CoolingHeating, StarFormation, ChemicalEnrichment, Feedback};
+use physics_engine::cosmology::CosmologicalParameters;
+use physics_engine::cosmological_sph::{CosmologicalSphSolver, CosmologicalSphParticle};
 use anyhow::Result;
 use nalgebra::Vector3;
-use std::collections::HashMap;
 use rand::{thread_rng, Rng};
 
 fn main() -> Result<()> {

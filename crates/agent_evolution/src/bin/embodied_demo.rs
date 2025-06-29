@@ -313,17 +313,17 @@ fn main() -> Result<()> {
     let mut simulation = EmbodiedSimulation::new();
     
     // Create embodied agents
-    let agent1_id = simulation.create_agent(
+    let _agent1_id = simulation.create_agent(
         "Alpha".to_string(), 
         Vector3::new(-1e-7, 0.0, 0.0)
     )?;
     
-    let agent2_id = simulation.create_agent(
+    let _agent2_id = simulation.create_agent(
         "Beta".to_string(), 
         Vector3::new(1e-7, 0.0, 0.0)
     )?;
     
-    let agent3_id = simulation.create_agent(
+    let _agent3_id = simulation.create_agent(
         "Gamma".to_string(), 
         Vector3::new(0.0, 1e-7, 0.0)
     )?;

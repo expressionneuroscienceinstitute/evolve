@@ -91,7 +91,7 @@ fn main() -> Result<()> {
     let n_steps = 50;
     let dt = 1e15; // 1 Myr time step
     let mut total_stars_formed = 0.0;
-    let mut current_redshift = params.initial_redshift;
+    let mut _current_redshift = params.initial_redshift;
     
     for step in 0..n_steps {
         // Update redshift (simplified cosmological evolution)

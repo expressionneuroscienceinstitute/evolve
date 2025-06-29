@@ -339,7 +339,7 @@ impl EnhancedSimulation {
         Ok(())
     }
     
-    fn handle_agent_interactions(&mut self, dt: f64) -> Result<()> {
+    fn handle_agent_interactions(&mut self, _dt: f64) -> Result<()> {
         for i in 0..self.agents.len() {
             for j in (i + 1)..self.agents.len() {
                 let distance = (self.agents[i].position - self.agents[j].position).norm();

@@ -175,7 +175,7 @@ fn create_clustered_particles(n_particles: usize, params: &CosmologicalParameter
 fn correlation_function_analysis(
     statistics: &mut CosmologicalStatistics,
     positions: &[Vector3<f64>],
-    params: &CosmologicalParameters,
+    _params: &CosmologicalParameters,
 ) -> Result<()> {
     println!("Calculating two-point correlation function...");
     
@@ -190,7 +190,7 @@ fn correlation_function_analysis(
     
     // Show correlation function values
     println!("  Correlation function values:");
-    for (i, (bin, value)) in statistics.correlation_bins.iter()
+    for (_i, (bin, value)) in statistics.correlation_bins.iter()
         .zip(statistics.correlation_results.iter())
         .enumerate()
         .take(10) // Show first 10 bins
@@ -214,7 +214,7 @@ fn correlation_function_analysis(
 fn power_spectrum_analysis(
     statistics: &mut CosmologicalStatistics,
     positions: &[Vector3<f64>],
-    params: &CosmologicalParameters,
+    _params: &CosmologicalParameters,
 ) -> Result<()> {
     println!("Calculating power spectrum...");
     
@@ -229,7 +229,7 @@ fn power_spectrum_analysis(
     
     // Show power spectrum values
     println!("  Power spectrum values:");
-    for (i, (k_bin, power)) in statistics.power_spectrum_bins.iter()
+    for (_i, (k_bin, power)) in statistics.power_spectrum_bins.iter()
         .zip(statistics.power_spectrum_results.iter())
         .enumerate()
         .take(10) // Show first 10 bins
@@ -240,8 +240,8 @@ fn power_spectrum_analysis(
     // Calculate effective spectral index
     let effective_ns = calculate_effective_spectral_index(&statistics.power_spectrum_bins, &statistics.power_spectrum_results);
     println!("  Effective spectral index: {:.3}", effective_ns);
-    println!("  Theoretical nₛ: {:.3}", params.n_s);
-    println!("  Agreement: {:.1}%", (1.0 - (effective_ns - params.n_s).abs() / params.n_s) * 100.0);
+    println!("  Theoretical nₛ: {:.3}", _params.n_s);
+    println!("  Agreement: {:.1}%", (1.0 - (effective_ns - _params.n_s).abs() / _params.n_s) * 100.0);
     
     Ok(())
 }
@@ -250,7 +250,7 @@ fn power_spectrum_analysis(
 fn halo_analysis(
     halo_finder: &HaloFinder,
     particles: &[CosmologicalParticle],
-    params: &CosmologicalParameters,
+    _params: &CosmologicalParameters,
 ) -> Result<()> {
     println!("Finding halos using Friends-of-Friends algorithm...");
     
@@ -295,7 +295,7 @@ fn halo_analysis(
 fn mass_function_analysis(
     statistics: &mut CosmologicalStatistics,
     particles: &[CosmologicalParticle],
-    params: &CosmologicalParameters,
+    _params: &CosmologicalParameters,
 ) -> Result<()> {
     println!("Calculating mass function...");
     
@@ -322,14 +322,14 @@ fn mass_function_analysis(
     }
     
     // Compare with Press-Schechter prediction
-    let ps_agreement = compare_with_press_schechter(&statistics.mass_function_bins, &statistics.mass_function_results, params);
+    let ps_agreement = compare_with_press_schechter(&statistics.mass_function_bins, &statistics.mass_function_results, _params);
     println!("  Agreement with Press-Schechter: {:.1}%", ps_agreement);
     
     Ok(())
 }
 
 /// Validate statistics against theoretical predictions
-fn statistical_validation(statistics: &CosmologicalStatistics, params: &CosmologicalParameters) -> Result<()> {
+fn statistical_validation(statistics: &CosmologicalStatistics, _params: &CosmologicalParameters) -> Result<()> {
     println!("Validating statistics against theoretical predictions...");
     
     // Validate correlation function
@@ -366,7 +366,7 @@ fn statistical_validation(statistics: &CosmologicalStatistics, params: &Cosmolog
 fn multi_scale_analysis(
     statistics: &CosmologicalStatistics,
     positions: &[Vector3<f64>],
-    params: &CosmologicalParameters,
+    _params: &CosmologicalParameters,
 ) -> Result<()> {
     println!("Performing multi-scale analysis...");
     
@@ -375,7 +375,7 @@ fn multi_scale_analysis(
     
     println!("Multi-scale clustering analysis:");
     for &scale in &scales {
-        let clustering_amplitude = calculate_clustering_at_scale(positions, scale, params.box_size);
+        let clustering_amplitude = calculate_clustering_at_scale(positions, scale, _params.box_size);
         println!("  Scale {:.1} Mpc/h: clustering amplitude = {:.6}", scale, clustering_amplitude);
     }
     
@@ -383,7 +383,7 @@ fn multi_scale_analysis(
     if statistics.power_spectrum_results.len() > 1 {
         let slope = calculate_power_spectrum_slope(&statistics.power_spectrum_bins, &statistics.power_spectrum_results);
         println!("  Power spectrum slope: {:.3}", slope);
-        println!("  Expected slope: {:.3}", -params.n_s);
+        println!("  Expected slope: {:.3}", -_params.n_s);
     }
     
     Ok(())
@@ -393,20 +393,20 @@ fn multi_scale_analysis(
 fn clustering_analysis(
     positions: &[Vector3<f64>],
     masses: &[f64],
-    params: &CosmologicalParameters,
+    _params: &CosmologicalParameters,
 ) -> Result<()> {
     println!("Analyzing clustering properties...");
     
     // Calculate clustering statistics
     let total_mass: f64 = masses.iter().sum();
-    let mean_density = total_mass / (params.box_size.powi(3));
+    let mean_density = total_mass / (_params.box_size.powi(3));
     
     println!("Clustering Statistics:");
     println!("  Total mass: {:.2e} solar masses", total_mass);
     println!("  Mean density: {:.2e} solar masses/Mpc³", mean_density);
     
     // Calculate density fluctuations
-    let density_fluctuations = calculate_density_fluctuations(positions, masses, params.box_size);
+    let density_fluctuations = calculate_density_fluctuations(positions, masses, _params.box_size);
     println!("  Density fluctuations: {:.3}", density_fluctuations);
     
     // Calculate clustering length
@@ -517,7 +517,7 @@ fn compare_with_press_schechter(mass_bins: &[f64], mass_function: &[f64], params
     agreement * 100.0
 }
 
-fn calculate_clustering_at_scale(positions: &[Vector3<f64>], scale: f64, box_size: f64) -> f64 {
+fn calculate_clustering_at_scale(positions: &[Vector3<f64>], scale: f64, _box_size: f64) -> f64 {
     let mut pairs = 0;
     let mut within_scale = 0;
     
@@ -555,7 +555,7 @@ fn calculate_power_spectrum_slope(k_bins: &[f64], power_values: &[f64]) -> f64 {
     }
 }
 
-fn calculate_density_fluctuations(positions: &[Vector3<f64>], masses: &[f64], box_size: f64) -> f64 {
+fn calculate_density_fluctuations(_positions: &[Vector3<f64>], masses: &[f64], box_size: f64) -> f64 {
     let total_mass: f64 = masses.iter().sum();
     let mean_density = total_mass / (box_size.powi(3));
     

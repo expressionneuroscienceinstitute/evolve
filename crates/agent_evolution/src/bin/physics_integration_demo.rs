@@ -26,6 +26,7 @@ use rand::Rng;
 
 /// Embodied AI agent in physics simulation
 #[derive(Debug)]
+#[allow(dead_code)]
 struct EmbodiedAgent {
     id: Uuid,
     name: String,
@@ -65,6 +66,7 @@ struct PhysicsAISimulation {
 
 /// Current state of the physics environment
 #[derive(Debug)]
+#[allow(dead_code)]
 struct EnvironmentState {
     temperature: f64,
     pressure: f64,
@@ -77,6 +79,7 @@ struct EnvironmentState {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Resource {
     position: Vector3<f64>,
     resource_type: ResourceType,
@@ -85,6 +88,7 @@ struct Resource {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum ResourceType {
     Energy,
     Matter,
@@ -94,6 +98,7 @@ enum ResourceType {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct Hazard {
     position: Vector3<f64>,
     hazard_type: HazardType,
@@ -102,6 +107,7 @@ struct Hazard {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum HazardType {
     Radiation,
     HighTemperature,
@@ -430,7 +436,7 @@ impl PhysicsAISimulation {
         hazards
     }
     
-    fn process_agent(&mut self, agent: &mut EmbodiedAgent, dt: f64) -> Result<()> {
+    fn process_agent(&mut self, agent: &mut EmbodiedAgent, _dt: f64) -> Result<()> {
         // Create sensory input for AI core
         let sensory_input = SensoryInput::from_environment(
             [agent.position.x, agent.position.y, agent.position.z],
@@ -453,13 +459,13 @@ impl PhysicsAISimulation {
             curiosity_value: 0.0,
         };
         
-        let curiosity_output = agent.curiosity_system.process_experience(experience.clone())?;
+        let _curiosity_output = agent.curiosity_system.process_experience(experience.clone())?;
         
         // Generate task embedding for current situation
         let task_embedding = self.generate_task_embedding(&sensory_input.to_vector())?;
         
         // Generate neural architecture for current task
-        let architecture = agent.hypernetwork.generate_architecture(&task_embedding)?;
+        let _architecture = agent.hypernetwork.generate_architecture(&task_embedding)?;
         
         // Make decision using AI core
         let action = agent.neural_core.make_decision(&sensory_input, 0)?;
@@ -494,6 +500,7 @@ impl PhysicsAISimulation {
         Ok(())
     }
     
+    #[allow(dead_code)]
     fn get_agent_sensory_input(&self, agent: &EmbodiedAgent) -> Result<DVector<f64>> {
         let mut sensory_input = Vec::new();
         
@@ -657,17 +664,17 @@ fn main() -> Result<()> {
     let mut simulation = PhysicsAISimulation::new()?;
     
     // Create embodied agents
-    let agent1_id = simulation.create_embodied_agent(
+    let _agent1_id = simulation.create_embodied_agent(
         "Alpha".to_string(), 
         Vector3::new(-1e-7, 0.0, 0.0)
     )?;
     
-    let agent2_id = simulation.create_embodied_agent(
+    let _agent2_id = simulation.create_embodied_agent(
         "Beta".to_string(), 
         Vector3::new(1e-7, 0.0, 0.0)
     )?;
     
-    let agent3_id = simulation.create_embodied_agent(
+    let _agent3_id = simulation.create_embodied_agent(
         "Gamma".to_string(), 
         Vector3::new(0.0, 1e-7, 0.0)
     )?;

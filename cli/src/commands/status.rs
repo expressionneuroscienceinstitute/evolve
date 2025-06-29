@@ -4,11 +4,11 @@ use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode},
     execute,
-    style::{Color, Print, ResetColor, SetForegroundColor},
+    style::{Color, ResetColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
 };
 use std::{
-    io::{self, stdout},
+    io::{stdout},
     time::{Duration, Instant},
 };
 

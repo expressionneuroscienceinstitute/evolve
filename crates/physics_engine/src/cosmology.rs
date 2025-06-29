@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use rustfft::{FftPlanner, num_complex::Complex};
 use rustfft::num_traits::Zero;
-use cosmology::power::PowerSpectrum;
+
 use rand::prelude::*;
 use rand_distr::StandardNormal;
 use crate::fft::{solve_poisson_fft, gradient_fft};
@@ -527,15 +527,16 @@ pub struct TreePmGravitySolver {
 
 impl TreePmGravitySolver {
     pub fn new(params: CosmologicalParameters) -> Self {
+        let box_size = params.box_size;
         Self {
-            cosmological_params: params.clone(),
+            cosmological_params: params,
             tree_opening_angle: 0.5, // Standard opening angle
             softening_length: 1.0e-6, // 1 μm default
             force_accuracy: 1.0e-4,   // 0.01% accuracy
             pm_grid_size: 256,        // 256³ PM grid
             pm_smoothing_scale: 1.0,  // 1 grid cell smoothing
             periodic_boundaries: true,
-            box_size: params.box_size,
+            box_size,
         }
     }
 
@@ -716,7 +717,7 @@ pub struct CosmologicalParticle {
     pub halo_id: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CosmologicalParticleType {
     DarkMatter,
     Gas,
@@ -900,13 +901,14 @@ pub struct CosmologicalGravitySolver {
 
 impl CosmologicalGravitySolver {
     pub fn new(params: CosmologicalParameters) -> Self {
+        let box_size = params.box_size;
         Self {
             cosmological_params: params,
             softening_length: 1.0e-6,
             force_accuracy: 1.0e-4,
             tree_opening_angle: 0.5, // Standard Barnes-Hut opening angle
             pm_grid_size: 256,       // Standard PM grid size
-            box_size: params.box_size,
+            box_size,
             periodic_boundaries: true, // Cosmological simulations typically use periodic BCs
         }
     }

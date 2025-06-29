@@ -5,10 +5,10 @@
 //! the physical world through particle-based bodies.
 
 use agent_evolution::{
-    embodied_agent::{EmbodiedAgent, PhysicsEngineInterface, ParticleData, AgentStatistics},
+    embodied_agent::{EmbodiedAgent, PhysicsEngineInterface, ParticleData},
     curiosity::ActionType,
 };
-use nalgebra::{DVector, Vector3};
+use nalgebra::Vector3;
 use anyhow::Result;
 use uuid::Uuid;
 
@@ -313,17 +313,17 @@ fn main() -> Result<()> {
     let mut simulation = EmbodiedSimulation::new();
     
     // Create embodied agents
-    let agent1_id = simulation.create_agent(
+    let _agent1_id = simulation.create_agent(
         "Alpha".to_string(), 
         Vector3::new(-1e-7, 0.0, 0.0)
     )?;
     
-    let agent2_id = simulation.create_agent(
+    let _agent2_id = simulation.create_agent(
         "Beta".to_string(), 
         Vector3::new(1e-7, 0.0, 0.0)
     )?;
     
-    let agent3_id = simulation.create_agent(
+    let _agent3_id = simulation.create_agent(
         "Gamma".to_string(), 
         Vector3::new(0.0, 1e-7, 0.0)
     )?;

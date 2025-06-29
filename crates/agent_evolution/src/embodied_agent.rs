@@ -548,7 +548,7 @@ impl EmbodiedAgent {
     /// Calculate energy cost for moving through an energy gradient
     pub fn calculate_gradient_energy_cost(&self, gradient: &EnergyGradient) -> f64 {
         let distance_to_start = (self.position - gradient.start_position).norm();
-        let distance_to_end = (self.position - gradient.end_position).norm();
+        let _distance_to_end = (self.position - gradient.end_position).norm();
         let total_gradient_distance = (gradient.end_position - gradient.start_position).norm();
         
         if total_gradient_distance == 0.0 {
@@ -593,7 +593,7 @@ impl EmbodiedAgent {
         let total_effect = field_strength * distance_factor;
         
         match &field.field_type {
-            FieldType::EnergyField { strength, decay_rate } => {
+            FieldType::EnergyField { strength, decay_rate: _ } => {
                 let energy_gain = strength * total_effect * dt;
                 self.energy += energy_gain;
                 Ok(energy_gain)
@@ -617,7 +617,7 @@ impl EmbodiedAgent {
                 // Apply gravitational force
                 Ok(gravity_effect)
             }
-            FieldType::ResourceField { resource_type, density, regeneration_rate } => {
+            FieldType::ResourceField { resource_type: _, density, regeneration_rate: _ } => {
                 // Resource fields provide collectible resources
                 let resource_available = density * total_effect * dt;
                 Ok(resource_available)
@@ -658,7 +658,7 @@ impl EmbodiedAgent {
                 self.velocity += direction * force_effect;
                 Ok(force_effect)
             }
-            ObstacleType::ResourceDeposit { resource_type, capacity } => {
+            ObstacleType::ResourceDeposit { resource_type: _, capacity } => {
                 // Resource deposit can be collected
                 let collection_rate = 1.0 * dt;
                 let collected = collection_rate.min(*capacity);
@@ -668,7 +668,7 @@ impl EmbodiedAgent {
     }
     
     /// Attempt to collect a resource
-    pub fn collect_resource(&mut self, resource: &mut Resource, dt: f64) -> Result<bool> {
+    pub fn collect_resource(&mut self, resource: &mut Resource, _dt: f64) -> Result<bool> {
         let distance = (self.position - resource.position).norm();
         let collection_range = 1e-8; // 10 nanometers
         
@@ -761,7 +761,7 @@ impl EmbodiedAgent {
         obstacles: &[Obstacle], 
         gradients: &[EnergyGradient],
         resources: &[Resource],
-        other_agents: &[EmbodiedAgent],
+        _other_agents: &[EmbodiedAgent],
         dt: f64
     ) -> Result<Vec<InteractionEvent>> {
         let mut events = Vec::new();

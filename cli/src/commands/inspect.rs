@@ -1,4 +1,4 @@
-use crate::data_models::{SimulationState, Planet, Star, Galaxy, AgentLineage};
+use crate::data_models::SimulationState;
 use crate::formatters;
 use anyhow::Result;
 use console::style;

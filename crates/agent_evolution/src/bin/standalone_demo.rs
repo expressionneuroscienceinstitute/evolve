@@ -258,6 +258,7 @@ impl AIAgent {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct AgentOutput {
     agent_id: Uuid,
     agent_name: String,
@@ -274,6 +275,7 @@ struct AgentOutput {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct AgentStatistics {
     agent_id: Uuid,
     agent_name: String,

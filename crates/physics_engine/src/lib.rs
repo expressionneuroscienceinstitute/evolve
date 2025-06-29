@@ -239,8 +239,8 @@ impl InteractionMatrix {
     /// Get running couplings at a given energy scale (GeV)
     pub fn get_running_couplings(&mut self, scale_gev: f64) -> RunningCouplings {
         let scale_bits = scale_gev.to_bits();
-        if let Some(&couplings) = self.running_couplings.get(&scale_bits) {
-            return couplings;
+        if let Some(couplings) = self.running_couplings.get(&scale_bits) {
+            return *couplings;
         }
         let alpha_em = self.calculate_running_alpha_em(scale_gev);
         let alpha_s = self.calculate_running_alpha_s(scale_gev);
@@ -252,7 +252,7 @@ impl InteractionMatrix {
             alpha_s,
         };
         
-        self.running_couplings.insert(scale_bits, couplings);
+        self.running_couplings.insert(scale_bits, couplings.clone());
         couplings
     }
     
@@ -287,27 +287,45 @@ impl InteractionMatrix {
     }
     
     fn update_electromagnetic_matrix_elements(&mut self) {
-        // Update all electromagnetic interaction strengths
-        for ((p1, p2), strength) in self.matrix_elements.iter_mut() {
-            if self.is_electromagnetic_interaction(*p1, *p2) {
+        // Pre-calculate electromagnetic interaction pairs to avoid borrow conflicts
+        let em_pairs: Vec<_> = self.matrix_elements.keys()
+            .filter(|(p1, p2)| self.is_electromagnetic_interaction(*p1, *p2))
+            .cloned()
+            .collect();
+        
+        // Update electromagnetic interaction strengths
+        for (p1, p2) in em_pairs {
+            if let Some(strength) = self.matrix_elements.get_mut(&(p1, p2)) {
                 *strength = self.alpha_em;
             }
         }
     }
     
     fn update_weak_matrix_elements(&mut self) {
-        // Update all weak interaction strengths
-        for ((p1, p2), strength) in self.matrix_elements.iter_mut() {
-            if self.is_weak_interaction(*p1, *p2) {
+        // Pre-calculate weak interaction pairs to avoid borrow conflicts
+        let weak_pairs: Vec<_> = self.matrix_elements.keys()
+            .filter(|(p1, p2)| self.is_weak_interaction(*p1, *p2))
+            .cloned()
+            .collect();
+        
+        // Update weak interaction strengths
+        for (p1, p2) in weak_pairs {
+            if let Some(strength) = self.matrix_elements.get_mut(&(p1, p2)) {
                 *strength = self.g_weak;
             }
         }
     }
     
     fn update_strong_matrix_elements(&mut self) {
-        // Update all strong interaction strengths
-        for ((p1, p2), strength) in self.matrix_elements.iter_mut() {
-            if self.is_strong_interaction(*p1, *p2) {
+        // Pre-calculate strong interaction pairs to avoid borrow conflicts
+        let strong_pairs: Vec<_> = self.matrix_elements.keys()
+            .filter(|(p1, p2)| self.is_strong_interaction(*p1, *p2))
+            .cloned()
+            .collect();
+        
+        // Update strong interaction strengths
+        for (p1, p2) in strong_pairs {
+            if let Some(strength) = self.matrix_elements.get_mut(&(p1, p2)) {
                 *strength = self.alpha_s;
             }
         }
@@ -409,7 +427,7 @@ pub struct FieldEquations;
 #[derive(Debug, Clone, Default)]
 pub struct ParticleAccelerator;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RunningCouplings {
     pub scale_gev: f64,
     pub alpha_em: f64,
@@ -1029,55 +1047,63 @@ impl PhysicsEngine {
         // Use native Rust molecular dynamics implementation
         // Process molecular dynamics for all molecules using velocity Verlet integration
         
-        for molecule in &mut self.molecules {
-            // Convert atoms to physics states for MD processing
-            let mut physics_states: Vec<PhysicsState> = molecule.atoms.iter()
-                .map(|atom| PhysicsState {
-                    position: atom.position,
-                    velocity: atom.velocity,
-                    acceleration: Vector3::zeros(),
-                    force: Vector3::zeros(),
-                    mass: self.get_atomic_mass(atom.nucleus.atomic_number),
-                    charge: atom.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE,
-                    temperature: self.temperature,
-                    entropy: 0.0, // Simplified for now
-                    type_id: atom.nucleus.atomic_number as u32,
-                })
-                .collect();
+        // Phase 1: Collect molecular data to avoid borrow conflicts
+        let molecular_data: Vec<_> = self.molecules.iter().enumerate()
+            .map(|(mol_idx, molecule)| {
+                let physics_states: Vec<PhysicsState> = molecule.atoms.iter()
+                    .map(|atom| PhysicsState {
+                        position: atom.position,
+                        velocity: atom.velocity,
+                        acceleration: Vector3::zeros(),
+                        force: Vector3::zeros(),
+                        mass: self.get_atomic_mass(atom.nucleus.atomic_number),
+                        charge: atom.nucleus.atomic_number as f64 * constants::ELEMENTARY_CHARGE,
+                        temperature: self.temperature,
+                        entropy: 0.0, // Simplified for now
+                        type_id: atom.nucleus.atomic_number as u32,
+                    })
+                    .collect();
+                
+                // Calculate forces for this molecule
+                let forces_result = self.calculate_molecular_forces(&molecule.atoms);
+                (mol_idx, physics_states, forces_result)
+            })
+            .collect();
+        
+        // Phase 2: Apply mutations using collected data
+        for (mol_idx, physics_states, forces_result) in molecular_data {
+            // Pre-calculate atomic energies before mutable borrow
+            let atomic_energies: Vec<f64> = if let Some(molecule) = self.molecules.get(mol_idx) {
+                molecule.atoms.iter()
+                    .map(|atom| self.get_atomic_energy(&atom.nucleus.atomic_number))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             
-            // Calculate forces using molecular dynamics module
-            let forces = self.calculate_molecular_forces_physics(&physics_states, molecule)?;
-            
-            // Apply velocity Verlet integration
-            for (i, atom) in molecule.atoms.iter_mut().enumerate() {
-                if i < forces.len() && i < physics_states.len() {
-                    let mass = physics_states[i].mass;
-                    let dt = self.time_step;
-                    
-                    // Velocity Verlet integration scheme
-                    // 1. Update position: r(t+dt) = r(t) + v(t)*dt + 0.5*a(t)*dt²
-                    let acceleration = forces[i] / mass;
-                    atom.position += atom.velocity * dt + 0.5 * acceleration * dt * dt;
-                    
-                    // 2. Calculate new forces at updated position using full physics
-                    // Calculate new forces at updated positions using proper physics
-                    let new_forces = self.calculate_molecular_forces(&molecule.atoms)?;
-                    
-                    // Update forces for this atom
-                    if i < new_forces.len() {
-                        forces[i] = new_forces[i];
+            if let (Some(molecule), Ok(forces)) = (self.molecules.get_mut(mol_idx), forces_result) {
+                
+                // Apply velocity Verlet integration
+                for (i, atom) in molecule.atoms.iter_mut().enumerate() {
+                    if i < forces.len() && i < physics_states.len() {
+                        let mass = physics_states[i].mass;
+                        let dt = self.time_step;
+                        
+                        // Velocity Verlet integration scheme
+                        // 1. Update position: r(t+dt) = r(t) + v(t)*dt + 0.5*a(t)*dt²
+                        let acceleration = forces[i] / mass;
+                        atom.position += atom.velocity * dt + 0.5 * acceleration * dt * dt;
+                        
+                        // 3. Update velocity: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
+                        atom.velocity += acceleration * dt;
+                        
+                        // Update electronic state energy from pre-calculated values
+                        if i < atomic_energies.len() {
+                            atom.total_energy = atomic_energies[i];
+                        }
                     }
-                    
-                    // 3. Update velocity: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
-                    atom.velocity += acceleration * dt;
-                    
-                    // Update electronic state energy based on position changes
-                    atom.total_energy = self.calculate_atomic_energy(&atom)?;
                 }
             }
-            
-            // Update molecular properties
-            self.update_molecular_properties(molecule)?;
         }
         
         // Process intermolecular interactions
@@ -2215,14 +2241,19 @@ impl PhysicsEngine {
 
     /// Update atomic physics states
     fn update_atomic_physics(&mut self) -> Result<()> {
-        use crate::atomic_physics::{compute_atomic_properties, photoionization_cross_section, radiative_recombination_rate};
+        use crate::atomic_physics::{photoionization_cross_section, radiative_recombination_rate};
         
         let mut updates_to_apply = Vec::new();
+        
+        // Pre-calculate ion density to avoid borrow conflicts
+        let ion_density = self.atoms.iter()
+            .filter(|a| a.charge() > 0)
+            .count() as f64 / self.volume;
         
         // Process each atom for electronic transitions and ionization
         for (atom_idx, atom) in self.atoms.iter_mut().enumerate() {
             // Compute current atomic properties
-            if let Err(e) = compute_atomic_properties(atom) {
+            if let Err(e) = atom.compute_atomic_properties() {
                 log::warn!("Failed to compute atomic properties for atom {}: {}", atom_idx, e);
                 continue;
             }
@@ -2248,11 +2279,7 @@ impl PhysicsEngine {
                                     ParticleType::Electron,
                                     9.10938356e-31, // Electron mass
                                     atom.position + Vector3::new(1e-10, 0.0, 0.0) // Slightly offset position
-                                ).unwrap_or_else(|_| FundamentalParticle::new(
-                                    ParticleType::Electron,
-                                    9.10938356e-31,
-                                    atom.position
-                                ).unwrap())],
+                                )],
                             });
                         }
                     }
@@ -2273,11 +2300,7 @@ impl PhysicsEngine {
                                     ParticleType::Photon,
                                     0.0, // Photons are massless
                                     atom.position
-                                ).unwrap_or_else(|_| FundamentalParticle::new(
-                                    ParticleType::Photon,
-                                    0.0,
-                                    atom.position
-                                ).unwrap());
+                                );
                                 photon.energy = photon_energy * 1.602176634e-19; // Convert eV to J
                                 photon.momentum = Vector3::new(
                                     photon.energy / 299792458.0, // p = E/c
@@ -2299,9 +2322,6 @@ impl PhysicsEngine {
             // Radiative recombination: free electrons can be captured
             let electron_density = self.particles.iter()
                 .filter(|p| p.particle_type == ParticleType::Electron)
-                .count() as f64 / self.volume;
-            let ion_density = self.atoms.iter()
-                .filter(|a| a.charge() > 0)
                 .count() as f64 / self.volume;
                 
             if electron_density > 0.0 && ion_density > 0.0 {
@@ -2410,25 +2430,17 @@ impl PhysicsEngine {
                                             rand::thread_rng().gen_range(-1e-10..1e-10),
                                             rand::thread_rng().gen_range(-1e-10..1e-10)
                                         )
-                                    ).unwrap_or_else(|_| FundamentalParticle::new(
-                                        ParticleType::Proton,
-                                        1.67262192369e-27,
-                                        particle.position
-                                    ).unwrap());
+                                    );
                                     hydrogen.energy = 13.6 * 1.602176634e-19; // Ionization energy
                                     products_to_add.push(hydrogen);
                                 }
                                 
                                 // Add oxygen ion
                                 let mut oxygen = FundamentalParticle::new(
-                                    ParticleType::Alpha, // Use Alpha as placeholder for O nucleus
+                                    ParticleType::OxygenAtom, // Proper oxygen nucleus
                                     2.6560176e-26, // Oxygen-16 mass
                                     particle.position
-                                ).unwrap_or_else(|_| FundamentalParticle::new(
-                                    ParticleType::Alpha,
-                                    2.6560176e-26,
-                                    particle.position
-                                ).unwrap());
+                                );
                                 oxygen.charge = 8.0; // Fully ionized oxygen
                                 products_to_add.push(oxygen);
                                 
@@ -2442,11 +2454,7 @@ impl PhysicsEngine {
                                             rand::thread_rng().gen_range(-1e-9..1e-9),
                                             rand::thread_rng().gen_range(-1e-9..1e-9)
                                         )
-                                    ).unwrap_or_else(|_| FundamentalParticle::new(
-                                        ParticleType::Electron,
-                                        9.10938356e-31,
-                                        particle.position
-                                    ).unwrap());
+                                    );
                                     products_to_add.push(electron);
                                 }
                             }
@@ -2501,7 +2509,7 @@ impl PhysicsEngine {
     /// Evolve quantum state
     fn evolve_quantum_state(&mut self) -> Result<()> {
         use crate::quantum::QuantumSolver;
-        use crate::types::MeasurementBasis;
+
         
         let mut quantum_solver = QuantumSolver::new();
         let constants = PhysicsConstants::default();
@@ -2592,15 +2600,26 @@ impl PhysicsEngine {
             }
         }
         
-        // Process quantum entanglement between particles
+        // Process quantum entanglement between particles using split_at_mut
         for i in 0..self.particles.len() {
-            for &entangled_idx in &self.particles[i].quantum_state.entanglement_partners {
+            let entangled_partners: Vec<_> = self.particles[i].quantum_state.entanglement_partners.clone();
+            for &entangled_idx in &entangled_partners {
                 if entangled_idx < self.particles.len() && entangled_idx != i {
+                    // Use split_at_mut to safely access two different particles
+                    let (left, right) = if i < entangled_idx {
+                        self.particles.split_at_mut(entangled_idx)
+                    } else {
+                        self.particles.split_at_mut(i)
+                    };
+                    
+                    let (particle_i, particle_j) = if i < entangled_idx {
+                        (&mut left[i], &mut right[0])
+                    } else {
+                        (&mut right[0], &mut left[entangled_idx])
+                    };
+                    
                     // Create/maintain entangled states between particles
-                    if let Err(e) = quantum_solver.create_entangled_state(
-                        &mut self.particles[i], 
-                        &mut self.particles[entangled_idx]
-                    ) {
+                    if let Err(e) = quantum_solver.create_entangled_state(particle_i, particle_j) {
                         log::debug!("Failed to maintain entanglement between particles {} and {}: {}", i, entangled_idx, e);
                     }
                 }
@@ -3241,7 +3260,9 @@ impl Atom {
         for e in &self.electrons {
             *shells.entry(e.quantum_numbers.n).or_default() += 1;
         }
-        for (n, count) in shells.iter().sorted_by_key(|(n, _)| *n) {
+        let mut shell_pairs: Vec<_> = shells.iter().collect();
+        shell_pairs.sort_by_key(|(n, _)| *n);
+        for (n, count) in shell_pairs {
             let capacity = 2 * (*n as usize).pow(2);
             let z = self.nucleus.atomic_number as f64;
             let energy = -13.605693122994 * z.powi(2) / (*n as f64).powi(2);

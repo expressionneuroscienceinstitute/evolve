@@ -250,20 +250,24 @@ mod tests {
             position: Vector3::new(0.0, 0.0, 0.0),
             velocity: Vector3::zeros(),
             acceleration: Vector3::zeros(),
+            force: Vector3::zeros(),
             mass: constants.m_earth,
             charge: 0.0,
             temperature: 288.0,
             entropy: 0.0,
+            type_id: 0,
         };
         
         let state2 = PhysicsState {
             position: Vector3::new(constants.au, 0.0, 0.0),
             velocity: Vector3::new(0.0, 29780.0, 0.0), // Earth orbital speed
             acceleration: Vector3::zeros(),
+            force: Vector3::zeros(),
             mass: constants.m_sun,
             charge: 0.0,
             temperature: 5778.0,
             entropy: 0.0,
+            type_id: 1,
         };
         
         let force = solver.gravitational_force(&state1, &state2, &constants);
@@ -286,19 +290,23 @@ mod tests {
                 position: Vector3::new(0.0, 0.0, 0.0),
                 velocity: Vector3::new(0.0, 1000.0, 0.0),
                 acceleration: Vector3::zeros(),
+                force: Vector3::zeros(),
                 mass: constants.m_earth,
                 charge: 0.0,
                 temperature: 288.0,
                 entropy: 0.0,
+                type_id: 0,
             },
             PhysicsState {
                 position: Vector3::new(3.844e8, 0.0, 0.0),
                 velocity: Vector3::new(0.0, -1022.0, 0.0),
                 acceleration: Vector3::zeros(),
+                force: Vector3::zeros(),
                 mass: 7.342e22, // Moon mass
                 charge: 0.0,
                 temperature: 250.0,
                 entropy: 0.0,
+                type_id: 1,
             },
         ];
         
@@ -324,10 +332,12 @@ mod tests {
             position: Vector3::zeros(),
             velocity: Vector3::new(0.5 * constants.c, 0.0, 0.0), // Relativistic velocity
             acceleration: Vector3::zeros(),
+            force: Vector3::zeros(),
             mass: constants.m_e,
             charge: -constants.e,
             temperature: 1e6,
             entropy: 0.0,
+            type_id: 2,
         };
         
         let force = Vector3::new(1e-15, 0.0, 0.0); // Small force

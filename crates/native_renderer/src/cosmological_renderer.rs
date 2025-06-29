@@ -23,8 +23,8 @@ use wgpu::util::DeviceExt;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 
-use crate::physics_engine::cosmology::{CosmologicalParticle, CosmologicalParticleType, CosmologicalParameters};
-use crate::physics_engine::cosmological_sph::CosmologicalSphParticle;
+use physics_engine::cosmology::{CosmologicalParticle, CosmologicalParticleType, CosmologicalParameters};
+use physics_engine::cosmological_sph::CosmologicalSphParticle;
 
 /// Uniforms for cosmological rendering with scientific parameters
 #[repr(C)]
@@ -770,7 +770,7 @@ impl CosmologicalRenderer {
 
         // Update uniforms
         let uniforms = CosmologyUniforms {
-            view_proj: view_proj_matrix.into(),
+            view_proj: (*view_proj_matrix).into(),
             camera_pos: [camera_pos.x, camera_pos.y, camera_pos.z],
             time: simulation_time,
             redshift: self.current_redshift as f32,
@@ -815,7 +815,7 @@ impl CosmologicalRenderer {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
-                    store: true,
+                    store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: None,

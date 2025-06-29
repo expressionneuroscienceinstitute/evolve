@@ -6,7 +6,7 @@
 //! arise from their statistical mechanics.
 
 use anyhow::Result;
-use std::collections::HashMap;
+
 
 use crate::{constants::BOLTZMANN, PhysicsState};
 // use crate::particles::Particle;

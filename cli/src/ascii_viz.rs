@@ -1,6 +1,4 @@
-use crate::data_models::{SimulationState, Galaxy, Star, Planet};
-use nalgebra::Vector3;
-use std::collections::HashMap;
+use crate::data_models::SimulationState;
 
 pub struct AsciiRenderer {
     width: usize,

@@ -58,7 +58,7 @@ fn main() -> Result<()> {
     
     // Create Tree-PM gravity solver
     println!("Initializing Tree-PM gravity solver...");
-    let mut gravity_solver = TreePmGravitySolver::new(params.clone());
+    let gravity_solver = TreePmGravitySolver::new(params.clone());
     
     println!("Tree-PM Configuration:");
     println!("  Tree opening angle: {:.2}", gravity_solver.tree_opening_angle);
@@ -135,7 +135,7 @@ fn create_test_particles(n_particles: usize, params: &CosmologicalParameters) ->
     let box_size_m = params.box_size * 3.086e22; // Mpc to meters
     let particle_mass = 1e8; // 100 million solar masses per particle
     
-    for i in 0..n_particles {
+    for _i in 0..n_particles {
         // Random position in cosmological box
         let position = Vector3::new(
             rng.gen_range(-box_size_m/2.0..box_size_m/2.0),
@@ -293,8 +293,8 @@ fn scaling_test(params: &CosmologicalParameters) -> Result<()> {
 /// Test parameter sensitivity
 fn parameter_sensitivity_test(
     params: &CosmologicalParameters,
-    positions: &[Vector3<f64>],
-    masses: &[f64],
+    _positions: &[Vector3<f64>],
+    _masses: &[f64],
 ) -> Result<()> {
     println!("Testing parameter sensitivity...");
     
@@ -307,7 +307,7 @@ fn parameter_sensitivity_test(
         test_solver.tree_opening_angle = angle;
         
         let start_time = Instant::now();
-        let force = test_solver.compute_gravitational_force(positions, masses, 0)?;
+        let force = test_solver.compute_gravitational_force(_positions, _masses, 0)?;
         let elapsed = start_time.elapsed();
         
         println!("  θ = {:.1}: {:.3} ms, |F| = {:.2e} N", 
@@ -323,7 +323,7 @@ fn parameter_sensitivity_test(
         test_solver.pm_grid_size = grid_size;
         
         let start_time = Instant::now();
-        let force = test_solver.compute_gravitational_force(positions, masses, 0)?;
+        let force = test_solver.compute_gravitational_force(_positions, _masses, 0)?;
         let elapsed = start_time.elapsed();
         
         println!("  Grid {}³: {:.3} ms, |F| = {:.2e} N", 

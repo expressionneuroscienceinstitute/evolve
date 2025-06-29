@@ -12,11 +12,10 @@
 //! - Jeans instability and gas collapse
 //! - Multi-phase gas physics
 
-use physics_engine::cosmology::{CosmologicalParameters, CosmologicalParticleType};
-use physics_engine::cosmological_sph::{CosmologicalSphSolver, CosmologicalSphParticle, CoolingHeating, StarFormation, ChemicalEnrichment, Feedback};
+use physics_engine::cosmology::CosmologicalParameters;
+use physics_engine::cosmological_sph::{CosmologicalSphSolver, CosmologicalSphParticle};
 use anyhow::Result;
 use nalgebra::Vector3;
-use std::collections::HashMap;
 use rand::{thread_rng, Rng};
 
 fn main() -> Result<()> {
@@ -92,7 +91,7 @@ fn main() -> Result<()> {
     let n_steps = 50;
     let dt = 1e15; // 1 Myr time step
     let mut total_stars_formed = 0.0;
-    let mut current_redshift = params.initial_redshift;
+    let mut _current_redshift = params.initial_redshift;
     
     for step in 0..n_steps {
         // Update redshift (simplified cosmological evolution)

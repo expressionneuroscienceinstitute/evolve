@@ -316,6 +316,87 @@ pub struct EvolutionOutput {
     pub breakthrough_count: u64,
 }
 
+/// Evolution context for agent populations on celestial bodies
+#[derive(Debug, Clone)]
+pub struct EvolutionContext {
+    pub planet_temperature: f64,
+    pub planet_gravity: f64,
+    pub planet_atmosphere: Atmosphere,
+    pub cosmic_era: CosmicEra,
+    pub universe_age: f64,
+    pub time_step: f64,
+}
+
+/// Atmospheric composition for evolution context
+#[derive(Debug, Clone)]
+pub struct Atmosphere {
+    pub pressure: f64,
+    pub composition: std::collections::HashMap<String, f64>,
+    pub temperature: f64,
+    pub density: f64,
+    pub scale_height: f64,
+}
+
+/// Cosmic era state for evolution context
+#[derive(Debug, Clone)]
+pub struct CosmicEra {
+    pub age_gyr: f64,
+    pub mean_temperature: f64,
+    pub stellar_fraction: f64,
+    pub metallicity: f64,
+    pub habitable_count: usize,
+    pub max_complexity: f64,
+    pub energy_density: f64,
+    pub hubble_constant: f64,
+}
+
+impl EvolutionContext {
+    pub fn new(
+        planet_temperature: f64,
+        planet_gravity: f64,
+        planet_atmosphere: Atmosphere,
+        cosmic_era: CosmicEra,
+        universe_age: f64,
+        time_step: f64,
+    ) -> Self {
+        Self {
+            planet_temperature,
+            planet_gravity,
+            planet_atmosphere,
+            cosmic_era,
+            universe_age,
+            time_step,
+        }
+    }
+    
+    /// Check if environmental conditions support evolution
+    pub fn supports_evolution(&self) -> bool {
+        // Temperature must be suitable for liquid water
+        self.planet_temperature > 273.0 && self.planet_temperature < 373.0 &&
+        // Gravity must not be too extreme
+        self.planet_gravity > 1.0 && self.planet_gravity < 50.0 &&
+        // Universe must be old enough for complex chemistry
+        self.universe_age > 1.0
+    }
+    
+    /// Calculate evolutionary pressure based on environment
+    pub fn evolutionary_pressure(&self) -> f64 {
+        let temp_pressure = if self.planet_temperature > 373.0 || self.planet_temperature < 273.0 {
+            2.0 // High pressure from extreme temperatures
+        } else {
+            0.5 // Low pressure from suitable temperatures
+        };
+        
+        let gravity_pressure = if self.planet_gravity > 20.0 {
+            1.5 // High pressure from high gravity
+        } else {
+            0.3 // Low pressure from moderate gravity
+        };
+        
+        temp_pressure + gravity_pressure
+    }
+}
+
 /// Main entry point for the revolutionary agent evolution system
 pub fn create_revolutionary_ai_system() -> AgentEvolutionSystem {
     AgentEvolutionSystem::new()

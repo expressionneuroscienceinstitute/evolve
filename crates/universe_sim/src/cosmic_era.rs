@@ -40,6 +40,40 @@ pub struct UniverseState {
     
     /// Hubble expansion rate
     pub hubble_constant: f64,
+    
+    // Additional fields needed by the simulation
+    /// Average technology level across all civilizations
+    pub average_tech_level: f64,
+    
+    /// Total stellar mass in the universe (kg)
+    pub total_stellar_mass: f64,
+    
+    /// Dark energy density (J/m³)
+    pub dark_energy_density: f64,
+    
+    /// Dark matter density (kg/m³)
+    pub dark_matter_density: f64,
+    
+    /// Cosmic ray flux (particles/m²/s)
+    pub cosmic_ray_flux: f64,
+    
+    /// Gravitational wave strain amplitude
+    pub gravitational_wave_strain: f64,
+    
+    /// Total mass of the universe (kg)
+    pub total_mass: f64,
+    
+    /// Iron abundance (mass fraction)
+    pub iron_abundance: f64,
+    
+    /// Carbon abundance (mass fraction)
+    pub carbon_abundance: f64,
+    
+    /// Oxygen abundance (mass fraction)
+    pub oxygen_abundance: f64,
+    
+    /// Nitrogen abundance (mass fraction)
+    pub nitrogen_abundance: f64,
 }
 
 impl UniverseState {
@@ -54,6 +88,17 @@ impl UniverseState {
             max_complexity: 0.0,    // No complex structures
             energy_density: 1e20,   // Extremely dense
             hubble_constant: 100.0, // Fast initial expansion
+            average_tech_level: 0.0,
+            total_stellar_mass: 0.0,
+            dark_energy_density: 0.0,
+            dark_matter_density: 0.0,
+            cosmic_ray_flux: 0.0,
+            gravitational_wave_strain: 0.0,
+            total_mass: 1e50, // Initial universe mass
+            iron_abundance: 0.0,
+            carbon_abundance: 0.0,
+            oxygen_abundance: 0.0,
+            nitrogen_abundance: 0.0,
         }
     }
     
@@ -250,6 +295,9 @@ pub struct PhysicalTransition {
     pub transition_type: TransitionType,
     pub description: String,
     pub physical_parameters: Vec<(String, f64)>,
+    pub timestamp: f64,
+    pub temperature: f64,
+    pub energy_density: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,6 +318,12 @@ pub enum TransitionType {
     FirstIntelligence,
     /// Major technological milestone
     TechBreakthrough,
+    /// Cosmic era transition
+    CosmicEra,
+    /// Temperature-based transition
+    Temperature,
+    /// Energy density transition
+    EnergyDensity,
 }
 
 impl PhysicalTransition {
@@ -281,11 +335,211 @@ impl PhysicalTransition {
             transition_type,
             description,
             physical_parameters: parameters,
+            timestamp: tick as f64,
+            temperature: 0.0,
+            energy_density: 0.0,
+        }
+    }
+    
+    pub fn new_with_physics(tick: u64, age_gyr: f64, transition_type: TransitionType, 
+                           description: String, parameters: Vec<(String, f64)>,
+                           timestamp: f64, temperature: f64, energy_density: f64) -> Self {
+        Self {
+            tick,
+            age_gyr,
+            transition_type,
+            description,
+            physical_parameters: parameters,
+            timestamp,
+            temperature,
+            energy_density,
         }
     }
 }
 
 pub type CosmicEra = UniverseState;
+
+/// Determine the current cosmic era based on universe age
+pub fn determine_cosmic_era(age_gyr: f64) -> UniverseState {
+    let mut state = UniverseState::initial();
+    state.age_gyr = age_gyr;
+    
+    // Set physical parameters based on cosmic age
+    match age_gyr {
+        // Planck epoch to inflation (< 1e-32 Gyr)
+        age if age < 1e-23 => {
+            state.mean_temperature = 1e32;
+            state.energy_density = 1e113;
+            state.hubble_constant = 1e60;
+            state.average_tech_level = 0.0;
+            state.total_stellar_mass = 0.0;
+            state.dark_energy_density = 0.0;
+            state.dark_matter_density = 0.0;
+            state.cosmic_ray_flux = 0.0;
+            state.gravitational_wave_strain = 1e-15;
+            state.total_mass = 1e60;
+            state.iron_abundance = 0.0;
+            state.carbon_abundance = 0.0;
+            state.oxygen_abundance = 0.0;
+            state.nitrogen_abundance = 0.0;
+        },
+        // Electroweak epoch (1e-32 to 1e-12 Gyr)  
+        age if age < 1e-3 => {
+            state.mean_temperature = 1e15;
+            state.energy_density = 1e50;
+            state.hubble_constant = 1e20;
+            // Initialize all new fields
+            state.average_tech_level = 0.0;
+            state.total_stellar_mass = 0.0;
+            state.dark_energy_density = 0.0;
+            state.dark_matter_density = 0.0;
+            state.cosmic_ray_flux = 0.0;
+            state.gravitational_wave_strain = 1e-16;
+            state.total_mass = 1e55;
+            state.iron_abundance = 0.0;
+            state.carbon_abundance = 0.0;
+            state.oxygen_abundance = 0.0;
+            state.nitrogen_abundance = 0.0;
+        },
+        // Nucleosynthesis (1e-3 to 0.02 Gyr)
+        age if age < 0.02 => {
+            state.mean_temperature = 1e9;
+            state.energy_density = 1e20;
+            state.hubble_constant = 1000.0;
+            state.metallicity = 0.0001; // Trace Li, Be
+            state.average_tech_level = 0.0;
+            state.total_stellar_mass = 0.0;
+            state.dark_energy_density = 1e-5;
+            state.dark_matter_density = 1e-15;
+            state.cosmic_ray_flux = 0.0;
+            state.gravitational_wave_strain = 1e-17;
+            state.total_mass = 1e54;
+            state.iron_abundance = 0.0;
+            state.carbon_abundance = 0.0;
+            state.oxygen_abundance = 0.0;
+            state.nitrogen_abundance = 0.0;
+        },
+        // Recombination era (0.02 to 0.4 Gyr)
+        age if age < 0.4 => {
+            state.mean_temperature = 3000.0;
+            state.energy_density = 1e-15;
+            state.hubble_constant = 200.0;
+            state.metallicity = 0.0001;
+            state.average_tech_level = 0.0;
+            state.total_stellar_mass = 0.0;
+            state.dark_energy_density = 1e-8;
+            state.dark_matter_density = 1e-18;
+            state.cosmic_ray_flux = 0.0;
+            state.gravitational_wave_strain = 1e-18;
+            state.total_mass = 1e53;
+            state.iron_abundance = 0.0;
+            state.carbon_abundance = 0.0;
+            state.oxygen_abundance = 0.0;
+            state.nitrogen_abundance = 0.0;
+        },
+        // Dark ages (0.4 to 1.0 Gyr)
+        age if age < 1.0 => {
+            state.mean_temperature = 100.0;
+            state.energy_density = 1e-20;
+            state.hubble_constant = 150.0;
+            state.metallicity = 0.0001;
+            state.average_tech_level = 0.0;
+            state.total_stellar_mass = 0.0;
+            state.dark_energy_density = 1e-9;
+            state.dark_matter_density = 1e-20;
+            state.cosmic_ray_flux = 0.0;
+            state.gravitational_wave_strain = 1e-19;
+            state.total_mass = 1e53;
+            state.iron_abundance = 0.0;
+            state.carbon_abundance = 0.0;
+            state.oxygen_abundance = 0.0;
+            state.nitrogen_abundance = 0.0;
+        },
+        // First stars (1.0 to 3.0 Gyr)
+        age if age < 3.0 => {
+            state.mean_temperature = 50.0;
+            state.energy_density = 1e-25;
+            state.hubble_constant = 120.0;
+            state.stellar_fraction = 0.01;
+            state.metallicity = 0.001;
+            state.average_tech_level = 0.0;
+            state.total_stellar_mass = 1e38;
+            state.dark_energy_density = 2e-10;
+            state.dark_matter_density = 1e-21;
+            state.cosmic_ray_flux = 1e6;
+            state.gravitational_wave_strain = 1e-20;
+            state.total_mass = 1e53;
+            state.iron_abundance = 0.0001;
+            state.carbon_abundance = 0.0005;
+            state.oxygen_abundance = 0.001;
+            state.nitrogen_abundance = 0.0001;
+        },
+        // Galaxy formation (3.0 to 8.0 Gyr)
+        age if age < 8.0 => {
+            state.mean_temperature = 20.0;
+            state.energy_density = 1e-27;
+            state.hubble_constant = 90.0;
+            state.stellar_fraction = 0.05;
+            state.metallicity = 0.01;
+            state.habitable_count = (age_gyr * 10.0) as usize;
+            state.average_tech_level = 0.0;
+            state.total_stellar_mass = 1e40;
+            state.dark_energy_density = 4e-10;
+            state.dark_matter_density = 2e-21;
+            state.cosmic_ray_flux = 1e8;
+            state.gravitational_wave_strain = 5e-21;
+            state.total_mass = 1e53;
+            state.iron_abundance = 0.0005;
+            state.carbon_abundance = 0.001;
+            state.oxygen_abundance = 0.005;
+            state.nitrogen_abundance = 0.0002;
+        },
+        // Mature universe (8.0 to 13.8 Gyr)
+        age if age < 13.8 => {
+            state.mean_temperature = 10.0;
+            state.energy_density = 1e-29;
+            state.hubble_constant = 70.0;
+            state.stellar_fraction = 0.1;
+            state.metallicity = 0.02;
+            state.habitable_count = ((age_gyr - 8.0) * 100.0) as usize;
+            state.max_complexity = (age_gyr - 8.0) * 10.0;
+            state.average_tech_level = (age_gyr - 8.0) * 1.0;
+            state.total_stellar_mass = 1e41;
+            state.dark_energy_density = 5e-10;
+            state.dark_matter_density = 2.2e-21;
+            state.cosmic_ray_flux = 1e9;
+            state.gravitational_wave_strain = 1e-21;
+            state.total_mass = 1e53;
+            state.iron_abundance = 0.0008;
+            state.carbon_abundance = 0.0015;
+            state.oxygen_abundance = 0.008;
+            state.nitrogen_abundance = 0.0003;
+        },
+        // Current era (> 13.8 Gyr)
+        _ => {
+            state.mean_temperature = 2.7; // CMB temperature
+            state.energy_density = 1e-30;
+            state.hubble_constant = 67.4;
+            state.stellar_fraction = 0.15;
+            state.metallicity = 0.025;
+            state.habitable_count = (age_gyr * 50.0) as usize;
+            state.max_complexity = age_gyr * 5.0;
+            state.average_tech_level = age_gyr * 2.0;
+            state.total_stellar_mass = 1e42; // kg
+            state.dark_energy_density = 6e-10; // J/m³
+            state.dark_matter_density = 2.3e-21; // kg/m³
+            state.cosmic_ray_flux = 1e10; // particles/m²/s
+            state.gravitational_wave_strain = 1e-21;
+            state.total_mass = 1e53; // kg
+            state.iron_abundance = 0.001;
+            state.carbon_abundance = 0.002;
+            state.oxygen_abundance = 0.01;
+            state.nitrogen_abundance = 0.0005;
+        }
+    }
+    
+    state
+}
 
 /// Cosmological calculations based on Friedmann equations
 pub mod cosmology {

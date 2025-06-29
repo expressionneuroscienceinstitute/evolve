@@ -195,7 +195,7 @@ impl ComprehensiveAgent {
     }
 
     /// Update meta-learning system
-    fn update_meta_learning(&mut self, outcome: f64, cycle: u64) -> Result<()> {
+    fn update_meta_learning(&mut self, outcome: f64, _cycle: u64) -> Result<()> {
         // Create parameter map for meta-learning
         let mut params = HashMap::new();
         params.insert(MetaParameter::LearningRate, self.neural_core.neural_network.learning_rate);
@@ -277,6 +277,7 @@ impl ComprehensiveAgent {
 
 /// Output from a single agent cycle
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct AgentCycleOutput {
     agent_id: Uuid,
     agent_name: String,
@@ -294,6 +295,7 @@ struct AgentCycleOutput {
 
 /// Comprehensive agent statistics
 #[derive(Debug)]
+#[allow(dead_code)]
 struct AgentStatistics {
     agent_id: Uuid,
     agent_name: String,
@@ -420,7 +422,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn report_progress(cycle: u64, agents: &[ComprehensiveAgent], outputs: &[AgentCycleOutput]) {
+fn report_progress(cycle: u64, _agents: &[ComprehensiveAgent], outputs: &[AgentCycleOutput]) {
     println!("Cycle {}: ", cycle);
     
     for output in outputs {

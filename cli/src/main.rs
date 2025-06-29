@@ -431,15 +431,15 @@ async fn cmd_start(
     // Initialize RPC client
     rpc::init_rpc_client(rpc_port);
     
-    if let Some(load_path) = load {
+    if let Some(ref load_path) = load {
         info!("Loading simulation state from: {:?}", load_path);
-        config = SimulationConfig::from_file(&load_path)?;
+        config = SimulationConfig::from_file(load_path)?;
     }
     
     if low_mem {
         warn!("Applying low memory optimizations");
-        config.max_particles = config.max_particles.min(100_000);
-        config.octree_max_depth = config.octree_max_depth.min(8);
+        config.initial_particle_count = config.initial_particle_count.min(100_000);
+        config.memory_limit_gb = config.memory_limit_gb.min(4.0);
     }
     
     // Override config with command line arguments if provided
@@ -460,7 +460,7 @@ async fn cmd_start(
     }));
     
     println!("Starting RPC server on port {}...", rpc_port);
-    start_rpc_server(rpc_port, shared_state.clone());
+    start_rpc_server(rpc_port, shared_state.clone()).await;
     
     // Wait a moment for server to start
     sleep(Duration::from_millis(100)).await;

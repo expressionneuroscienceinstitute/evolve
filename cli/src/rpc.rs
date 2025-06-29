@@ -99,6 +99,7 @@ pub struct PlanetListResponse {
 
 /// Enhanced RPC client with connection pooling and retry logic
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct RpcClient {
     client: reqwest::Client,
     url: String,
@@ -108,6 +109,7 @@ pub struct RpcClient {
     connection_pool: Arc<Mutex<HashMap<String, reqwest::Client>>>,
 }
 
+#[allow(dead_code)]
 impl RpcClient {
     pub fn new(rpc_port: u16) -> Self {
         Self {
@@ -346,6 +348,7 @@ pub async fn call_rpc(method: &str, params: serde_json::Value) -> Result<serde_j
 }
 
 /// Call RPC with custom timeout
+#[allow(dead_code)]
 pub async fn call_rpc_with_timeout(method: &str, params: serde_json::Value, timeout: Duration) -> Result<serde_json::Value> {
     if let Some(client) = get_rpc_client() {
         let client_with_timeout = client.clone().with_timeout(timeout);
@@ -358,6 +361,7 @@ pub async fn call_rpc_with_timeout(method: &str, params: serde_json::Value, time
 }
 
 /// Call RPC with retry logic
+#[allow(dead_code)]
 pub async fn call_rpc_with_retry(method: &str, params: serde_json::Value, max_retries: u32, retry_delay: Duration) -> Result<serde_json::Value> {
     if let Some(client) = get_rpc_client() {
         let client_with_retry = client.clone().with_retries(max_retries, retry_delay);

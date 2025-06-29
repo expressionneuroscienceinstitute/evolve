@@ -16,6 +16,7 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 use crate::{PlasticityInput, PlasticityOutput};
+use crate::neural_plasticity::{LearningPhase, PlasticityEvent};
 use nalgebra::Complex;
 use physics_engine::{QuantumField, particle_types::FieldType};
 
@@ -271,7 +272,7 @@ impl PhysicsInformedNeuralNetwork {
             // Simple linear transformation (weights would be stored in the network)
             // For now, use identity mapping scaled by layer size
             let mut layer_output = DVector::zeros(*layer_size);
-            for i in 0..layer_size.min(current_input.len()) {
+            for i in 0..(*layer_size).min(current_input.len()) {
                 layer_output[i] = current_input[i];
             }
             
@@ -507,8 +508,8 @@ impl PhysicsInformedNeuralNetwork {
         
         let x = input[0];
         let v = input[1];
-        let t = input[2];
-        let E = input[3];
+        let _t = input[2];
+        let e = input[3];
         
         // Simple harmonic oscillator energy: E = 1/2 * k * x² + 1/2 * m * v²
         let k = 1.0; // spring constant
@@ -518,8 +519,8 @@ impl PhysicsInformedNeuralNetwork {
         let potential_energy = 0.5 * k * x * x;
         let total_energy = kinetic_energy + potential_energy;
         
-        // Energy conservation: E should be constant
-        let energy_residual = E - total_energy;
+        // Energy conservation: e should be constant
+        let energy_residual = e - total_energy;
         
         Ok(energy_residual * energy_residual)
     }
@@ -601,8 +602,8 @@ impl PhysicsInformedNeuralNetwork {
             return Ok(0.0);
         }
         
-        let t = input[0];
-        let a = input[1]; // scale factor
+        let _t = input[0];
+        let _a = input[1]; // scale factor
         let h = input[2]; // Hubble parameter
         let rho = input[3]; // energy density
         
@@ -981,7 +982,6 @@ impl PhysicsInformedNeuralNetwork {
     
     /// Create plasticity event based on current state
     fn create_plasticity_event(&self, input: &PlasticityInput) -> anyhow::Result<PlasticityEvent> {
-        use crate::PlasticityEvent;
         let global_activity = self.calculate_global_activity(input)?;
         
         let event = PlasticityEvent {

@@ -1681,7 +1681,7 @@ impl QuantumNeuralFieldTheory {
         
         // Count common conservation laws
         let common_laws = laws1.iter()
-            .filter(|law1| laws2.iter().any(|law2| std::mem::discriminant(*law1) == std::mem::discriminant(*law2)))
+            .filter(|&law1| laws2.iter().any(|law2| std::mem::discriminant(law1) == std::mem::discriminant(law2)))
             .count();
         
         // Jaccard similarity

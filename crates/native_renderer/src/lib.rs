@@ -610,8 +610,6 @@ pub struct NativeRenderer<'window> {
     #[cfg(feature = "heavy")]
     heavy_mode_enabled: bool,
     #[cfg(feature = "heavy")]
-    interaction_heatmap: Vec<f32>,
-    #[cfg(feature = "heavy")]
     temperature_field: Vec<Vector3<f32>>,
 
     // Quantum visualization state
@@ -1348,8 +1346,6 @@ impl<'window> NativeRenderer<'window> {
             #[cfg(feature = "heavy")]
             heavy_mode_enabled: false,
             #[cfg(feature = "heavy")]
-            interaction_heatmap: Vec::new(),
-            #[cfg(feature = "heavy")]
             temperature_field: Vec::new(),
 
             #[cfg(feature = "quantum-visualization")]
@@ -1819,6 +1815,21 @@ impl<'window> NativeRenderer<'window> {
             warn!("Multi-Agent overlay rendering failed: {}", e);
         }
 
+        // === Advanced Visualization Overlays ===
+        // Render performance monitoring overlay
+        if self.performance_monitoring {
+            if let Err(e) = self.render_performance_overlay(&mut encoder, &view) {
+                warn!("Failed to render performance overlay: {}", e);
+            }
+        }
+
+        // Render scientific overlay
+        if self.scientific_overlay {
+            if let Err(e) = self.render_scientific_overlay(&mut encoder, &view) {
+                warn!("Failed to render scientific overlay: {}", e);
+            }
+        }
+
         // Submit GPU commands and present the frame
         let submission_index = self.queue.submit(std::iter::once(encoder.finish()));
         self.last_submission_index = Some(submission_index);
@@ -1837,21 +1848,6 @@ impl<'window> NativeRenderer<'window> {
             self.device.poll(wgpu::Maintain::Poll);
         } else {
             self.device.poll(wgpu::Maintain::Poll);
-        }
-
-        // === Advanced Visualization Overlays ===
-        // Render performance monitoring overlay
-        if self.performance_monitoring {
-            if let Err(e) = self.render_performance_overlay(&mut encoder, &view) {
-                warn!("Failed to render performance overlay: {}", e);
-            }
-        }
-
-        // Render scientific overlay
-        if self.scientific_overlay {
-            if let Err(e) = self.render_scientific_overlay(&mut encoder, &view) {
-                warn!("Failed to render scientific overlay: {}", e);
-            }
         }
 
         // ---- Metrics ----
@@ -3017,7 +3013,7 @@ impl<'window> NativeRenderer<'window> {
     fn is_in_frustum(&self, point: Vector3<f32>) -> bool {
         // Simplified frustum test - can be enhanced with proper frustum planes
         let camera_pos = self.camera.position;
-        let distance = (point - camera_pos).magnitude();
+        let distance = (point - camera_pos.to_vec()).magnitude();
         distance < 1000.0 // Far plane distance
     }
 
@@ -3070,6 +3066,15 @@ impl<'window> NativeRenderer<'window> {
         text_lines.push(format!("Memory: {:.1}MB", analytics.memory_usage_mb));
         text_lines.push(format!("Particles: {}", self.get_particle_count()));
         text_lines.push(format!("Culled: {}", analytics.frame_drops));
+
+        // Render performance overlay text
+        let overlay_text = text_lines.join("\n");
+        if !overlay_text.is_empty() {
+            self.render_debug_text(encoder, view, &overlay_text)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[allow(dead_code)]

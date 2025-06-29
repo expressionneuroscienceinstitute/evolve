@@ -8,7 +8,6 @@
 
 use crate::nuclear_physics::{DecayMode, NuclearDecayData};
 use serde::{de, Deserialize, Deserializer};
-use std::collections::HashMap;
 use std::str::FromStr;
 
 /// Represents the top-level structure of the NuDat 3 JSON export.
@@ -45,7 +44,7 @@ pub struct DecayInfo {
 fn from_string<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
-    T: FromStr,
+    T: FromStr + Deserialize<'de>,
     T::Err: std::fmt::Display,
 {
     #[derive(Deserialize)]
@@ -65,7 +64,7 @@ where
 fn from_string_option<'de, T, D>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
-    T: FromStr,
+    T: FromStr + Deserialize<'de>,
     T::Err: std::fmt::Display,
 {
     #[derive(Deserialize)]
@@ -197,9 +196,7 @@ mod tests {
                     "mass_number": "1",
                     "atomic_mass": "1.0078250322",
                     "half_life": "stable",
-                    "decay_1_mode": null,
-                    "decay_1_energy": null,
-                    "decay_1_branching_ratio": null
+                    "decay_modes": []
                 },
                 {
                     "z": "1",
@@ -209,9 +206,12 @@ mod tests {
                     "mass_number": "3",
                     "atomic_mass": "3.016049281",
                     "half_life": "12.32 y",
-                    "decay_1_mode": "B-",
-                    "decay_1_energy": 0.018592,
-                    "decay_1_branching_ratio": 100
+                    "decay_modes": [
+                        {
+                            "mode": "B-",
+                            "percentage": "100"
+                        }
+                    ]
                 }
             ]
         }
@@ -229,6 +229,8 @@ mod tests {
         assert_eq!(tritium.z, 1);
         assert_eq!(tritium.n, 2);
         assert_eq!(tritium.half_life, "12.32 y");
-        assert_eq!(tritium.decay_1_mode, Some("B-".to_string()));
+        assert_eq!(tritium.decay_modes.len(), 1);
+        assert_eq!(tritium.decay_modes[0].mode, "B-");
+        assert_eq!(tritium.decay_modes[0].percentage, Some(100.0));
     }
 } 

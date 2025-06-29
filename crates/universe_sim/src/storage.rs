@@ -7,6 +7,7 @@ use crate::physics_engine::{
 use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use std::collections::HashMap;
 
 //------------------------------------------------------------------------------
 // Main Data Store
@@ -20,6 +21,7 @@ pub struct Store {
     pub stellar_evolutions: Vec<StellarEvolution>,
     pub planetary_environments: Vec<PlanetaryEnvironment>,
     pub agents: Vec<AgentLineage>,
+    pub agent_populations: HashMap<usize, AgentPopulation>, // Agent populations by celestial body ID
     // Marker for next available entity ID
     next_entity_id: usize,
 }
@@ -52,6 +54,7 @@ impl Store {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ParticleStore {
     capacity: usize,
+    pub count: usize,
     pub position: Vec<Vector3<f64>>,
     pub velocity: Vec<Vector3<f64>>,
     pub acceleration: Vec<Vector3<f64>>,
@@ -65,6 +68,7 @@ impl ParticleStore {
     pub fn new(capacity: usize) -> Self {
         Self {
             capacity,
+            count: 0,
             position: Vec::with_capacity(capacity),
             velocity: Vec::with_capacity(capacity),
             acceleration: Vec::with_capacity(capacity),
@@ -76,11 +80,11 @@ impl ParticleStore {
     }
 
     pub fn len(&self) -> usize {
-        self.position.len()
+        self.count
     }
 
     pub fn is_empty(&self) -> bool {
-        self.position.is_empty()
+        self.count == 0
     }
 
     pub fn add(
@@ -92,7 +96,7 @@ impl ParticleStore {
         temperature: f64,
         entropy: f64,
     ) -> anyhow::Result<()> {
-        if self.len() >= self.capacity {
+        if self.count >= self.capacity {
             return Err(anyhow::anyhow!("ParticleStore has reached its capacity of {}", self.capacity));
         }
         self.position.push(position);
@@ -102,6 +106,22 @@ impl ParticleStore {
         self.charge.push(charge);
         self.temperature.push(temperature);
         self.entropy.push(entropy);
+        self.count += 1;
+        Ok(())
+    }
+    
+    pub fn remove(&mut self, index: usize) -> anyhow::Result<()> {
+        if index >= self.count {
+            return Err(anyhow::anyhow!("Index {} out of bounds for particle count {}", index, self.count));
+        }
+        self.position.remove(index);
+        self.velocity.remove(index);
+        self.acceleration.remove(index);
+        self.mass.remove(index);
+        self.charge.remove(index);
+        self.temperature.remove(index);
+        self.entropy.remove(index);
+        self.count -= 1;
         Ok(())
     }
 }
@@ -132,6 +152,14 @@ pub struct CelestialBody {
     pub has_planets: bool,
     pub has_life: bool,
     pub position: Vector3<f64>, // Position in 3D space (m) for cosmological expansion
+    // Additional fields needed by the simulation
+    pub lifetime: f64,    // Expected lifetime in years
+    pub velocity: Vector3<f64>, // Velocity vector (m/s)
+    pub gravity: f64,     // Surface gravity (m/s²)
+    pub atmosphere: Atmosphere, // Atmospheric composition
+    pub is_habitable: bool, // Whether conditions support life
+    pub agent_population: u64, // Number of agents on this body
+    pub tech_level: f64,  // Average technology level
 }
 
 /// Tracks the nuclear burning stages of a star.
@@ -346,6 +374,7 @@ pub struct AgentLineage {
 pub enum StellarPhase {
     MainSequence, // Hydrogen burning in core
     SubgiantBranch,
+    RedGiant,     // Alias for RedGiantBranch
     RedGiantBranch,
     HorizontalBranch,
     AsymptoticGiantBranch,
@@ -356,7 +385,7 @@ pub enum StellarPhase {
     BlackHole,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CelestialBodyType {
     Star,
     Planet,
@@ -366,7 +395,11 @@ pub enum CelestialBodyType {
     NeutronStar,
     WhiteDwarf,
     BrownDwarf,
+    GasCloud,
 }
+
+// Alias for backward compatibility
+pub use CelestialBodyType as BodyType;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum PlanetClass {
@@ -375,4 +408,181 @@ pub enum PlanetClass {
     I, // Ice
     T, // Toxic
     G, // Gas dwarf
+}
+
+/// Atmospheric composition and properties
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Atmosphere {
+    pub pressure: f64,      // Atmospheric pressure (Pa)
+    pub composition: HashMap<String, f64>, // Gas composition by mass fraction
+    pub temperature: f64,   // Average temperature (K)
+    pub density: f64,       // Atmospheric density (kg/m³)
+    pub scale_height: f64,  // Atmospheric scale height (m)
+}
+
+impl Default for Atmosphere {
+    fn default() -> Self {
+        let mut composition = HashMap::new();
+        composition.insert("N2".to_string(), 0.78);
+        composition.insert("O2".to_string(), 0.21);
+        composition.insert("Ar".to_string(), 0.01);
+        
+        Self {
+            pressure: 101325.0, // 1 atm
+            composition,
+            temperature: 288.0, // 15°C
+            density: 1.225,     // kg/m³ at sea level
+            scale_height: 8400.0, // m
+        }
+    }
+}
+
+/// Agent population on a celestial body
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPopulation {
+    pub total_population: u64,
+    pub average_tech_level: f64,
+    pub average_sentience: f64,
+    pub dominant_lineage: Option<Uuid>,
+    pub population_growth_rate: f64,
+    pub carrying_capacity: u64,
+}
+
+impl AgentPopulation {
+    pub fn new() -> Self {
+        Self {
+            total_population: 0,
+            average_tech_level: 0.0,
+            average_sentience: 0.0,
+            dominant_lineage: None,
+            population_growth_rate: 0.0,
+            carrying_capacity: 1_000_000,
+        }
+    }
+    
+    pub fn total_population(&self) -> u64 {
+        self.total_population
+    }
+    
+    pub fn average_tech_level(&self) -> f64 {
+        self.average_tech_level
+    }
+    
+    /// Evolve the agent population based on environmental context
+    pub fn evolve(&mut self, context: &agent_evolution::EvolutionContext) -> anyhow::Result<()> {
+        // Check if evolution is supported in current environment
+        if !context.supports_evolution() {
+            return Ok(()); // No evolution in unsuitable conditions
+        }
+        
+        // Calculate evolutionary pressure
+        let pressure = context.evolutionary_pressure();
+        
+        // Update population based on environmental factors
+        let growth_factor = if context.planet_temperature > 273.0 && context.planet_temperature < 373.0 {
+            1.01 // Favorable conditions: slight growth
+        } else {
+            0.99 // Unfavorable conditions: slight decline
+        };
+        
+        // Apply population growth/decline
+        self.total_population = ((self.total_population as f64 * growth_factor) as u64)
+            .min(self.carrying_capacity);
+        
+        // Update technology level based on evolutionary pressure
+        // Higher pressure leads to faster technological advancement
+        let tech_advancement = pressure * context.time_step * 0.001;
+        self.average_tech_level += tech_advancement;
+        
+        // Update sentience level based on cosmic era
+        let sentience_advancement = context.cosmic_era.max_complexity * context.time_step * 0.0001;
+        self.average_sentience += sentience_advancement;
+        
+        // Update population growth rate
+        self.population_growth_rate = (growth_factor - 1.0) * 100.0; // Convert to percentage
+        
+        Ok(())
+    }
+    
+    /// Apply external development boost (for interplanetary interactions)
+    pub fn apply_external_development_boost(&mut self, boost: f64) {
+        // Boost technology level
+        self.average_tech_level += boost;
+        self.average_tech_level = self.average_tech_level.min(1.0); // Cap at 1.0
+        
+        // Boost sentience level
+        self.average_sentience += boost * 0.5;
+        self.average_sentience = self.average_sentience.min(1.0); // Cap at 1.0
+        
+        // Boost population growth rate
+        self.population_growth_rate += boost * 10.0; // 10% boost per unit
+        
+        // Small population boost
+        let population_boost = (self.total_population as f64 * boost * 0.01) as u64;
+        self.total_population = (self.total_population + population_boost)
+            .min(self.carrying_capacity);
+    }
+}
+
+/// Supernova nucleosynthesis yields
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupernovaYields {
+    pub iron_mass: f64,         // kg of iron-56 produced
+    pub carbon_group_mass: f64, // kg of carbon-group elements (C, N, O)
+    pub oxygen_group_mass: f64, // kg of oxygen-group elements (O, Ne, Mg)
+    pub silicon_group_mass: f64, // kg of silicon-group elements (Si, S, Ar, Ca)
+    pub heavy_elements_mass: f64, // kg of heavy elements (r-process)
+    pub total_ejecta_mass: f64, // Total mass ejected
+    pub total_ejected_mass: f64, // Alias for total_ejecta_mass
+    pub kinetic_energy: f64,    // Kinetic energy of ejecta (J)
+}
+
+impl Default for SupernovaYields {
+    fn default() -> Self {
+        // Typical Type II supernova yields for a 25 solar mass star
+        let solar_mass = 1.989e30; // kg
+        let total_ejecta = 20.0 * solar_mass;
+        Self {
+            iron_mass: 0.1 * solar_mass,         // ~0.1 M☉ of iron
+            carbon_group_mass: 2.0 * solar_mass, // ~2 M☉ of CNO
+            oxygen_group_mass: 3.0 * solar_mass, // ~3 M☉ of O, Ne, Mg
+            silicon_group_mass: 1.5 * solar_mass, // ~1.5 M☉ of Si group
+            heavy_elements_mass: 0.01 * solar_mass, // ~0.01 M☉ of r-process elements
+            total_ejecta_mass: total_ejecta,      // ~20 M☉ total ejecta
+            total_ejected_mass: total_ejecta,     // Alias
+            kinetic_energy: 1e44,                 // ~10^44 J
+        }
+    }
+}
+
+/// Chemical enrichment factor for galactic evolution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichmentFactor {
+    pub iron_enrichment: f64,
+    pub carbon_enrichment: f64,
+    pub oxygen_enrichment: f64,
+    pub silicon_enrichment: f64,
+    pub total_metal_enrichment: f64,
+    pub ejected_fraction: f64,
+    pub metallicity_enhancement: f64,
+    pub carbon_enhancement: f64,
+    pub nitrogen_enhancement: f64,
+    pub oxygen_enhancement: f64,
+}
+
+impl Default for EnrichmentFactor {
+    fn default() -> Self {
+        Self {
+            iron_enrichment: 1.0,
+            carbon_enrichment: 1.0,
+            oxygen_enrichment: 1.0,
+            silicon_enrichment: 1.0,
+            total_metal_enrichment: 1.0,
+            ejected_fraction: 0.1,
+            metallicity_enhancement: 1.0,
+            carbon_enhancement: 1.0,
+            nitrogen_enhancement: 1.0,
+            oxygen_enhancement: 1.0,
+        }
+    }
 } 

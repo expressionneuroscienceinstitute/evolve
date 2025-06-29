@@ -849,6 +849,53 @@ impl EvolutionaryPopulation {
             avg_learning_rate: self.organisms.iter().map(|o| o.learning_system.learning_rate).sum::<f64>() / total_organisms as f64,
         }
     }
+    
+    /// Get total population count (compatible with universe simulation)
+    pub fn total_population(&self) -> u64 {
+        self.organisms.len() as u64
+    }
+    
+    /// Get average technology level (compatible with universe simulation)
+    pub fn average_tech_level(&self) -> f64 {
+        if self.organisms.is_empty() {
+            return 0.0;
+        }
+        
+        // Calculate technology level based on learning progress and innovation
+        let total_tech_level: f64 = self.organisms.iter()
+            .map(|org| {
+                let learning_component = org.learning_system.success_strategies.len() as f64 * 0.1;
+                let innovation_component = org.genetic_memory.innovation_history.len() as f64 * 0.2;
+                let communication_component = org.communication_system.communication_fitness.overall_fitness * 0.1;
+                
+                (learning_component + innovation_component + communication_component).min(1.0)
+            })
+            .sum();
+        
+        total_tech_level / self.organisms.len() as f64
+    }
+    
+    /// Apply external development boost (for interplanetary interactions)
+    pub fn apply_external_development_boost(&mut self, boost: f64) {
+        for organism in &mut self.organisms {
+            // Boost learning rate
+            organism.learning_system.learning_rate *= 1.0 + boost;
+            organism.learning_system.adaptation_speed *= 1.0 + boost;
+            
+            // Boost communication capabilities
+            organism.communication_system.communication_fitness.overall_fitness *= 1.0 + boost;
+            
+            // Add energy boost
+            organism.energy += boost * 10.0;
+            organism.energy = organism.energy.min(100.0); // Cap at 100
+        }
+    }
+    
+    /// Evolve population based on evolution context (compatible with universe simulation)
+    pub fn evolve(&mut self, _context: &crate::EvolutionContext) -> Result<()> {
+        // Use the existing update method with a standard time step
+        self.update(1.0)
+    }
 }
 
 /// Population statistics

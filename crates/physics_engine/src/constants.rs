@@ -194,6 +194,12 @@ pub const ATOMIC_MASS_UNIT: f64 = 1.66053906660e-27; // kg
 
 pub const LIGHT_YEAR_TO_METERS: f64 = 9.461e15;     // meters
 
+// Astronomical constants
+pub const SOLAR_MASS: f64 = 1.988_47e30;            // kg
+pub const PARSEC: f64 = 3.085_677_581e16;           // meters
+pub const YEAR: f64 = 3.15576e7;                    // seconds (365.25 days)
+pub const MYR: f64 = YEAR * 1e6;                    // Million years in seconds
+
 // Legacy alias – some modules still reference `E_CHARGE`. Keep for compatibility.
 pub const E_CHARGE: f64 = ELEMENTARY_CHARGE;
 

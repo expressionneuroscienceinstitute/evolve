@@ -2509,7 +2509,7 @@ impl PhysicsEngine {
     /// Evolve quantum state
     fn evolve_quantum_state(&mut self) -> Result<()> {
         use crate::quantum::QuantumSolver;
-        use crate::types::MeasurementBasis;
+
         
         let mut quantum_solver = QuantumSolver::new();
         let constants = PhysicsConstants::default();

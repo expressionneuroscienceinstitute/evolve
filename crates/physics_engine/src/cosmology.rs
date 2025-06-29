@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use rustfft::{FftPlanner, num_complex::Complex};
 use rustfft::num_traits::Zero;
-use cosmology::power::PowerSpectrum;
+
 use rand::prelude::*;
 use rand_distr::StandardNormal;
 use crate::fft::{solve_poisson_fft, gradient_fft};
@@ -717,7 +717,7 @@ pub struct CosmologicalParticle {
     pub halo_id: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CosmologicalParticleType {
     DarkMatter,
     Gas,

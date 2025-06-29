@@ -8,7 +8,7 @@ use nalgebra::Vector3;
 use crate::{PhysicsState, PhysicsConstants};
 use std::time::{Duration, Instant};
 use std::collections::HashMap;
-use std::process::Command;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -418,8 +418,8 @@ fn gamma(x: f64) -> f64 {
         -0.5395239384953e-5,
     ];
     
-    let mut y = x;
-    let mut tmp = x + g + 0.5;
+    let y = x;
+    let tmp = x + g + 0.5;
     
     // Calculate the series
     let mut sum = c[0];

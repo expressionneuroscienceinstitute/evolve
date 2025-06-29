@@ -118,9 +118,9 @@ pub fn post_newtonian_force_correction(
     };
     
     // Calculate tangential velocity component (perpendicular to radial direction)
-    let radial_velocity = (rel_vel[0] * radial_unit_normalized[0] + 
+    let radial_velocity = rel_vel[0] * radial_unit_normalized[0] + 
                           rel_vel[1] * radial_unit_normalized[1] + 
-                          rel_vel[2] * radial_unit_normalized[2]);
+                          rel_vel[2] * radial_unit_normalized[2];
     
     let tangential_velocity = [
         rel_vel[0] - radial_velocity * radial_unit_normalized[0],

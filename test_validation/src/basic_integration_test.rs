@@ -50,8 +50,10 @@ pub struct BasicIntegrationTestResult {
 
 #[derive(Debug, Clone)]
 pub struct BasicPerformanceMetrics {
+    #[allow(dead_code)]
     pub average_iteration_time: Duration,
     pub peak_memory_usage_mb: f64,
+    #[allow(dead_code)]
     pub cpu_usage_percent: f64,
     pub operations_per_second: f64,
 }
@@ -99,7 +101,7 @@ impl BasicIntegrationTestManager {
         let start_time = Instant::now();
 
         let mut errors = Vec::new();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         let mut iterations_completed = 0;
         let mut successful_iterations = 0;
 
@@ -154,7 +156,7 @@ impl BasicIntegrationTestManager {
         let start_time = Instant::now();
 
         let mut errors = Vec::new();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         let mut iterations_completed = 0;
         let mut successful_iterations = 0;
 
@@ -208,7 +210,7 @@ impl BasicIntegrationTestManager {
         let start_time = Instant::now();
 
         let mut errors = Vec::new();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         let mut iterations_completed = 0;
         let mut successful_iterations = 0;
 
@@ -321,7 +323,7 @@ impl BasicIntegrationTestManager {
         let start_time = Instant::now();
 
         let mut errors = Vec::new();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         let mut iterations_completed = 0;
         let mut successful_iterations = 0;
 

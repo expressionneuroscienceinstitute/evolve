@@ -1,0 +1,7 @@
+/workspace/cli/target/debug/deps/libnormalize_line_endings-7ed5b01505388f14.rmeta: /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/normalize-line-endings-0.3.0/src/lib.rs
+
+/workspace/cli/target/debug/deps/libnormalize_line_endings-7ed5b01505388f14.rlib: /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/normalize-line-endings-0.3.0/src/lib.rs
+
+/workspace/cli/target/debug/deps/normalize_line_endings-7ed5b01505388f14.d: /usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/normalize-line-endings-0.3.0/src/lib.rs
+
+/usr/local/cargo/registry/src/index.crates.io-6f17d22bba15001f/normalize-line-endings-0.3.0/src/lib.rs:
